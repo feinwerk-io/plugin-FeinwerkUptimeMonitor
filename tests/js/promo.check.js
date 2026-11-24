@@ -24,7 +24,7 @@ function check(name, actual, expected) {
 
 async function load(page, order) {
     for (const version of order) {
-        await page.addScriptTag({ content: version === 2 ? V2 : (version === 'old3' ? OLD3 : V3) });
+        await page.addScriptTag({ content: version === 2 ? V2 : (version === 'old3' ? OLD3 : (version === 'old4' ? OLD4 : V3)) });
     }
     await page.waitForTimeout(200);
 }
@@ -156,6 +156,49 @@ const compact = (page) => page.evaluate(() => Array.from(document.querySelectorA
                 [await shown(p), errors, await p.evaluate(() => Object.keys(window.localStorage).filter((k) => k.indexOf('fwpromo:') === 0))],
                 [[], [], ['fwpromo:m:dismissed']]);
             await context.close();
+        }
+        // version 5 (Conversions API's UI review 2026-11-24): on a phone the compact line keeps no cut sentence, also next
+        // to the released version 4 in either order and among 20 mixed copies; nothing after the x: the control before it
+        const many = Array.from({ length: 20 }, (_, i) => [2, 'old3', 'old4', 3][i % 4]);
+        for (const order of [[3], ['old4', 3], [3, 'old4'], [2, 3], ['old3', 3], many]) {
+            const label = (order.length > 4 ? '20 copies (2, old 3, old 4, 5)' : 'order ' + order.join(' then ')) + ': ';
+            // every width from 300 to 760 px: a compact line never shows a cut sentence, the link is never cut (the
+            // review saw it at 390 px, where the sentence box was about 137 px, above the 120 px of version 4)
+            {
+                const context = await browser.newContext();
+                const p = await open(context, page(760, line('f', false)), order);
+                const bad = [];
+                for (let width = 300; width <= 760; width += 10) {
+                    await p.evaluate((w) => { document.getElementById('report').style.width = w + 'px'; }, width);
+                    await p.waitForTimeout(60);
+                    const state = await p.evaluate(() => {
+                        const l = document.querySelector('.fwpromo-line[data-fwpromo-ready]');
+                        const text = l.querySelector('.fwpromo-line__text');
+                        const link = l.querySelector('.fwpromo-line__link');
+                        const shown = getComputedStyle(text).display !== 'none';
+                        return {
+                            compactCut: l.classList.contains('fwpromo-line--compact') && shown && text.scrollWidth > text.clientWidth + 1,
+                            linkCut: link.scrollWidth > link.clientWidth + 1,
+                        };
+                    });
+                    if (state.compactCut || state.linkCut) {
+                        bad.push(width + (state.compactCut ? ' cut sentence' : '') + (state.linkCut ? ' cut link' : ''));
+                    }
+                }
+                check(label + '300 to 760 px: no compact line with a cut sentence, no cut link', bad, []);
+                await context.close();
+            }
+            if (order[0] === 3) {
+                const context = await browser.newContext();
+                const p = await open(context, page(1300, line('z', false)), order);
+                await p.evaluate(() => document.getElementById('report').insertAdjacentHTML('beforebegin', '<a id="prev" href="#">prev</a>'));
+                await p.focus('.fwpromo-line__dismiss');
+                await p.keyboard.press('Enter');
+                await p.waitForTimeout(100);
+                check(label + 'nothing after the x: the focus goes to the control before it',
+                    await p.evaluate(() => document.activeElement && document.activeElement.id), 'prev');
+                await context.close();
+            }
         }
     } finally {
         await browser.close();

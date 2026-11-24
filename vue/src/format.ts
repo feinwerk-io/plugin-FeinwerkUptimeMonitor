@@ -24,6 +24,14 @@ export function percent(value: number | null, language: string, digits = 2): str
   }).format(shown / 100);
 }
 
+/**
+ * A measured share in whole percent; a little that would round to 0 reads "< 1 %", so that a
+ * measured period never looks unmeasured.
+ */
+export function sharePercent(value: number, language: string): string {
+  return value > 0 && value < 0.5 ? `< ${percent(1, language, 0)}` : percent(value, language, 0);
+}
+
 export function milliseconds(value: number | null, language: string): string {
   return value === null ? '' : `${new Intl.NumberFormat(locale(language)).format(value)} ms`;
 }
@@ -73,9 +81,12 @@ export function dateTime(iso: string, language: string, timezone = ''): string {
   return formatIn(iso, language, timezone, { dateStyle: 'medium', timeStyle: 'short' }, true);
 }
 
-/** The hour of a time ("14:00") in the website's timezone, for the hour strip. */
+/**
+ * The time of day ("14:00", "2:00 PM") in the website's timezone, for the hour strip and the
+ * answer line: the same short form as the times of the outage table.
+ */
 export function hourOf(iso: string, language: string, timezone = ''): string {
-  return formatIn(iso, language, timezone, { hour: '2-digit', minute: '2-digit' });
+  return formatIn(iso, language, timezone, { timeStyle: 'short' });
 }
 
 /** The day of a time ("Mar 14") in the website's timezone, for the strip of longer periods. */
@@ -83,9 +94,22 @@ export function dayOf(iso: string, language: string, timezone = ''): string {
   return formatIn(iso, language, timezone, { month: 'short', day: 'numeric' });
 }
 
-/** "3 minutes ago" in the page language. */
-export function ago(iso: string, language: string): string {
-  const seconds = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
+/**
+ * A time of today ("10:42") or else date and time, in the website's timezone: the start of an
+ * outage in the answer line.
+ */
+export function clockOrDate(iso: string, language: string, timezone = '', now = Date.now()): string {
+  const day = (time: string) => formatIn(time, 'en', timezone, {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  return day(iso) === day(new Date(now).toISOString())
+    ? hourOf(iso, language, timezone)
+    : dateTime(iso, language, timezone);
+}
+
+/** "3 minutes ago" in the page language; now: the screen's clock, so that it re-renders. */
+export function ago(iso: string, language: string, now = Date.now()): string {
+  const seconds = Math.round((new Date(iso).getTime() - now) / 1000);
   const format = new Intl.RelativeTimeFormat(locale(language), { numeric: 'auto' });
   if (Math.abs(seconds) < 3600) {
     return format.format(Math.round(seconds / 60), 'minute');
@@ -176,7 +200,9 @@ export function statusOf(c: StatusCounts): { outcome: string; text: string } {
   if (c.down > 0 && c.up > 0) {
     return {
       outcome: 'partial',
-      text: translate('FeinwerkUptimeMonitor_UiPartlyDown', String(c.down), String(c.total)),
+      text: c.down === 1
+        ? translate('FeinwerkUptimeMonitor_UiPartlyDownOne', String(c.total))
+        : translate('FeinwerkUptimeMonitor_UiPartlyDownMany', String(c.down), String(c.total)),
     };
   }
   if (c.down > 0) {

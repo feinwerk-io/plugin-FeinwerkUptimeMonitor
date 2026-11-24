@@ -58,13 +58,19 @@ by hand, copy the folder to `plugins/FeinwerkUptimeMonitor` and activate it unde
 ## Usage
 
 - **Visitors > Uptime** (everyone who may view the website; anonymous visitors of a public dashboard see only the
-  website's part): Matomo's card first, with uptime, the tracker's response time and the certificate, then the
-  website's addresses, its Tag Manager containers and its tracking proxy, then the outages of the chosen period. Admins
-  of the website change the check targets with **Edit check targets** and check at once with **Check now** (once a
-  minute).
-- **Dashboard widgets:** add "Uptime: Matomo" and "Uptime: Website" from the category **Uptime**.
-- **Administration > Diagnostic > Uptime Monitor** (super users): all websites in one list, Matomo's own addresses,
-  the cron line and whether alerts go out through Feinwerk Sentinel.
+  website's part): first one answer line, whether Matomo and the website are reachable and when they were last
+  checked, or which part has been unreachable since when and why. Below it the key figures (uptime of Matomo and of the
+  website with the measured share, the tracker's processing time, the soonest certificate expiry) and an hour strip
+  for each, which shows every hour of the day (every day of longer periods) as reachable, partly reachable, not
+  reachable or not measured. Then one table with Matomo's addresses and the website's addresses, its Tag Manager
+  containers and its tracking proxy, and the outages of the chosen period. Times follow the website's timezone.
+  Admins of the website change the check targets with **Edit check targets** and check at once with **Check now**
+  (once a minute).
+- **Dashboard widgets:** add "Uptime: Matomo" and "Uptime: Website" from the category **Uptime**. They show the state
+  first and, when something is down, only what failed, with a link to the uptime page.
+- **Administration > Diagnostic > Uptime Monitor** (super users): all websites in one list, Matomo first, and checks
+  and alerts as status rows: whether a system cron runs the checks (else the cron line to copy) and whether alerts go
+  out through Feinwerk Sentinel.
 
 ### How often it checks
 
@@ -148,7 +154,7 @@ alert can come up to two hours after an outage began; with the cron line above, 
 ## API
 
 Every function of the screens is an API method. idSite 0 stands for Matomo itself; with idSite 0, `getUptime`,
-`getResponseTimes` and `getIncidents` take `timezoneOf=<idSite>` to follow that website's day instead of UTC. Times are ISO 8601 in UTC,
+`getResponseTimes`, `getIncidents` and `getTimeline` take `timezoneOf=<idSite>` to follow that website's day instead of UTC. Times are ISO 8601 in UTC,
 response times in milliseconds. Wrong input is answered with HTTP 400 and a message naming the parameter and the
 allowed values.
 
@@ -157,6 +163,7 @@ allowed values.
 | `getStatus` | `?module=API&method=FeinwerkUptimeMonitor.getStatus&idSite=1&format=json` |
 | `getUptime` | `?module=API&method=FeinwerkUptimeMonitor.getUptime&idSite=1&period=month&date=today&format=json` |
 | `getResponseTimes` | `?module=API&method=FeinwerkUptimeMonitor.getResponseTimes&idSite=0&period=day&date=today&targetKey=processing&format=json` |
+| `getTimeline` | `?module=API&method=FeinwerkUptimeMonitor.getTimeline&idSite=1&period=week&date=today&format=json` (the hour strip; at most 366 days) |
 | `getIncidents` | `?module=API&method=FeinwerkUptimeMonitor.getIncidents&idSite=1&period=week&date=today&state=open&format=json` |
 | `getCertificates` | `?module=API&method=FeinwerkUptimeMonitor.getCertificates&idSite=1&format=json` |
 | `getTargets` | `?module=API&method=FeinwerkUptimeMonitor.getTargets&idSite=1&format=json` |
@@ -202,9 +209,9 @@ The same line in the section `[FeinwerkMarketplaceConnector]` hides it for all F
 ## Tips from Feinwerk
 
 Under the feedback question on **Visitors > Uptime** the plugin shows one short line with a tip on another Feinwerk
-offer, for example Feinwerk Sentinel or Feinwerk Campaigns. Only users with admin access to at least one website and
-super users see it, and only in Matomo's interface: never in dashboard widgets, embedded widgets, exports or API
-results. A tip for a Feinwerk plugin you already have installed is not shown, and "×" hides a tip for 30 days in your
+offer, for example Feinwerk Sentinel or Feinwerk Campaigns; on a dashboard, the uptime widgets show the same tip as one
+small card. Only users with admin access to at least one website and super users see them, and only in Matomo's
+interface: never in embedded widgets, exports or API results. A tip for a Feinwerk plugin you already have installed is not shown, and "×" hides a tip for 30 days in your
 browser. The tips are part of the plugin: nothing is loaded from outside and nothing is sent. Links open feinwerk.io
 pages in a new tab and carry only the campaign parameters `mtm_campaign`, `mtm_source` and `mtm_content`.
 

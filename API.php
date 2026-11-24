@@ -44,6 +44,8 @@ class API extends \Piwik\Plugin\API
 {
     public const NOW_RATE_SECONDS = 60;
     public const MAX_WEB_TARGETS = 5;
+    /** the hour strip of at most this many days (a year and a leap day): one cell per day */
+    public const MAX_TIMELINE_DAYS = 366;
 
     /**
      * Current state of every check target of a website, or of Matomo itself with idSite 0: the latest result per
@@ -100,28 +102,35 @@ class API extends \Piwik\Plugin\API
     }
 
     /**
-     * The hour strip of a website (idSite 0: Matomo itself) over a Matomo period: one cell per hour for periods up to two
-     * days, per day (in the website's timezone) up to 31 days, per UTC day beyond. A cell sums every check target of the
-     * website: up when all measured time was up, down when none was, partial between, none when nothing was measured.
+     * The hour strip of a website (idSite 0: Matomo itself) over a whole Matomo period, with a fixed axis: one cell per
+     * hour for a day (and a range up to two days), per day in the website's timezone for a week, a month or a range up
+     * to 31 days, per UTC day beyond. A cell sums every switched-on check target of the website: up when all measured
+     * time was up, down when none was, partial between, none when nothing was measured, future after now.
      *
      * @param int $idSite website ID, or 0 for the Matomo instance
      * @param string $period day|week|month|year|range (Matomo's periods, in the website's timezone; UTC for idSite 0)
      * @param string $date a date (YYYY-MM-DD, today, yesterday) or for range "YYYY-MM-DD,YYYY-MM-DD"
      * @param string $source all|local|external, default all
      * @param int $timezoneOf only with idSite 0: a website ID whose timezone the period follows; default 0 = UTC
-     * @return array {grain: hour|day, cells: list of {time: ISO time (start of the hour or day, UTC), measuredSeconds:
-     *               int, upSeconds: int, state: up|down|partial|none}}; at most about 400 cells
+     * @return array {grain: hour|day, days: local|utc|null (with grain day: whether a cell is a day in the website's
+     *               timezone or a UTC day), cells: list of {time: ISO time (start of the hour or day, UTC),
+     *               measuredSeconds: int, upSeconds: int, state: up|down|partial|none|future}}; at most 367 cells; a period
+     *               longer than 366 days is refused with HTTP 400 naming 'period'
      */
     public function getTimeline($idSite, $period, $date, $source = 'all', $timezoneOf = 0)
     {
         $idSite = $this->viewableSite($idSite);
         $source = $this->oneOf('source', $source, UptimeReport::SOURCES);
         $report = new UptimeReport();
-        $range = $this->range($report, $idSite, $period, $date, $timezoneOf);
+        // the whole period: the strip has a fixed axis, the hours or days after now are "future"
+        $range = $this->range($report, $idSite, $period, $date, $timezoneOf, false);
+        if ($range['to'] - $range['from'] > self::MAX_TIMELINE_DAYS * 86400) {
+            throw $this->error(Piwik::translate('FeinwerkUptimeMonitor_ErrorPeriodTooLong', ['period', self::MAX_TIMELINE_DAYS]));
+        }
         $zoneSite = $idSite > 0 ? $idSite : (int) $timezoneOf;
         $timezone = $zoneSite > 0 ? Site::getTimezoneFor($zoneSite) : 'UTC';
 
-        return $report->timeline($idSite, $range, $source, $timezone);
+        return $report->timeline($idSite, $range, $source, $timezone, (string) $period);
     }
 
     /**
@@ -396,7 +405,8 @@ class API extends \Piwik\Plugin\API
      * Overview for super users: one row for Matomo (idSite 0) and one per website with check targets, saying how many
      * of its switched-on targets are up, down or cannot be checked from this server, and how many are switched off.
      *
-     * @return array list of {idSite: int (0 = Matomo), name: string, targets: int (switched on), off: int (switched
+     * @return array list of {idSite: int (0 = Matomo), name: string, timezone: string (the website's, Matomo's names
+     *               such as Europe/Berlin or UTC+2; UTC for Matomo), targets: int (switched on), off: int (switched
      *               off), up: int, down: int, notCheckable: int, stale: int (results older than two check intervals: the
      *               checks stopped; counted neither as up nor as down), lastCheckedAt: ISO time|null,
      *               certificateDaysLeft: int|null (soonest expiry; negative when expired)}
@@ -509,7 +519,7 @@ class API extends \Piwik\Plugin\API
         return $target;
     }
 
-    private function range(UptimeReport $report, int $idSite, $period, $date, $timezoneOf = 0): array
+    private function range(UptimeReport $report, int $idSite, $period, $date, $timezoneOf = 0, bool $cutAtNow = true): array
     {
         $period = $this->oneOf('period', $period, UptimeReport::PERIODS);
         $timezoneOf = $idSite === 0 ? $this->wholeNumber('timezoneOf', $timezoneOf, 0, PHP_INT_MAX) : 0;
@@ -518,7 +528,7 @@ class API extends \Piwik\Plugin\API
             $this->existingSite($timezoneOf);
         }
         try {
-            return $report->range($idSite, $period, trim((string) $date), $timezoneOf);
+            return $report->range($idSite, $period, trim((string) $date), $timezoneOf, $cutAtNow);
         } catch (\Throwable $e) {
             throw $this->error(Piwik::translate('FeinwerkUptimeMonitor_ErrorParameterNotAllowed',
                 ['date', trim((string) $date), 'YYYY-MM-DD, today, yesterday, YYYY-MM-DD,YYYY-MM-DD']));

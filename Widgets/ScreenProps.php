@@ -29,6 +29,9 @@ final class ScreenProps
     public static function for(int $idSite, string $variant): array
     {
         $embedded = Piwik::getModule() === 'Widgetize' || Common::getRequestVar('disableLink', 0, 'int') === 1;
+        // the uptime page itself can be put on a dashboard too: there it is a widget (card, no feedback row)
+        $onDashboard = Common::getRequestVar('widget', 0, 'int') === 1;
+        $ownPage = $variant === 'page' && !$embedded && !$onDashboard;
 
         return [
             'idSite' => $idSite,
@@ -44,12 +47,16 @@ final class ScreenProps
             'isAnonymous' => Piwik::isUserIsAnonymous(),
             'language' => self::language(),
             'queuedTracking' => self::active('QueuedTracking'),
-            'sentinel' => self::active('FeinwerkSentinel') ? 'active' : 'absent',
+            // active, installed (files there, deactivated) or absent
+            'sentinel' => self::active('FeinwerkSentinel') ? 'active' : (self::installed('FeinwerkSentinel') ? 'inactive' : 'absent'),
             'embedded' => $embedded,
             // the feedback row: under the uptime page only, never in dashboard widgets or Widgetize embeds
-            'feedback' => $variant === 'page' && !$embedded ? self::feedback() : null,
+            'feedback' => $ownPage ? self::feedback() : null,
             // the kit's tip line below it, same place (docs/promotions.md, footer variant A)
-            'promo' => $variant === 'page' && !$embedded ? self::promo($idSite) : null,
+            'promo' => $ownPage ? self::promo($idSite) : null,
+            // the kit's card in every widget on a dashboard (Peter, 2026-11-24, 7b); never in Widgetize embeds
+            'promoCard' => !$embedded && ($onDashboard || $variant !== 'page') && $variant !== 'admin'
+                ? self::promoCard($idSite) : null,
         ];
     }
 
@@ -93,6 +100,34 @@ final class ScreenProps
         return ['active' => $active, 'intervalSeconds' => $active ? $tracker->interval($now) : null];
     }
 
+    /**
+     * The card of the promotion kit for a widget: the tip line's message of the day as a card (PromoCard); the caller
+     * asks only for widgets (the two uptime widgets, and the uptime page on a dashboard, widget=1). Null for users
+     * without admin access and when promotions are off.
+     *
+     * @return array<string, mixed>|null
+     */
+    private static function promoCard(int $idSite): ?array
+    {
+        try {
+            $place = \Piwik\Plugins\FeinwerkUptimeMonitor\Promo\PromoCard::placeFor(
+                false,
+                PromoLine::isEmbedded(Piwik::getModule(), Common::getRequestVar('disableLink', 0, 'int')),
+                Common::getRequestVar('widget', 0, 'int') === 1
+            );
+            if ($idSite <= 0 || $place !== \Piwik\Plugins\FeinwerkUptimeMonitor\Promo\PromoCard::CARD) {
+                return null;
+            }
+
+            return \Piwik\Plugins\FeinwerkUptimeMonitor\Promo\PromoCard::fromLine(
+                PromoLine::current($idSite),
+                Piwik::translate('FeinwerkUptimeMonitor_PromoCardMore')
+            );
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     /** The website's name for headings such as the panel title (idSite 0: Matomo). */
     private static function siteName(int $idSite): string
     {
@@ -129,6 +164,15 @@ final class ScreenProps
             ];
         } catch (\Throwable $e) {
             return null;
+        }
+    }
+
+    private static function installed(string $plugin): bool
+    {
+        try {
+            return Manager::getInstance()->isPluginInFilesystem($plugin);
+        } catch (\Throwable $e) {
+            return false;
         }
     }
 

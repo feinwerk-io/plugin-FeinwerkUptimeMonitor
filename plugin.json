@@ -1,7 +1,7 @@
 {
     "name": "FeinwerkUptimeMonitor",
     "description": "Shows in Matomo whether your website and your Matomo tracking are reachable: uptime, response times, outages and certificate expiry at a glance.",
-    "version": "5.0.2",
+    "version": "5.1.0",
     "theme": false,
     "require": {
         "matomo": ">=5.0.0,<7.0.0-b1",
@@ -20,6 +20,9 @@
     "support": {
         "email": "support@feinwerk.io",
         "docs": "https://plugins.feinwerk.io/en/docs/plugins/FeinwerkUptimeMonitor"
+    },
+    "preview": {
+        "demo_url": "https://demo.feinwerk.io/demo/uptime-monitor"
     },
     "keywords": [
         "uptime",

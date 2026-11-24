@@ -1,0 +1,32 @@
+// The target panel built around the address (Peter's 4a, P3): suggestions first, the address large with its kind and
+// source small, edit and remove as icons, the add row inline, "Done" in the footer. Colours through custom properties.
+// The address is text; the check box with its On/Off is a control of its own (F2).
+.fwum-panel {
+  .fwum-suggestions {
+    margin: 0 0 16px; padding: 8px 12px; border-radius: 4px;
+    background: ~"var(--theme-color-background-tinyContrast, #f5f5f5)";
+    h3 { font-size: 1em; margin: 0 0 6px; }
+    ul { list-style: none; margin: 0; padding: 0; }
+    li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 4px 0; }
+  }
+  .fwum-suggestions__kind { font-size: 0.9em; color: var(--fwum-muted, #616161); }
+  .fwum-suggestions__url { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
+  .fwum-edit-list > li { padding: 8px 0; border-bottom: 1px solid ~"var(--theme-color-border, #cccccc)"; }
+  .fwum-edit-list__row { display: flex; align-items: flex-start; gap: 10px; }
+  .fwum-edit-list__toggle {
+    display: inline-flex; align-items: center; gap: 6px; flex: none; margin: 2px 0 0; cursor: pointer;
+    font-size: 0.85em; line-height: 1.4; color: var(--fwum-muted, #616161);
+    input[type="checkbox"] { position: static; opacity: 1; pointer-events: auto; margin: 0; flex: none; }
+    // On and Off in every language take the same width, so the addresses line up
+    small { display: inline-block; min-width: 8ch; font-size: 1em; }
+  }
+  .fwum-edit-list__address { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
+  .fwum-edit-list__url { font-size: 1.05em; overflow-wrap: anywhere; color: ~"var(--theme-color-text, #212121)"; }
+  .fwum-edit-list__address.is-off .fwum-edit-list__url { color: var(--fwum-muted, #616161); }
+  .fwum-edit-list > li > .fwum-inline-error { margin: 4px 0 0; }
+  .fwum-add .fwum-inline-error { margin: 6px 0 0; }
+  .fwum-edit-list__actions { display: flex; flex: none; gap: 2px; }
+  .fwum-icon-only { padding: 0 6px; min-width: 0; height: auto; line-height: 1.6; }
+  .fwum-add__row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .fwum-add__row .fwum-input { flex: 1 1 14em; min-width: 0; }
+}

@@ -13,11 +13,15 @@
  * - the busy state is the element property fwciBusy at once; the attribute, class and label follow after this click's
  *   dispatch, so an older copy that runs later in the same click (version 1, or the unguarded one in fe32b50) still
  *   finds the button free and does not cancel the navigation.
+ * Version 3 (2026-11-24, Conversions API's UI review), whichever copy handles the click: the capture listener keeps
+ * the button's label (data-fwci-label) and fills the status region ([data-fwci-status], role=status) with the progress
+ * label for screen readers; a page restored from the browser's back-forward cache (pageshow, persisted) gets its
+ * button back instead of a stuck progress label.
  * Check: tests/js/run-connectorinstaller-check.sh (1 to 20 copies, mixed with older and newer versions).
  */
 (function ($) {
     'use strict';
-    var VERSION = 2;
+    var VERSION = 3;
     if ((window.fwciKit || 0) >= VERSION) {
         return;
     }
@@ -27,12 +31,44 @@
         return target && target.closest ? target.closest('.fwci__run') : null;
     }
 
+    function busy(run) {
+        return run.fwciBusy === true || run.getAttribute('aria-disabled') === 'true';
+    }
+
     document.addEventListener('click', function (ev) {
         var run = runOf(ev.target);
-        if (run && typeof ev.fwciWasBusy !== 'boolean') {
-            ev.fwciWasBusy = run.fwciBusy === true || run.getAttribute('aria-disabled') === 'true';
+        if (!run) {
+            return;
         }
+        if (typeof ev.fwciWasBusy !== 'boolean') {
+            ev.fwciWasBusy = busy(run);
+        }
+        // version 3: before any copy's handler changes it, the label for a reset; after them, the status region
+        if (!run.hasAttribute('data-fwci-label')) {
+            run.setAttribute('data-fwci-label', $.trim($(run).text()));
+        }
+        window.setTimeout(function () {
+            if (busy(run)) {
+                $(run).closest('.fwci').find('[data-fwci-status]').text(run.getAttribute('data-fwci-busy') || '');
+            }
+        }, 0);
     }, true);
+
+    // back from the back-forward cache: the page was left mid-run, its button works again
+    window.addEventListener('pageshow', function (ev) {
+        if (!ev.persisted) {
+            return;
+        }
+        $('.fwci__run').each(function () {
+            var label = this.getAttribute('data-fwci-label');
+            this.fwciBusy = false;
+            $(this).removeAttr('aria-disabled').removeClass('fwci__run--busy');
+            if (label) {
+                $(this).text(label);
+            }
+            $(this).closest('.fwci').removeAttr('aria-busy').find('[data-fwci-status]').text('');
+        });
+    });
 
     $(document).on('click', '.fwci__run', function (ev) {
         var run = this;

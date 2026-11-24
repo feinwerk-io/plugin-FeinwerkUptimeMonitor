@@ -6,7 +6,8 @@ const { chromium } = require(process.env.FW_SANDBOX_PLAYWRIGHT);
 
 const ORIGIN = 'http://fwci.test/';
 const PAGE = '<!doctype html><html><body><div class="fwci"><a class="btn fwci__run" href="#run" '
-    + 'data-fwci-busy="Installing the connector…">Install and activate</a></div></body></html>';
+    + 'data-fwci-busy="Installing the connector…">Install and activate</a>'
+    + '<p class="fwci__status" role="status" data-fwci-status></p></div></body></html>';
 
 let failures = 0;
 function check(name, actual, expected) {
@@ -22,15 +23,15 @@ function check(name, actual, expected) {
     const browser = await chromium.launch({ executablePath: process.env.FW_BROWSER_CHROME, args });
     try {
         // Peter, 2026-11-24: many active plugins carry the kit, in different versions; one click must stay one action.
-        // 'cur' = this file, 'v1' = version 1 (18443c5), 'v0' = the unguarded copy of fe32b50 (one such copy is tolerated;
-        // two of them, or one next to v1, cancel each other whatever else loads), 'v3' = a future version (this file with
-        // VERSION 3, same rules)
-        const V3 = INSTALLER.replace('var VERSION = 2;', 'var VERSION = 3;');
-        const scripts = { cur: INSTALLER, v1: OLD1, v0: OLD0, v3: V3 };
-        const many = Array.from({ length: 20 }, (_, i) => ['v1', 'cur', 'v3'][i % 3]);
-        const sets = [['cur'], ['cur', 'cur'], ['cur', 'cur', 'cur'], Array(20).fill('cur'), ['v1', 'cur'], ['cur', 'v1'],
-            ['cur', 'v3'], ['v1', 'cur', 'v3'], ['v1', 'v3'], many, ['cur', 'v0'], ['v0', 'cur'], ['v0', 'cur', 'v3'],
-            ['cur', 'v3', 'v0'], ['v0'].concat(Array.from({ length: 19 }, (_, i) => ['cur', 'v3'][i % 2]))];
+        // 'cur' = this file (version 3), 'v2' = version 2 (0338553), 'v1' = version 1 (18443c5), 'v0' = the unguarded copy
+        // of fe32b50 (one such copy is tolerated; two of them, or one next to v1, cancel each other whatever else loads),
+        // 'v4' = a future version (this file with VERSION 4, same rules)
+        const V4 = INSTALLER.replace('var VERSION = 3;', 'var VERSION = 4;');
+        const scripts = { cur: INSTALLER, v2: OLD2, v1: OLD1, v0: OLD0, v4: V4 };
+        const many = Array.from({ length: 20 }, (_, i) => ['v1', 'v2', 'cur', 'v4'][i % 4]);
+        const sets = [['cur'], ['cur', 'cur'], Array(20).fill('cur'), ['v2', 'cur'], ['cur', 'v2'], ['v1', 'cur'], ['cur', 'v1'],
+            ['v1', 'v2', 'cur'], ['cur', 'v4'], ['v2', 'cur', 'v4'], many, ['cur', 'v0'], ['v0', 'cur'], ['v0', 'v2', 'cur'],
+            ['v0'].concat(Array.from({ length: 19 }, (_, i) => ['v2', 'cur', 'v4'][i % 3]))];
         for (const set of sets) {
             const copies = set.length;
             const label = set.length > 4 ? set.length + ' copies (' + Array.from(new Set(set)).join(', ') + ')' : set.join(' + ');
@@ -63,6 +64,23 @@ function check(name, actual, expected) {
             await page.waitForTimeout(150);
             check(label + ': a second click does not run again',
                 await page.evaluate(() => window.fwciNavigations), 0);
+            // version 3: the status region names the progress; back from the back-forward cache the button works again
+            check(label + ': the status region names the progress',
+                await page.evaluate(() => document.querySelector('[data-fwci-status]').textContent), 'Installing the connector…');
+            await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+            await page.waitForTimeout(50);
+            const reset = await page.evaluate(() => ({
+                label: document.querySelector('.fwci__run').textContent.trim(),
+                disabled: document.querySelector('.fwci__run').getAttribute('aria-disabled'),
+                status: document.querySelector('[data-fwci-status]').textContent,
+            }));
+            check(label + ': back from the cache the button is free again', reset, { label: 'Install and activate', disabled: null, status: '' });
+            await page.evaluate(() => { location.hash = ''; });
+            await page.waitForTimeout(100);
+            await page.evaluate(() => { window.fwciNavigations = 0; });
+            await page.click('.fwci__run');
+            await page.waitForTimeout(150);
+            check(label + ': and its click runs once more', await page.evaluate(() => window.fwciNavigations), 1);
             await context.close();
         }
     } finally {

@@ -6,6 +6,7 @@
  */
 
 import type { PromoVariables } from './PromoLine.vue';
+import type { PromoCardVariables } from './PromoCard.vue';
 
 export type Outcome = 'up' | 'down' | 'not_checkable';
 
@@ -73,6 +74,24 @@ export interface SeriesPoint {
   uptimePercent: number | null;
 }
 
+/** One cell of the hour strip (API getTimeline): an hour, or a day for longer periods. */
+export interface TimelineCell {
+  /** start of the hour or day, ISO time in UTC */
+  time: string;
+  /** measured seconds, summed over every check target of the website */
+  measuredSeconds: number;
+  upSeconds: number;
+  /** future: the cell starts after now (the strip has a fixed axis for the whole period) */
+  state: 'up' | 'down' | 'partial' | 'none' | 'future';
+}
+
+export interface Timeline {
+  grain: 'hour' | 'day';
+  /** with grain day: days in the website's timezone (local) or UTC days (long periods, old data) */
+  days?: 'local' | 'utc' | null;
+  cells: TimelineCell[];
+}
+
 export interface Incident {
   idIncident: number;
   type: 'outage' | 'gap';
@@ -107,6 +126,8 @@ export interface Suggestion {
 export interface SiteOverview {
   idSite: number;
   name: string;
+  /** the website's timezone (Matomo's names, also "UTC+2"; UTC for Matomo itself) */
+  timezone: string;
   targets: number;
   down: number;
   notCheckable: number;
@@ -126,7 +147,7 @@ export interface ScreenConfig {
   isAdmin: boolean;
   language: string;
   queuedTracking: boolean;
-  sentinel: 'active' | 'absent';
+  sentinel: 'active' | 'inactive' | 'absent';
   embedded: boolean;
   feedback: { enabled: boolean; supportUrl: string; version: string } | null;
   /** the website's name (idSite 0: Matomo) */
@@ -139,5 +160,7 @@ export interface ScreenConfig {
   isAnonymous?: boolean;
   /** the kit's tip line (Promo\PromoLine::current()): admins only, never embedded */
   promo?: PromoVariables | null;
+  /** the kit's card in dashboard widgets (Promo\PromoCard): admins only, dashboards only */
+  promoCard?: PromoCardVariables | null;
   cronLine?: string;
 }

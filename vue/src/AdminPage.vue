@@ -5,7 +5,9 @@
   @license https://www.gnu.org/licenses/gpl-3.0.html GPL v3 or later
 
   Administration > Diagnostic > Uptime Monitor (super users), spec 10: every website in one
-  list, Matomo's own targets, the cron line for checks every minute, the alert status.
+  list, Matomo's own targets, the cron line for checks every minute, the alert status. The last
+  check reads "3 minutes ago" (it follows the clock), its hover the time in the row's own
+  timezone with the zone named, since the rows' timezones differ (L3).
 -->
 <template>
   <div
@@ -91,13 +93,13 @@
                 <span
                   v-if="row.lastCheckedAt"
                   class="fwum-muted fwum-narrow-only"
-                  :title="when(row.lastCheckedAt)"
+                  :title="when(row.lastCheckedAt, row.timezone)"
                 >{{ since(row.lastCheckedAt) }}</span>
               </td>
               <td v-if="hasCerts">{{ certText(row.certificateDaysLeft) }}</td>
               <td
                 class="fwum-wide-only"
-                :title="row.lastCheckedAt ? when(row.lastCheckedAt) : ''"
+                :title="row.lastCheckedAt ? when(row.lastCheckedAt, row.timezone) : ''"
               >
                 {{ row.lastCheckedAt ? since(row.lastCheckedAt) : '' }}
               </td>
@@ -111,28 +113,52 @@
       >{{ translate('FeinwerkUptimeMonitor_UiFirstCheck') }}</p>
     </ContentBlock>
 
-    <ContentBlock :content-title="translate('FeinwerkUptimeMonitor_UiCron')">
-      <p>{{ translate('FeinwerkUptimeMonitor_UiCronHelp') }}</p>
-      <div class="fwum-cron">
-        <code>{{ config.cronLine }}</code>
-        <button
-          type="button"
-          class="btn-flat"
-          @click="copy"
-        >{{ translate(copied ? 'FeinwerkUptimeMonitor_UiCopied'
-          : 'FeinwerkUptimeMonitor_UiCopy') }}</button>
-      </div>
-    </ContentBlock>
-
-    <ContentBlock :content-title="translate('FeinwerkUptimeMonitor_UiAlerts')">
-      <p v-if="config.sentinel === 'active'">
-        {{ translate('FeinwerkUptimeMonitor_UiSentinelActive') }}
-      </p>
-      <p v-else>{{ translate('FeinwerkUptimeMonitor_UiSentinelAbsent') }}</p>
-      <p
-        v-if="config.sentinel === 'active'"
-        class="fwum-muted"
-      >{{ translate('FeinwerkUptimeMonitor_UiSentinelFacts') }}</p>
+    <!-- Peter's 3a (P2): status rows like Diagnostic > System Check -->
+    <ContentBlock :content-title="translate('FeinwerkUptimeMonitor_UiChecksAndAlerts')">
+      <ul class="fwum-checks">
+        <li :class="cronOk ? 'is-ok' : 'is-warn'">
+          <span
+            :class="cronOk ? 'icon-ok' : 'icon-warning'"
+            aria-hidden="true"
+          />
+          <div>
+            <p v-if="cronOk">{{ cronText }}</p>
+            <template v-else>
+              <p>{{ translate('FeinwerkUptimeMonitor_UiCronHelp') }}</p>
+              <div class="fwum-cron">
+                <code>{{ config.cronLine }}</code>
+                <button
+                  type="button"
+                  class="btn-flat"
+                  @click="copy"
+                >{{ translate(copied ? 'FeinwerkUptimeMonitor_UiCopied'
+                  : 'FeinwerkUptimeMonitor_UiCopy') }}</button>
+              </div>
+            </template>
+          </div>
+        </li>
+        <li :class="config.sentinel === 'active' ? 'is-ok' : 'is-warn'">
+          <span
+            :class="config.sentinel === 'active' ? 'icon-ok' : 'icon-warning'"
+            aria-hidden="true"
+          />
+          <div v-if="config.sentinel === 'active'">
+            <p>{{ translate('FeinwerkUptimeMonitor_UiSentinelActive') }}</p>
+            <p class="fwum-muted">{{ translate('FeinwerkUptimeMonitor_UiSentinelFacts') }}</p>
+          </div>
+          <div v-else>
+            <!-- the link to Feinwerk Sentinel is no promotion (Peter, 2026-11-24, 3a) -->
+            <p>
+              {{ translate(sentinelKey) }}
+              <a
+                :href="sentinelUrl"
+                target="_blank"
+                rel="noopener"
+              >{{ translate('FeinwerkUptimeMonitor_UiSentinelLink') }}</a>
+            </p>
+          </div>
+        </li>
+      </ul>
       <p>
         <a :href="settingsUrl">{{ translate('FeinwerkUptimeMonitor_UiSettings') }}</a>
       </p>
@@ -152,7 +178,9 @@ import { defineComponent, PropType } from 'vue';
 import { ContentBlock, MatomoUrl, translate } from 'CoreHome';
 import { api } from './api';
 import { ScreenConfig, SiteOverview } from './types';
-import { ago, dateTime, statusOf } from './format';
+import {
+  ago, dateTime, duration, statusOf, zoneOf,
+} from './format';
 import TargetPanel from './TargetPanel.vue';
 
 export default defineComponent({
@@ -168,6 +196,9 @@ export default defineComponent({
       copied: false,
       panelSite: null as number | null,
       panelName: '',
+      /** the screen's clock: "3 minutes ago" follows it every minute */
+      tick: Date.now(),
+      timer: 0,
     };
   },
   computed: {
@@ -180,7 +211,29 @@ export default defineComponent({
         }
         return ['stale', 'not_checkable', 'off'].includes(outcome) ? 1 : 2;
       };
-      return [...this.rows].sort((a, b) => rank(a) - rank(b) || a.idSite - b.idSite);
+      // Matomo first (it carries every website), then problems first
+      return [...this.rows].sort((a, b) => Number(b.idSite === 0) - Number(a.idSite === 0)
+        || rank(a) - rank(b) || a.idSite - b.idSite);
+    },
+    /** a system cron runs the checks (IntervalTracker on the server) */
+    cronOk(): boolean {
+      return !!this.config.cron?.active;
+    },
+    cronText(): string {
+      const seconds = this.config.cron?.intervalSeconds || 60;
+      return seconds <= 90
+        ? translate('FeinwerkUptimeMonitor_UiCronActiveMinute')
+        : translate('FeinwerkUptimeMonitor_UiCronActive', duration(seconds, this.config.language));
+    },
+    /** installed but deactivated, or not there at all */
+    sentinelKey(): string {
+      return this.config.sentinel === 'inactive' ? 'FeinwerkUptimeMonitor_UiSentinelInactive'
+        : 'FeinwerkUptimeMonitor_UiSentinelMissing';
+    },
+    /** Feinwerk Sentinel's store page in the page language (German or English) */
+    sentinelUrl(): string {
+      const lang = (this.config.language || '').startsWith('de') ? 'de' : 'en';
+      return `https://plugins.feinwerk.io/${lang}/plugins/FeinwerkSentinel?mtm_campaign=plugin-link&mtm_source=FeinwerkUptimeMonitor`;
     },
     /** the certificate column only where some website has one (no column of empty cells) */
     hasCerts(): boolean {
@@ -194,6 +247,12 @@ export default defineComponent({
   },
   mounted() {
     this.load();
+    this.timer = window.setInterval(() => {
+      this.tick = Date.now();
+    }, 60000);
+  },
+  beforeUnmount() {
+    window.clearInterval(this.timer);
   },
   methods: {
     translate,
@@ -202,17 +261,20 @@ export default defineComponent({
       api.overview().then((rows) => {
         this.rows = rows;
         this.failed = false;
+        this.tick = Date.now();
       }).catch(() => {
         this.failed = true;
       }).finally(() => {
         this.loading = false;
       });
     },
-    when(iso: string): string {
-      return dateTime(iso, this.config.language, this.config.timezone || '');
+    /** in the row's timezone (Matomo itself: UTC), named; a fixed offset names itself */
+    when(iso: string, timezone: string): string {
+      const text = dateTime(iso, this.config.language, timezone || '');
+      return zoneOf(timezone || '').name ? `${text} (${timezone})` : text;
     },
     since(iso: string): string {
-      return ago(iso, this.config.language);
+      return ago(iso, this.config.language, this.tick);
     },
     openPanel(row: SiteOverview): void {
       this.panelName = row.name;

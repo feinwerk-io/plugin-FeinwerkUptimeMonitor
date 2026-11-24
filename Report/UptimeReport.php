@@ -49,7 +49,7 @@ final class UptimeReport
      * @return array{from: int, to: int, grain: string}
      * @throws \Exception when Matomo cannot read the date
      */
-    public function range(int $idSite, string $period, string $date, int $timezoneOf = 0): array
+    public function range(int $idSite, string $period, string $date, int $timezoneOf = 0, bool $cutAtNow = true): array
     {
         // idSite 0 (Matomo itself) shown next to a website: that website's day
         $zoneSite = $idSite > 0 ? $idSite : $timezoneOf;
@@ -59,7 +59,9 @@ final class UptimeReport
         // local midnight of the first day and of the day after the last one, as UTC instants
         $from = (int) strtotime($built->getDateStart()->setTimezone($timezone)->getDateStartUTC() . ' UTC');
         $to = (int) strtotime($built->getDateEnd()->setTimezone($timezone)->getDateEndUTC() . ' UTC') + 1;
-        $to = min($to, $this->now());
+        if ($cutAtNow) {
+            $to = min($to, $this->now());
+        }
         $grain = $to - $from <= self::HOUR_ROWS_DAYS * 86400 ? 'hour' : 'day';
 
         return ['from' => $from, 'to' => max($from, $to), 'grain' => $grain];
@@ -147,56 +149,65 @@ final class UptimeReport
      *
      * @param array{from: int, to: int, grain: string} $range from range()
      * @param string $timezone the timezone the local days follow (Matomo's names, also "UTC+2")
-     * @return array{grain: string, cells: list<array{time: string, measuredSeconds: int, upSeconds: int, state: string}>}
+     * @return array{grain: string, days: ?string, cells: list<array{time: string, measuredSeconds: int, upSeconds: int, state: string}>}
      */
-    public function timeline(int $idSite, array $range, string $source, string $timezone): array
+    public function timeline(int $idSite, array $range, string $source, string $timezone, string $period = ''): array
     {
-        $ids = array_map(static fn(Target $t): int => $t->id,
-            array_filter($this->targets($idSite), static fn(Target $t): bool => $t->kind !== Kind::PROCESSING));
+        // the switched-on addresses, as on the screens (a switched-off address no longer counts)
+        $ids = array_map(static fn(Target $t): int => $t->id, array_filter($this->targets($idSite),
+            static fn(Target $t): bool => $t->kind !== Kind::PROCESSING && $t->enabled));
+        $now = $this->now();
         $span = $range['to'] - $range['from'];
+        // a fixed axis per period: a day in hours, a week and a month in the website's days, longer periods in UTC days
+        $hourly = $period === 'day' || ($period !== 'week' && $period !== 'month' && $span <= 2 * 86400);
+        $localDays = !$hourly && $span <= self::HOUR_ROWS_DAYS * 86400;
+        $rollups = new RollupStore();
         $cells = [];
-        if ($ids !== [] && $span > 0) {
-            if ($range['grain'] === 'hour') {
-                $rows = (new RollupStore())->hours($ids, self::utc(intdiv($range['from'], 3600) * 3600), self::utc($range['to']), $source);
-                if ($span <= 2 * 86400) {
-                    $grain = 'hour';
-                    for ($t = intdiv($range['from'], 3600) * 3600; $t < $range['to']; $t += 3600) {
-                        $cells[$t] = [0, 0];
-                    }
-                    foreach ($rows as $row) {
-                        $t = (int) strtotime($row['hour'] . ' UTC');
-                        if (isset($cells[$t])) {
-                            $cells[$t][0] += (int) $row['measured_seconds'];
-                            $cells[$t][1] += (int) $row['up_seconds'];
-                        }
-                    }
-                } else {
-                    $grain = 'day';
-                    // local days: the start of each local day as a UTC instant
-                    $starts = [];
-                    for ($t = $range['from']; $t < $range['to']; $t += 86400) {
-                        $local = Date::factory($t)->setTimezone($timezone)->toString('Y-m-d');
-                        $starts[$local] ??= $t;
-                    }
-                    foreach ($starts as $t) {
-                        $cells[$t] = [0, 0];
-                    }
-                    foreach ($rows as $row) {
-                        $local = Date::factory((int) strtotime($row['hour'] . ' UTC'))->setTimezone($timezone)->toString('Y-m-d');
-                        if (isset($starts[$local])) {
-                            $cells[$starts[$local]][0] += (int) $row['measured_seconds'];
-                            $cells[$starts[$local]][1] += (int) $row['up_seconds'];
-                        }
-                    }
+        $grain = $hourly ? 'hour' : 'day';
+        $days = $hourly ? null : 'local';
+        $readTo = min($range['to'], $now);
+        $hourRows = ($hourly || $localDays) && $ids !== [] && $readTo > $range['from']
+            ? $rollups->hours($ids, self::utc(intdiv($range['from'], 3600) * 3600), self::utc($readTo), $source)
+            : [];
+        if ($hourly) {
+            for ($t = intdiv($range['from'], 3600) * 3600; $t < $range['to']; $t += 3600) {
+                $cells[$t] = [0, 0];
+            }
+            foreach ($hourRows as $row) {
+                $t = (int) strtotime($row['hour'] . ' UTC');
+                if (isset($cells[$t])) {
+                    $cells[$t][0] += (int) $row['measured_seconds'];
+                    $cells[$t][1] += (int) $row['up_seconds'];
                 }
-            } else {
-                $grain = 'day';
-                $first = gmdate('Y-m-d', $range['from'] + 43200);
-                $last = gmdate('Y-m-d', $range['to'] + 43200);
-                for ($day = $first; $day < $last; $day = gmdate('Y-m-d', (int) strtotime($day . ' UTC') + 86400)) {
-                    $cells[(int) strtotime($day . ' UTC')] = [0, 0];
+            }
+        } elseif ($localDays && ($hourRows !== [] || $readTo <= $range['from'] || $ids === []
+            || $rollups->days($ids, gmdate('Y-m-d', $range['from'] + 43200), gmdate('Y-m-d', $readTo + 43200), $source) === [])) {
+            // UTC days only when the hourly values are gone but day values exist (older than 90 days)
+            // local days: the start of each local day as a UTC instant
+            $starts = [];
+            for ($t = $range['from']; $t < $range['to']; $t += 86400) {
+                $starts[self::localDay($t, $timezone)] ??= $t;
+            }
+            foreach ($starts as $t) {
+                $cells[$t] = [0, 0];
+            }
+            foreach ($hourRows as $row) {
+                $local = self::localDay((int) strtotime($row['hour'] . ' UTC'), $timezone);
+                if (isset($starts[$local])) {
+                    $cells[$starts[$local]][0] += (int) $row['measured_seconds'];
+                    $cells[$starts[$local]][1] += (int) $row['up_seconds'];
                 }
-                foreach ((new RollupStore())->days($ids, $first, $last, $source) as $row) {
+            }
+        } else {
+            // long periods, and short ones whose hourly values are gone (kept 90 days): UTC days, like uptime()
+            $days = 'utc';
+            $first = gmdate('Y-m-d', $range['from'] + 43200);
+            $last = gmdate('Y-m-d', $range['to'] + 43200);
+            for ($day = $first; $day < $last; $day = gmdate('Y-m-d', (int) strtotime($day . ' UTC') + 86400)) {
+                $cells[(int) strtotime($day . ' UTC')] = [0, 0];
+            }
+            if ($ids !== []) {
+                foreach ($rollups->days($ids, $first, gmdate('Y-m-d', $readTo + 43200), $source) as $row) {
                     $t = (int) strtotime($row['day'] . ' UTC');
                     if (isset($cells[$t])) {
                         $cells[$t][0] += (int) $row['measured_seconds'];
@@ -207,11 +218,34 @@ final class UptimeReport
         }
         $out = [];
         foreach ($cells as $t => [$measured, $up]) {
-            $state = $measured <= 0 ? 'none' : ($up >= $measured ? 'up' : ($up <= 0 ? 'down' : 'partial'));
+            if ($t >= $now) {
+                $state = 'future';
+            } else {
+                $state = $measured <= 0 ? 'none' : ($up >= $measured ? 'up' : ($up <= 0 ? 'down' : 'partial'));
+            }
             $out[] = ['time' => self::iso($t), 'measuredSeconds' => $measured, 'upSeconds' => $up, 'state' => $state];
         }
 
-        return ['grain' => $grain ?? ($range['grain'] === 'hour' ? 'hour' : 'day'), 'cells' => $out];
+        return ['grain' => $grain, 'days' => $days, 'cells' => $out];
+    }
+
+    /**
+     * The local calendar day of a UTC instant in a Matomo timezone: IANA names, and Matomo's fixed offsets ("UTC+2",
+     * "UTC-5.5") that PHP's DateTimeZone cannot read. Matomo's Date::setTimezone() is for the other direction (a local
+     * date to UTC) and shifts the wrong way here.
+     */
+    private static function localDay(int $timestamp, string $timezone): string
+    {
+        if (preg_match('/^UTC([+-])(\d+(?:\.\d+)?)$/', $timezone, $m)) {
+            $offset = (int) round((float) $m[2] * 3600) * ($m[1] === '-' ? -1 : 1);
+
+            return gmdate('Y-m-d', $timestamp + $offset);
+        }
+        try {
+            return (new \DateTime('@' . $timestamp))->setTimezone(new \DateTimeZone($timezone === '' ? 'UTC' : $timezone))->format('Y-m-d');
+        } catch (\Throwable $e) {
+            return gmdate('Y-m-d', $timestamp);
+        }
     }
 
     /**
@@ -318,22 +352,25 @@ final class UptimeReport
      * One row per website and one for Matomo (idSite 0): how many targets, how many are down or cannot be checked,
      * the last check, the soonest certificate expiry. Four queries for all websites.
      *
-     * @return list<array{idSite: int, name: string, targets: int, off: int, up: int, down: int, notCheckable: int, stale: int, lastCheckedAt: ?string, certificateDaysLeft: ?int}>
+     * @return list<array{idSite: int, name: string, timezone: string, targets: int, off: int, up: int, down: int, notCheckable: int, stale: int, lastCheckedAt: ?string, certificateDaysLeft: ?int}>
      */
     public function overview(): array
     {
         $states = (new StateStore())->all();
         $staleAfter = Freshness::now($this->now());
         $names = [0 => 'Matomo'];
+        $zones = [0 => 'UTC'];
         foreach ((new \Piwik\Plugins\SitesManager\Model())->getAllSites() as $site) {
             $names[(int) $site['idsite']] = \Piwik\Common::unsanitizeInputValue((string) $site['name']);
+            $zones[(int) $site['idsite']] = (string) ($site['timezone'] ?? 'UTC');
         }
         $rows = [];
         foreach ((new TargetStore())->current() as $target) {
             if (!isset($names[$target->idSite])) {
                 continue;
             }
-            $row = $rows[$target->idSite] ?? ['idSite' => $target->idSite, 'name' => $names[$target->idSite], 'targets' => 0,
+            $row = $rows[$target->idSite] ?? ['idSite' => $target->idSite, 'name' => $names[$target->idSite],
+                'timezone' => $zones[$target->idSite] ?? 'UTC', 'targets' => 0,
                 'off' => 0, 'up' => 0, 'down' => 0, 'notCheckable' => 0, 'stale' => 0, 'lastCheckedAt' => null,
                 'certificateDaysLeft' => null];
             if (!$target->enabled) {

@@ -7,7 +7,7 @@
 
 import { AjaxHelper } from 'CoreHome';
 import {
-  Incident, SeriesPoint, SiteOverview, Status, Suggestion, TargetRow, UptimeRow,
+  Incident, SeriesPoint, SiteOverview, Status, Suggestion, TargetRow, Timeline, UptimeRow,
 } from './types';
 
 const MODULE = 'FeinwerkUptimeMonitor';
@@ -47,10 +47,36 @@ export const api = {
       idSite, ...period, targetKey, timezoneOf,
     });
   },
-  incidents(idSite: number, period: Period, timezoneOf = 0): Promise<Incident[]> {
+  /** limit: 1 to 1000 per request; the page asks for more with "Show more" */
+  incidents(idSite: number, period: Period, timezoneOf = 0, limit = 100): Promise<Incident[]> {
     return get('getIncidents', {
-      idSite, ...period, limit: 50, timezoneOf,
+      idSite, ...period, limit, timezoneOf,
     });
+  },
+  /** the outages still open now ("since when" in the answer line), whatever period is viewed */
+  openIncidents(idSite: number, timezoneOf = 0): Promise<Incident[]> {
+    return AjaxHelper.fetch<Incident[]>({
+      method: `${MODULE}.getIncidents`,
+      idSite,
+      period: 'day',
+      date: 'today',
+      state: 'open',
+      limit: 100,
+      timezoneOf,
+    }, { createErrorNotification: false });
+  },
+  /**
+   * The hour strip: one cell per hour (a day) or per day, checked from the Matomo server, like
+   * the rest of the page. A failing strip leaves the page as it is: no toast.
+   */
+  timeline(idSite: number, period: Period, timezoneOf = 0): Promise<Timeline> {
+    return AjaxHelper.fetch<Timeline>({
+      method: `${MODULE}.getTimeline`,
+      idSite,
+      ...period,
+      source: 'local',
+      timezoneOf,
+    }, { createErrorNotification: false });
   },
   targets(idSite: number): Promise<{ targets: TargetRow[]; suggestions: Suggestion[] }> {
     // the panel shows its own error and a Try again

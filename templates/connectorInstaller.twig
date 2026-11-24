@@ -3,7 +3,8 @@
    Marketplace installer, then activate), activate (one button), console (files there, plugin administration off: the
    command), manual, php, wordpress (instructions, no button).
    installerError: Matomo's reason after a failed click (raw only where Matomo marks it as HTML). Matomo's own card and
-   button classes, so light and dark follow Matomo. #}
+   button classes, so light and dark follow Matomo. The status region (fwci__status) is filled by
+   javascripts/connectorinstaller.js after the click, for screen readers. #}
 {% extends 'admin.twig' %}
 
 {% set title %}{{ 'FeinwerkUptimeMonitor_ConnectorInstallerTitle'|translate }}{% endset %}
@@ -35,6 +36,7 @@
                     {{ (installerState == 'install' ? 'FeinwerkUptimeMonitor_ConnectorInstallerButton' : 'FeinwerkUptimeMonitor_ConnectorInstallerButtonActivate')|translate }}
                 </a>
             </p>
+            <p class="fwci__status" role="status" data-fwci-status></p>
             <p class="fwci__note">{{ 'FeinwerkUptimeMonitor_ConnectorInstallerPasswordNote'|translate }}</p>
         {% elseif installerState == 'console' %}
             <p>{{ 'FeinwerkUptimeMonitor_ConnectorInstallerConsole'|translate }}</p>

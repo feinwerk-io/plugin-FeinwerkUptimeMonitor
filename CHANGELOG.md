@@ -1,5 +1,30 @@
 # Changelog
 
+## 5.1.0
+
+- Visitors > Uptime answers first: one line says whether Matomo and the website are reachable and when they were last
+  checked, or which part has been unreachable since when and why. Below it the key figures (uptime of Matomo and of the
+  website with the measured share, the tracker's processing time, the soonest certificate expiry).
+- An hour strip for Matomo and for the website shows each hour of the day (each day of longer periods) as reachable,
+  partly reachable, not reachable or not measured; hover or focus a cell for its time, uptime and measured share.
+- Matomo and the website share one table with a group for each; a group without checked addresses stays with its note.
+- Addresses that cannot be checked from the Matomo server are summed up in one line, with the reason on demand and,
+  for super users, the link to allow private addresses.
+- The outage list says how many outages the period has ("20 of 57") and shows more on request.
+- "Checked 3 minutes ago" stays current while the page is open.
+- The dashboard widgets start with the state, show the figures and a small hour strip, and when something is down list
+  only the failing addresses with a link to the uptime page.
+- A live demo on the Matomo Marketplace and in the store: https://demo.feinwerk.io/demo/uptime-monitor
+- Administration > Diagnostic > Uptime Monitor shows checks and alerts as status rows, like Matomo's system check: a
+  running system cron is confirmed in one line, the cron line appears only while it is missing, and a missing Feinwerk
+  Sentinel is named with a link.
+- The panel for check targets puts found addresses first, shows each address large with its kind and source, edits
+  and removes with icons, checks the address as you type and closes with "Done" (every change saves at once).
+- On a dashboard, admins see one small card with a tip on another Feinwerk offer under the uptime widgets; "x" hides it
+  for 30 days and `promotions = 0` switches it off, as for the tip line.
+- The tip line shows its sentence only when it fits whole; the Feinwerk Connector installer tells screen readers what
+  happens after the click.
+
 ## 5.0.2
 
 - No more false outage of the interface on Matomo instances with many plugins: Matomo's login page is read to the

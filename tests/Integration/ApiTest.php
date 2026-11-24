@@ -371,6 +371,7 @@ class ApiTest extends IntegrationTestCase
         (new StateStore())->upsertMany([new CheckResult($this->web, Outcome::UP, null, null, 200, [], null, gmdate('Y-m-d H:i:s'))], StateStore::LOCAL);
         $row = array_column(self::api('getSitesOverview'), null, 'idSite')[1];
         $this->assertSame(1, $row['up']);
+        $this->assertSame('UTC', $row['timezone']);
     }
 
     /** Peter's D2: the hour strip. Hours for a day, local days for a week; up, partial, down and nothing measured. */
@@ -400,6 +401,59 @@ class ApiTest extends IntegrationTestCase
         FakeAccess::clearAccess(false, [], [1], 'anonymous');
         $this->expectException(\Piwik\NoAccessException::class);
         self::api('getTimeline', ['idSite' => 0, 'period' => 'day', 'date' => '2026-03-14']);
+    }
+
+    /** Regression: the strip's local days east of UTC (Berlin), and Matomo's fixed offsets (UTC+2). */
+    public function test_getTimeline_localDaysEastOfUtc_andFixedOffsets(): void
+    {
+        foreach (['Europe/Berlin', 'UTC+2'] as $zone) {
+            $idSite = Fixture::createWebsite('2026-01-01 00:00:00', 0, 'Zone ' . $zone, 'https://zone.example/', 1, null, null, $zone);
+            (new TargetStore())->setUrl($idSite, 'web:zone', Kind::WEB, 'https://zone.example/', TargetStore::SOURCE_MANUAL);
+            $id = (new TargetStore())->get($idSite, 'web:zone')->id;
+            // midday of 2026-03-14 local (12:00 Berlin is 11:00 UTC in March; UTC+2 fixed: 10:00 UTC). The old mapping
+            // (Matomo's Date::setTimezone, which shifts the other way) put this hour into the 13th
+            $hour = $zone === 'UTC+2' ? '2026-03-14 10:00:00' : '2026-03-14 11:00:00';
+            (new RollupStore())->upsertHours([['idtarget' => $id, 'hour' => $hour, 'source' => StateStore::EXTERNAL,
+                'samples' => 60, 'up_samples' => 60, 'measured_seconds' => 3600, 'up_seconds' => 3600, 'ms_p50' => 80,
+                'ms_p95' => 90, 'ms_max' => 100, 'cert_not_after' => null]]);
+            $month = self::api('getTimeline', ['idSite' => $idSite, 'period' => 'month', 'date' => '2026-03-14']);
+            $this->assertSame(['day', 'local'], [$month['grain'], $month['days']], $zone);
+            $measured = array_values(array_filter($month['cells'], static fn(array $c): bool => $c['measuredSeconds'] > 0));
+            $this->assertCount(1, $measured, $zone);
+            $this->assertSame(['measuredSeconds' => 3600, 'state' => 'up'], ['measuredSeconds' => $measured[0]['measuredSeconds'],
+                'state' => $measured[0]['state']], $zone);
+            // the cell is the local 14 March: its start is local midnight as UTC
+            $this->assertSame($zone === 'UTC+2' ? '2026-03-13T22:00:00Z' : '2026-03-13T23:00:00Z', $measured[0]['time'], $zone);
+        }
+    }
+
+    /** Hourly values are kept 90 days: an older day or week falls back to the UTC day rows, like the uptime figures. */
+    public function test_getTimeline_withoutHourRows_usesDayRows_andRefusesHugePeriods(): void
+    {
+        Db::query('INSERT INTO ' . Schema::table(Schema::DAY) . ' (idtarget, day, source, samples, up_samples, bulk_samples,'
+            . ' measured_seconds, up_seconds, ms_p50, ms_p95, ms_max, cert_not_after) VALUES (?, ?, ?, 1440, 1440, 0, 86400, 43200, 80, 90, 100, NULL)',
+            [$this->web, '2026-03-14', StateStore::LOCAL]);
+        $week = self::api('getTimeline', ['idSite' => 1, 'period' => 'week', 'date' => '2026-03-14']);
+        $this->assertSame(['day', 'utc'], [$week['grain'], $week['days']]);
+        $byDay = array_column($week['cells'], 'state', 'time');
+        $this->assertSame('partial', $byDay['2026-03-14T00:00:00Z']);
+        $this->assertBadRequest('getTimeline', ['idSite' => 1, 'period' => 'range', 'date' => '2024-01-01,2026-03-14'], "'period'");
+    }
+
+    /** A fixed axis (UI review D1): the whole day in hours and the whole week in days; what lies after now is future. */
+    public function test_getTimeline_fixedAxis_withFutureCells(): void
+    {
+        $day = self::api('getTimeline', ['idSite' => 1, 'period' => 'day', 'date' => 'today']);
+        $this->assertSame('hour', $day['grain']);
+        $this->assertCount(24, $day['cells'], 'website 1 is in UTC: 24 hours');
+        $states = array_column($day['cells'], 'state');
+        $this->assertSame('future', end($states));
+        $this->assertNotSame('future', $states[0]);
+
+        $week = self::api('getTimeline', ['idSite' => 1, 'period' => 'week', 'date' => '2026-03-11']);
+        $this->assertSame(['day', 'local'], [$week['grain'], $week['days']], 'a past week: days, not hours');
+        $this->assertCount(7, $week['cells']);
+        $this->assertNotContains('future', array_column($week['cells'], 'state'));
     }
 
     public function test_matomosUptime_followsTheViewedWebsitesDay(): void

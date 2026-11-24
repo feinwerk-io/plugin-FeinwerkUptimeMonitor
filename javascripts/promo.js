@@ -15,11 +15,14 @@
  * Version 4 (2026-11-23): a line too short for its sentence drops the sentence entirely and keeps logo mark, link and x
  * (Peter: "Compact: logo, link, x"; never a cut fragment), the link is never cut, the focus moves on after an x, and
  * the admin home banner moves below Matomo's own notices (Peter: "Below Matomo's notices").
+ * Version 5 (2026-11-24, Conversions API's UI review): a compact line shows its sentence only when it fits whole, else
+ * none (a phone at 390 px showed "UTM-Builder und Nam..."); lines an older copy measured first are measured again
+ * (data-fwpromo-fit holds the version); after an x with nothing after it the focus goes to the control before it.
  */
 (function () {
     'use strict';
 
-    var VERSION = 4;
+    var VERSION = 5;
     if ((window.fwpromoKit || 0) >= VERSION) {
         return;
     }
@@ -69,6 +72,13 @@
                 return;
             }
         }
+        // version 5: nothing after it, so the control before it (never the page start)
+        for (var j = all.length - 1; j >= 0; j--) {
+            if (!node.contains(all[j]) && (node.compareDocumentPosition(all[j]) & 2) && all[j].offsetParent !== null) {
+                all[j].focus();
+                return;
+            }
+        }
     }
 
     function remove(notice) {
@@ -100,7 +110,10 @@
         if (text.clientWidth < 160 || logo.scrollWidth > logo.clientWidth + 1) {
             line.classList.add('fwpromo-line--compact');
         }
-        if (text.clientWidth < SENTENCE) {
+        // version 5: measured with the compact logo, a compact line keeps its sentence only when it fits whole
+        if (text.clientWidth < SENTENCE
+            || (line.classList.contains('fwpromo-line--compact') && text.scrollWidth > text.clientWidth + 1)
+        ) {
             line.classList.add('fwpromo-line--bare');
         }
     }
@@ -125,10 +138,14 @@
         : null;
 
     function watch(notice) {
-        if (!notice.classList.contains('fwpromo-line') || notice.hasAttribute('data-fwpromo-fit')) {
+        // an older copy that measured the line first set a lower version (1): this copy measures it again and keeps
+        // it measured (its observer runs after the older one's, so its result stays)
+        if (!notice.classList.contains('fwpromo-line')
+            || parseInt(notice.getAttribute('data-fwpromo-fit') || '0', 10) >= VERSION
+        ) {
             return;
         }
-        notice.setAttribute('data-fwpromo-fit', '1');
+        notice.setAttribute('data-fwpromo-fit', String(VERSION));
         fit(notice);
         if (resizeObserver) {
             resizeObserver.observe(notice);

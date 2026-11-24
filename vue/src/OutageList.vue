@@ -6,11 +6,17 @@
 -->
 <template>
   <div class="fwum-outages">
-    <div
-      class="fwum-outages__title"
-      role="heading"
-      aria-level="3"
-    >{{ translate('FeinwerkUptimeMonitor_UiOutages') }}</div>
+    <div class="fwum-outages__head">
+      <div
+        class="fwum-outages__title"
+        role="heading"
+        aria-level="3"
+      >{{ translate('FeinwerkUptimeMonitor_UiOutages') }}</div>
+      <span
+        v-if="countText"
+        class="fwum-muted"
+      >{{ countText }}</span>
+    </div>
     <p
       v-if="incidents.length === 0"
       class="fwum-muted"
@@ -19,10 +25,13 @@
       v-else
       class="fwum-table-wrap"
     >
-      <table class="entityTable fwum-outages__table">
+      <table class="dataTable fwum-table fwum-outages__table">
         <thead>
           <tr>
-            <th scope="col">{{ translate('FeinwerkUptimeMonitor_UiStart') }}</th>
+            <th
+              scope="col"
+              class="label"
+            >{{ translate('FeinwerkUptimeMonitor_UiStart') }}</th>
             <th scope="col">{{ translate('FeinwerkUptimeMonitor_UiDuration') }}</th>
             <th scope="col">{{ translate('FeinwerkUptimeMonitor_UiWhat') }}</th>
             <th scope="col">{{ translate('FeinwerkUptimeMonitor_UiCause') }}</th>
@@ -37,7 +46,7 @@
             v-for="incident in incidents"
             :key="incident.idIncident"
           >
-            <td>{{ when(incident.start) }}</td>
+            <td class="label fwum-outages__start">{{ when(incident.start) }}</td>
             <td>
               <span
                 v-if="incident.open"
@@ -51,11 +60,15 @@
           </tr>
         </tbody>
       </table>
-      <p
-        v-if="truncated"
-        class="fwum-note"
-      >{{ translate('FeinwerkUptimeMonitor_UiOutagesNewest', '20') }}</p>
     </div>
+    <button
+      v-if="canShowMore"
+      type="button"
+      class="btn-flat fwum-more"
+      :disabled="loadingMore"
+      @click="$emit('more')"
+    >{{ translate(loadingMore ? 'FeinwerkUptimeMonitor_UiLoading'
+      : 'FeinwerkUptimeMonitor_UiShowMore') }}</button>
   </div>
 </template>
 
@@ -74,10 +87,26 @@ export default defineComponent({
     language: { type: String, default: '' },
     /** the website's timezone (Peter's 6a) */
     timezone: { type: String, default: '' },
-    /** more outages than the ones listed */
-    truncated: { type: Boolean, default: false },
+    /** the outages of the period that were loaded (the list shows the first ones) */
+    total: { type: Number, default: 0 },
+    /** the API cut a list at its limit: the period has at least `total` outages */
+    totalIsMinimum: { type: Boolean, default: false },
+    /** "Show more" can show or load more */
+    canShowMore: { type: Boolean, default: false },
+    loadingMore: { type: Boolean, default: false },
   },
+  emits: ['more'],
   computed: {
+    /** "20 of 57" above a cut list (the UI review's later item 10) */
+    countText(): string {
+      if (this.incidents.length === 0
+        || (this.incidents.length >= this.total && !this.totalIsMinimum)) {
+        return '';
+      }
+      return translate(this.totalIsMinimum
+        ? 'FeinwerkUptimeMonitor_UiOutagesOfAtLeast'
+        : 'FeinwerkUptimeMonitor_UiOutagesOf', String(this.incidents.length), String(this.total));
+    },
     /** the column helps only once results come from outside (the free plugin checks from Matomo) */
     hasExternal(): boolean {
       return this.incidents.some((i) => i.source === 'external');

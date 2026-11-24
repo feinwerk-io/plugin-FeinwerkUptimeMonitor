@@ -37,36 +37,186 @@
 }
 
 .fwum-page {
+  // the hour strip's cells and tooltip (no theme variable for status colours: own light and dark values)
+  --fwum-cell-up: #2e8540;
+  --fwum-cell-partial: #c27c00;
+  --fwum-cell-down: #d32f2f;
+  --fwum-cell-none: #cfcfcf;
+  --fwum-cell-future: #b3b3b3;
+  --fwum-tip-bg: #212121;
+  --fwum-tip-text: #ffffff;
+  .fwum-dark({
+    --fwum-cell-up: #57c27a;
+    --fwum-cell-partial: #e8a93a;
+    --fwum-cell-down: #ff7b72;
+    --fwum-cell-none: #5c5c5c;
+    --fwum-cell-future: #6e6e6e;
+    --fwum-tip-bg: #f5f5f5;
+    --fwum-tip-text: #212121;
+  });
+
   .fwum-loading { min-height: 120px; display: flex; align-items: center; justify-content: center; }
   .fwum-error, .fwum-empty { padding: 8px 0 16px; }
-  .fwum-card {
-    padding: 12px 0 16px;
-    & + .fwum-card { border-top: 1px solid @fwum-border; }
+  .fwum-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+  .fwum-icon-button { padding: 0 8px; [class^="icon-"] { vertical-align: middle; } }
+
+  // the answer: "Everything reachable", or one line per group, the worst first; actions on the right
+  .fwum-answer { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 4px 16px; padding: 4px 0 8px; }
+  .fwum-answer__text { flex: 1 1 20em; min-width: 0; }
+  .fwum-answer__line {
+    // the dot stays at the start of the first line, the texts wrap under each other's start
+    position: relative; margin: 0 0 2px; padding-left: 18px; font-size: 1.15em; line-height: 1.5;
+    > .fwum-dot { position: absolute; left: 0; top: 0.5em; width: 10px; height: 10px; }
+    > .fwum-state, > .fwum-answer__detail { margin-right: 8px; }
+    > .fwum-muted { font-size: 0.8em; white-space: nowrap; }
   }
-  .fwum-card__head { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; }
-  .fwum-card__title { font-size: 1.1em; font-weight: 600; margin: 0; }
-  .fwum-card__actions { margin-left: auto; display: flex; gap: 4px; flex-wrap: wrap; }
+  .fwum-answer__detail { color: @fwum-text-light; }
+  .fwum-answer__actions { margin-left: auto; margin-top: -4px; display: flex; gap: 4px; flex-wrap: wrap; }
   @media (max-width: 600px) {
     // on phones the actions start their own line at the left edge
-    .fwum-card__actions { margin-left: 0; flex-basis: 100%; }
-    .fwum-card__actions .fwum-icon-button { padding-left: 0; }
+    .fwum-answer__actions { margin: 4px 0 0; flex-basis: 100%; gap: 4px 16px; }
+    .fwum-answer__actions .fwum-icon-button { padding-left: 0; padding-right: 0; }
+    // a long label ("Modifier les points de contrôle") wraps inside the button, never over the figures
+    .fwum-icon-button {
+      height: auto; min-height: 36px; padding-top: 6px; padding-bottom: 6px; line-height: 1.5;
+      white-space: normal; text-align: left;
+    }
   }
-  .fwum-icon-button { padding: 0 8px; [class^="icon-"] { vertical-align: middle; } }
-  .fwum-state {
-    font-weight: 600;
-    &.is-up { color: var(--fwum-up); }
-    &.is-down { color: var(--fwum-down); }
-    &.is-partial { color: var(--fwum-warn); }
-    &.is-not_checkable, &.is-none, &.is-stale { color: var(--fwum-muted); }
+  .fwum-state { font-weight: 600; }
+  .is-up .fwum-state { color: var(--fwum-up); }
+  .is-down .fwum-state { color: var(--fwum-down); }
+  .is-partial .fwum-state { color: var(--fwum-warn); }
+  .is-not_checkable .fwum-state, .is-none .fwum-state, .is-stale .fwum-state, .is-off .fwum-state {
+    color: var(--fwum-muted);
   }
+  .fwum-dot {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex: none;
+    background: var(--fwum-muted);
+  }
+  .is-up .fwum-dot { background: var(--fwum-up); }
+  .is-down .fwum-dot { background: var(--fwum-down); }
+  .is-partial .fwum-dot { background: var(--fwum-warn); }
+
+  // key figures: small; the hour strip is the picture
   .fwum-figures {
-    display: flex; flex-wrap: wrap; gap: 8px 32px; margin: 12px 0 8px;
+    display: flex; flex-wrap: wrap; gap: 8px 32px; margin: 8px 0 12px;
+    > div { min-width: 0; }
     dt { font-size: 0.85em; color: var(--fwum-muted); }
-    dd { margin: 0; font-size: 1.4em; font-weight: 600; font-variant-numeric: tabular-nums; }
-    dd.fwum-figures__sub { font-size: 0.85em; font-weight: normal; color: var(--fwum-muted); }
+    dd { margin: 0; font-size: 1.2em; font-weight: 600; font-variant-numeric: tabular-nums; }
+    dd.fwum-figures__sub { font-size: 0.85em; font-weight: normal; color: var(--fwum-muted); overflow-wrap: anywhere; }
+    dd.fwum-figures__spark { margin-top: 2px; line-height: 0; }
     dd.is-warning { color: var(--fwum-warn); }
     dd.is-critical, dd.is-expired { color: var(--fwum-down); }
   }
+  .fwum-sparkline { max-width: 100%; }
+  .fwum-sparkline__line { fill: none; stroke: ~"var(--theme-color-brand, #3450a3)"; stroke-width: 1.5; }
+
+  // the hour strips (Peter's D2), one per group
+  .fwum-strips { margin: 4px 0 16px; }
+  .fwum-strips__row { display: flex; align-items: flex-start; gap: 4px 12px; margin-bottom: 6px; }
+  .fwum-strips__name {
+    flex: 0 0 110px; padding-top: 5px; font-size: 0.9em; color: @fwum-text-light; overflow-wrap: anywhere;
+  }
+  .fwum-strips__row > .fwum-strip { flex: 1 1 auto; min-width: 0; }
+  .fwum-legend {
+    display: flex; flex-wrap: wrap; gap: 2px 16px; list-style: none; margin: 2px 0 0 122px; padding: 0;
+    font-size: 0.85em; color: var(--fwum-muted);
+    li { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+    li::before { content: ''; width: 10px; height: 10px; border-radius: 2px; background: var(--fwum-cell-none); }
+    li.is-up::before { background: var(--fwum-cell-up); }
+    li.is-partial::before { background: var(--fwum-cell-partial); }
+    li.is-down::before { background: var(--fwum-cell-down); }
+  }
+  @media (max-width: 600px) {
+    .fwum-strips__row { flex-direction: column; align-items: stretch; }
+    .fwum-strips__name { flex: none; padding-top: 0; }
+    .fwum-legend { margin-left: 0; }
+  }
+  .fwum-strip { position: relative; }
+  .fwum-strip__cells {
+    display: flex; gap: 2px; height: 28px; list-style: none; margin: 0; padding: 0;
+    &.is-dense { gap: 0; }
+  }
+  .fwum-strip__cell {
+    flex: 1 1 0; min-width: 0; margin: 0; padding: 0; border-radius: 2px; background: var(--fwum-cell-none);
+    &.is-up { background: var(--fwum-cell-up); }
+    &.is-partial { background: var(--fwum-cell-partial); }
+    &.is-down { background: var(--fwum-cell-down); }
+    &:hover { opacity: 0.75; }
+    &:focus { outline: none; }
+    &:focus-visible { outline: 2px solid ~"var(--theme-color-focus-ring, #0969da)"; outline-offset: 1px; position: relative; z-index: 1; }
+    // after now (D1): an empty outline (an inset shadow: a border would keep a flex cell from shrinking)
+    &.is-future { background: transparent; box-shadow: inset 0 0 0 1px var(--fwum-cell-future); }
+    &.is-future:hover { opacity: 1; }
+    // the thin "now" mark in the gap before the first cell after now
+    &.is-next { position: relative; }
+    &.is-next::before {
+      content: ''; position: absolute; top: -3px; bottom: -3px; left: -2px; width: 2px; border-radius: 1px;
+      background: var(--fwum-muted);
+    }
+  }
+  .is-dense .fwum-strip__cell { border-radius: 0; }
+  // dense strips have no gaps: the cells after now form one outlined band
+  .is-dense .fwum-strip__cell.is-future {
+    box-shadow: inset 0 1px 0 var(--fwum-cell-future), inset 0 -1px 0 var(--fwum-cell-future);
+  }
+  .fwum-strip__tip {
+    position: absolute; bottom: ~"calc(100% + 6px)"; z-index: 20; width: max-content; padding: 4px 8px;
+    border-radius: 4px; font-size: 0.85em; line-height: 1.4; white-space: normal; pointer-events: none;
+    background: var(--fwum-tip-bg); color: var(--fwum-tip-text); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  }
+  .fwum-strip__axis {
+    display: flex; justify-content: space-between; margin-top: 2px; font-size: 0.8em; color: var(--fwum-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .fwum-strip--small .fwum-strip__cells { height: 12px; gap: 1px; }
+  .fwum-strip--small .fwum-strip__cells.is-dense { gap: 0; }
+  .fwum-strip--small .fwum-strip__cell.is-next::before { top: -2px; bottom: -2px; left: -1px; width: 1px; }
+  // the widgets' small strip: a small axis says which hours or days it shows (L11)
+  .fwum-strip--small .fwum-strip__axis { margin-top: 1px; font-size: 0.75em; }
+
+  // one table in Matomo's report-table look, the groups Matomo and This website as row groups
+  .fwum-table-wrap { overflow-x: auto; max-width: 100%; }
+  .fwum-table-wrap table.fwum-table.dataTable {
+    margin-top: 4px;
+    th:first-child, td:first-child { padding-left: 0; }
+    th:last-child, td:last-child { padding-right: 0; }
+    th.label, td.label { width: auto; white-space: normal; overflow-wrap: anywhere; }
+    td.fwum-targets__text { white-space: normal; min-width: 7em; }
+    tr.fwum-group-row th, tr.fwum-group-row th:not(.label) {
+      padding-left: 0; padding-right: 0; padding-top: 14px; padding-bottom: 4px; text-align: left; font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--fwum-muted); border-bottom: 1px solid @fwum-border;
+    }
+    tr.fwum-group-empty td { color: @fwum-text-light; }
+    tr.fwum-group-empty .fwum-icon-button { margin-left: 4px; }
+    tr.is-down td.fwum-targets__text { color: var(--fwum-down); }
+    td.fwum-targets__cert.is-warning { color: var(--fwum-warn); }
+    td.fwum-targets__cert.is-critical, td.fwum-targets__cert.is-expired { color: var(--fwum-down); }
+  }
+  // outages in the same look, every column text and left-aligned
+  .fwum-table-wrap table.fwum-outages__table.dataTable {
+    th, td { text-align: left; padding-left: 0; padding-right: 16px; }
+    th:last-child, td:last-child { padding-right: 0; }
+    td.fwum-outages__start { white-space: nowrap; }
+  }
+  @media (max-width: 600px) {
+    // phones: Matomo's wide column padding would push the last column out of sight
+    .fwum-table-wrap table.fwum-table.dataTable {
+      th:not(.label), td.column { padding-left: 10px; }
+      thead th { padding-top: 10px; padding-bottom: 10px; }
+      td.fwum-targets__text { min-width: 5em; }
+    }
+    .fwum-table-wrap table.fwum-outages__table.dataTable {
+      th, td { padding-left: 0; padding-right: 10px; }
+      td.fwum-outages__start { white-space: normal; min-width: 6em; }
+    }
+  }
+  // the dot stays with the first line of a long address
+  .fwum-cell-label { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .fwum-cell-label .fwum-dot { flex-shrink: 0; }
+  .fwum-inline-link { margin-left: 8px; }
+
+  // the widgets' compact list
   .fwum-targets {
     list-style: none; margin: 8px 0 0; padding: 0;
     li {
@@ -80,41 +230,37 @@
     .fwum-targets__cert.is-critical, .fwum-targets__cert.is-expired { color: var(--fwum-down); }
     li.is-down .fwum-targets__text { color: var(--fwum-down); }
   }
-  .fwum-dot {
-    display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex: none;
-    background: var(--fwum-muted);
+
+  // addresses this server cannot check: one line, the reason on demand (B1)
+  .fwum-nc { margin-top: 8px; .fwum-note { margin: 0 0 4px; } }
+  .fwum-link-button {
+    margin: 0 6px 0 2px; padding: 0; border: 0; background: none; font: inherit; cursor: pointer;
+    color: ~"var(--theme-color-link, #1976d2)"; text-decoration: underline;
+    // Matomo 5.0 takes the outline off buttons: an own ring for the keyboard, like the strip cells
+    &:focus { outline: none; }
+    &:focus-visible { outline: 2px solid ~"var(--theme-color-focus-ring, #0969da)"; outline-offset: 2px; border-radius: 2px; }
   }
-  .is-up .fwum-dot { background: var(--fwum-up); }
-  .is-down .fwum-dot { background: var(--fwum-down); }
-  .fwum-table-wrap { overflow-x: auto; max-width: 100%; }
-  .fwum-grid {
-    width: 100%; border-collapse: collapse; margin-top: 8px;
-    th { text-align: left; font-weight: normal; font-size: 0.85em; color: var(--fwum-muted); padding: 4px 12px 4px 0; }
-    td { padding: 5px 12px 5px 0; border-bottom: 1px solid @fwum-bg-tiny; vertical-align: baseline; }
-    td:first-child { overflow-wrap: anywhere; }
-    // the dot stays with the first line of a long address
-    .fwum-cell-label { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; }
-    .fwum-cell-label .fwum-dot { flex-shrink: 0; }
-    tr.is-down .fwum-targets__text { color: var(--fwum-down); }
-  }
-  .fwum-num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .fwum-nc__why { max-width: 60em; }
+  .fwum-open-page { margin: 8px 0 0; }
+
   .fwum-ongoing { color: var(--fwum-down); font-weight: 600; }
-  .fwum-spark { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
-  .fwum-sparkline { max-width: 100%; }
-  .fwum-sparkline__line { fill: none; stroke: ~"var(--theme-color-brand, #3450a3)"; stroke-width: 1.5; }
   .fwum-note { font-size: 0.9em; color: var(--fwum-muted); margin-top: 8px; }
   .fwum-outages { margin-top: 16px; }
-  .fwum-outages__title { font-size: 1.05em; font-weight: 600; margin: 0 0 8px; }
-  .fwum-outages__table { width: 100%; }
-  .fwum-outages__table { th, td { text-align: left; } }
-  .fwum-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .fwum-outages__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 0 8px; }
+  .fwum-outages__title { font-size: 1.05em; font-weight: 600; margin: 0; }
+  .fwum-more { margin-top: 4px; padding-left: 0; }
 }
 
+// dashboard widgets: no inner title, the state first, compact
 .fwum-page--matomo, .fwum-page--site {
-  padding: 0 12px 8px;
+  padding: 8px 12px;
+  // Matomo indents paragraphs in widgets (.widget p)
   p { margin-left: 0; }
-  .fwum-figures dd { font-size: 1.15em; }
-  .fwum-card { padding-top: 12px; }
+  .fwum-answer { padding-top: 0; }
+  .fwum-answer__line { font-size: 1.05em; }
+  .fwum-figures { gap: 6px 20px; margin: 4px 0 8px; dd { font-size: 1.05em; } }
+  .fwum-strips { margin: 0 0 4px; }
+  .fwum-strips__row { margin: 0; }
 }
 
 .fwum-muted { color: var(--fwum-muted, #616161); }
@@ -176,11 +322,10 @@
 .fwum-edit-list {
   list-style: none; padding: 0; margin: 0;
   li { padding: 8px 0; border-bottom: 1px solid @fwum-bg-tiny; }
-  .fwum-edit-list__url, .fwum-edit-list__edit, .fwum-edit-list__confirm {
+  .fwum-edit-list__edit, .fwum-edit-list__confirm {
     display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px;
   }
   .fwum-edit-list__confirm { color: var(--fwum-down, #c62828); }
-  .fwum-edit-list__url span { overflow-wrap: anywhere; color: @fwum-text-light; }
 }
 .fwum-input, .fwum-select {
   flex: 1; min-width: 160px; padding: 4px 6px; color: @fwum-text; background: @fwum-bg;

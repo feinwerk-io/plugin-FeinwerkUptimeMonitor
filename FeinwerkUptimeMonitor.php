@@ -117,8 +117,11 @@ class FeinwerkUptimeMonitor extends \Piwik\Plugin
     {
         $files[] = 'plugins/FeinwerkUptimeMonitor/stylesheets/uptime.less';
         $files[] = 'plugins/FeinwerkUptimeMonitor/stylesheets/feedback.less';
+        $files[] = 'plugins/FeinwerkUptimeMonitor/stylesheets/admin.less';
+        $files[] = 'plugins/FeinwerkUptimeMonitor/stylesheets/panel.less';
         // the Feinwerk promotion kit: tip line, its logo and the connector installer page (copies of PageFilterReport 0338553)
         $files[] = 'plugins/FeinwerkUptimeMonitor/stylesheets/promo.css';
+        $files[] = 'plugins/FeinwerkUptimeMonitor/stylesheets/promocard.css';
         $files[] = 'plugins/FeinwerkUptimeMonitor/stylesheets/feinwerklogo.css';
         $files[] = 'plugins/FeinwerkUptimeMonitor/stylesheets/connectorinstaller.css';
     }
@@ -127,6 +130,7 @@ class FeinwerkUptimeMonitor extends \Piwik\Plugin
     public function getJavaScriptFiles(&$files): void
     {
         $files[] = 'plugins/FeinwerkUptimeMonitor/javascripts/promo.js';
+        $files[] = 'plugins/FeinwerkUptimeMonitor/javascripts/promocard.js';
         $files[] = 'plugins/FeinwerkUptimeMonitor/javascripts/connectorinstaller.js';
     }
 
@@ -157,6 +161,7 @@ class FeinwerkUptimeMonitor extends \Piwik\Plugin
         foreach (array_keys($data['FeinwerkUptimeMonitor'] ?? []) as $key) {
             if (strpos($key, 'Ui') === 0 || strpos($key, 'Cause_') === 0 || strpos($key, 'Feedback') === 0
                 || strpos($key, 'Support') === 0 || $key === 'MenuTitle' || $key === 'PromoDismiss'
+                || $key === 'ErrorUrl'
             ) {
                 $keys[] = 'FeinwerkUptimeMonitor_' . $key;
             }

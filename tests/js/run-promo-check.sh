@@ -23,8 +23,9 @@ read = lambda p: open(p, encoding='utf-8').read()
 logo = re.sub(r'\{#.*?#\}\s*', '', read(root + '/templates/_feinwerkLogo.twig'), flags=re.S).strip()
 css = read(root + '/stylesheets/promo.css') + '\n' + read(root + '/stylesheets/feinwerklogo.css')
 with open(out, 'w', encoding='utf-8') as f:
-    f.write('const V2 = %s;\nconst OLD3 = %s;\nconst V3 = %s;\nconst CSS = %s;\nconst LOGO = %s;\n%s' % (
+    f.write('const V2 = %s;\nconst OLD3 = %s;\nconst OLD4 = %s;\nconst V3 = %s;\nconst CSS = %s;\nconst LOGO = %s;\n%s' % (
         json.dumps(read(here + '/fixtures/promo-v2.js')), json.dumps(read(here + '/fixtures/promo-v3.js')),
+        json.dumps(read(here + '/fixtures/promo-v4.js')),
         json.dumps(read(root + '/javascripts/promo.js')),
         json.dumps(css), json.dumps(logo), read(here + '/promo.check.js')))
 PY

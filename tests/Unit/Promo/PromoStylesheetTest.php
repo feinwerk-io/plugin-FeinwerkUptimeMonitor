@@ -34,6 +34,15 @@ class PromoStylesheetTest extends TestCase
      * The links of the tip line and the boxes share one rule (colour, underline). The logo row of the boxes once split
      * that list, so every Feinwerk tip line on the page lost its link style and became a flex row (L8 review).
      */
+    /** The card of the dashboard widgets waits for javascripts/promocard.js in the same way. */
+    public function test_no_card_shows_before_promocard_js_has_checked_it(): void
+    {
+        $card = (string) file_get_contents(__DIR__ . '/../../../stylesheets/promocard.css');
+
+        $this->assertStringContainsString('.fwpromo-card:not([data-fwpromo-ready])', $card);
+        $this->assertSame([], self::earlyShowingSelectors($card));
+    }
+
     public function test_tip_and_box_links_keep_their_shared_link_style(): void
     {
         $css = (string) file_get_contents(__DIR__ . '/../../../stylesheets/promo.css');
