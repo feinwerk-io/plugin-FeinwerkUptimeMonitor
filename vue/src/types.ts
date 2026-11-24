@@ -1,0 +1,139 @@
+/*!
+ * Matomo - free/libre analytics platform
+ *
+ * @link    https://matomo.org
+ * @license https://www.gnu.org/licenses/gpl-3.0.html GPL v3 or later
+ */
+
+import type { PromoVariables } from './PromoLine.vue';
+
+export type Outcome = 'up' | 'down' | 'not_checkable';
+
+export interface State {
+  outcome: Outcome;
+  error: string | null;
+  note: string | null;
+  httpStatus: number | null;
+  responseMs: number | null;
+  checkedAt: string;
+  stale: boolean;
+}
+
+export interface Certificate {
+  notAfter: string;
+  daysLeft: number;
+  level: 'ok' | 'warning' | 'critical' | 'expired';
+}
+
+export interface TargetStatus {
+  targetKey: string;
+  kind: string;
+  url: string | null;
+  urlSource: string;
+  enabled: boolean;
+  lastCheckedAt: string | null;
+  states: { local?: State; external?: State };
+  certificate: Certificate | null;
+}
+
+export interface Processing {
+  samples: number;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  maxMs: number | null;
+  from: string;
+  to: string;
+}
+
+export interface Status {
+  targets: TargetStatus[];
+  processing: Processing | null;
+}
+
+export interface UptimeRow {
+  targetKey: string;
+  kind: string;
+  source: 'local' | 'external';
+  uptimePercent: number | null;
+  coveragePercent: number;
+  outages: number;
+  samples: number;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  maxMs: number | null;
+}
+
+export interface SeriesPoint {
+  time: string;
+  source: string;
+  samples: number;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  maxMs: number | null;
+  uptimePercent: number | null;
+}
+
+export interface Incident {
+  idIncident: number;
+  type: 'outage' | 'gap';
+  targetKey: string | null;
+  kind: string | null;
+  source: string;
+  start: string;
+  end: string | null;
+  durationSeconds: number;
+  open: boolean;
+  cause: string | null;
+  detail: string | null;
+  failedChecks: number;
+}
+
+export interface TargetRow {
+  targetKey: string;
+  kind: string;
+  url: string | null;
+  urlSource: 'default' | 'detected' | 'manual';
+  enabled: boolean;
+  lastCheckedAt: string | null;
+}
+
+export interface Suggestion {
+  idSite: number;
+  key: string;
+  kind: string;
+  url: string;
+}
+
+export interface SiteOverview {
+  idSite: number;
+  name: string;
+  targets: number;
+  down: number;
+  notCheckable: number;
+  stale: number;
+  /** switched-on targets that answered at their last check */
+  up: number;
+  /** switched-off targets */
+  off: number;
+  lastCheckedAt: string | null;
+  certificateDaysLeft: number | null;
+}
+
+export interface ScreenConfig {
+  idSite: number;
+  variant: 'page' | 'matomo' | 'site' | 'admin';
+  isSuperUser: boolean;
+  isAdmin: boolean;
+  language: string;
+  queuedTracking: boolean;
+  sentinel: 'active' | 'absent';
+  embedded: boolean;
+  feedback: { enabled: boolean; supportUrl: string; version: string } | null;
+  /** the website's name (idSite 0: Matomo) */
+  siteName?: string;
+  /** anonymous viewers get no data about Matomo itself (API idSite 0) */
+  isAnonymous?: boolean;
+  /** the kit's tip line (Promo\PromoLine::current()): admins only, never embedded */
+  promo?: PromoVariables | null;
+  cronLine?: string;
+}

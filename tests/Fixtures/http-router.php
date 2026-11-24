@@ -1,0 +1,87 @@
+<?php
+
+/**
+ * Matomo - free/libre analytics platform
+ *
+ * @link    https://matomo.org
+ * @license https://www.gnu.org/licenses/gpl-3.0.html GPL v3 or later
+ */
+
+// Router of the HTTP fixture server (php -S 127.0.0.1:<port> tests/Fixtures/http-router.php), used by the prober and
+// runner tests instead of the network. Every path answers exactly the documented response.
+
+$path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+$self = 'http://' . ($_SERVER['HTTP_HOST'] ?? '127.0.0.1');
+
+$send = static function (int $status, string $body, array $headers = []): void {
+    http_response_code($status);
+    foreach ($headers as $header) {
+        header($header);
+    }
+    echo $body;
+};
+
+switch ($path) {
+    case '/ok':
+        $send(200, 'ok');
+        break;
+    case '/matomo.php':
+        if (!empty($_GET) || !empty($_POST)) {
+            $send(400, 'This resource is part of Matomo.');
+            break;
+        }
+        $send(200, "This resource is part of Matomo. Keep full control of your data with the leading free and open source <a href='https://matomo.org'>web analytics</a>.<br>\n");
+        break;
+    case '/off/matomo.php':
+        $send(503, '');
+        break;
+    case '/matomo.js':
+        $send(200, '/*!! * Matomo - free/libre analytics platform */ var Matomo=window.Matomo||{};Matomo.getAsyncTracker=function(){};', ['Content-Type: application/javascript']);
+        break;
+    case '/proxy-broken':
+        $send(200, '/* there was an error loading matomo.js */', ['Content-Type: application/javascript; charset=UTF-8']);
+        break;
+    case '/index.php':
+    case '/login':
+        $send(200, '<html><body><form name="form_login" method="post"></form></body></html>');
+        break;
+    case '/db-down':
+        $send(500, 'Error: database');
+        break;
+    case '/maint':
+        $send(503, 'maintenance');
+        break;
+    case '/basic':
+        $send(401, 'auth', ['WWW-Authenticate: Basic realm="x"']);
+        break;
+    case '/slow':
+        usleep((int) (1000000 * min(5.0, (float) ($_GET['s'] ?? 3))));
+        $send(200, 'slow');
+        break;
+    case '/big':
+        $send(200, str_repeat('x', 1024 * 1024));
+        break;
+    case '/r1':
+        $send(302, '', ['Location: ' . $self . '/r2']);
+        break;
+    case '/r2':
+        $send(302, '', ['Location: /ok']);
+        break;
+    case '/r-slow':
+        $send(302, '', ['Location: ' . $self . '/slow?s=2']);
+        break;
+    case '/loop':
+        $send(302, '', ['Location: ' . $self . '/loop']);
+        break;
+    case '/to-private':
+        $send(302, '', ['Location: http://10.0.0.1/']);
+        break;
+    case '/page-proxy':
+        $send(200, "<html><head><script>var u=\"$self/\";_paq.push(['setTrackerUrl', u+'matomo.php']);g.src=u+'matomo.php';</script></head></html>");
+        break;
+    case '/container':
+        $send(200, '(function(){var c={"id":"AbC123","idsite":1,"versionName":"v3","revision":3,"environment":"live"};})();');
+        break;
+    default:
+        $send(404, 'not found');
+}

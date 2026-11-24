@@ -1,0 +1,68 @@
+{# Feinwerk kit: the Feinwerk Connector installer page (ConnectorInstaller/ConnectorInstaller.php, Controller::
+   connectorInstaller and connectorInstallerRun). Super users only. installerState: install (one button: Matomo's own
+   Marketplace installer, then activate), activate (one button), console (files there, plugin administration off: the
+   command), manual, php, wordpress (instructions, no button).
+   installerError: Matomo's reason after a failed click (raw only where Matomo marks it as HTML). Matomo's own card and
+   button classes, so light and dark follow Matomo. #}
+{% extends 'admin.twig' %}
+
+{% set title %}{{ 'FeinwerkUptimeMonitor_ConnectorInstallerTitle'|translate }}{% endset %}
+
+{% block content %}
+<div class="card fwci">
+    <div class="card-content">
+        <h2 class="card-title">{{ title }}</h2>
+        <p>{{ 'FeinwerkUptimeMonitor_ConnectorInstallerIntro'|translate }}</p>
+
+        {% if installerClickAgain %}
+            <div class="alert alert-info fwci__again" role="status">{{ 'FeinwerkUptimeMonitor_ConnectorInstallerClickAgain'|translate }}</div>
+        {% endif %}
+        {% if installerError %}
+            <div class="alert alert-danger fwci__error">
+                {% if installerError.html %}{{ installerError.message|raw }}{% else %}{{ installerError.message }}{% endif %}
+            </div>
+        {% endif %}
+
+        {% if installerState == 'install' or installerState == 'activate' %}
+            {% if installerState == 'install' %}
+                <p>{{ 'FeinwerkUptimeMonitor_ConnectorInstallerInstallText'|translate }}</p>
+            {% else %}
+                <p>{{ 'FeinwerkUptimeMonitor_ConnectorInstallerActivateText'|translate }}</p>
+            {% endif %}
+            <p>
+                <a class="btn fwci__run" href="{{ linkTo({'module': 'FeinwerkUptimeMonitor', 'action': 'connectorInstallerRun', 'nonce': installerNonce, 'retry': installerClickAgain ? 1 : 0}) }}"
+                   data-fwci-busy="{{ (installerState == 'install' ? 'FeinwerkUptimeMonitor_ConnectorInstallerInstalling' : 'FeinwerkUptimeMonitor_ConnectorInstallerActivating')|translate }}">
+                    {{ (installerState == 'install' ? 'FeinwerkUptimeMonitor_ConnectorInstallerButton' : 'FeinwerkUptimeMonitor_ConnectorInstallerButtonActivate')|translate }}
+                </a>
+            </p>
+            <p class="fwci__note">{{ 'FeinwerkUptimeMonitor_ConnectorInstallerPasswordNote'|translate }}</p>
+        {% elseif installerState == 'console' %}
+            <p>{{ 'FeinwerkUptimeMonitor_ConnectorInstallerConsole'|translate }}</p>
+            <pre class="fwci__command"><code>{{ installerConsoleCommand }}</code></pre>
+        {% elseif installerState == 'wordpress' %}
+            <p>{{ 'FeinwerkUptimeMonitor_ConnectorInstallerWordPress'|translate }}</p>
+            {% if installerWordPressUrl %}
+                <p><a class="btn" href="{{ installerWordPressUrl }}">{{ 'FeinwerkUptimeMonitor_ConnectorInstallerWordPressLink'|translate }}</a></p>
+            {% endif %}
+        {% elseif installerState == 'php' %}
+            <p>{{ 'FeinwerkUptimeMonitor_ConnectorInstallerPhp'|translate(installerPhpFloor) }}</p>
+        {% elseif installerState == 'manual' %}
+            <p>{{ 'FeinwerkUptimeMonitor_ConnectorInstallerManual'|translate }}</p>
+            <ol class="fwci__steps">
+                <li>{{ 'FeinwerkUptimeMonitor_ConnectorInstallerManualStep1'|translate }}
+                    <a href="{{ installerLinks.marketplace }}" target="_blank" rel="noopener">plugins.matomo.org</a>,
+                    <a href="{{ installerLinks.download }}" target="_blank" rel="noopener">plugins.feinwerk.io</a></li>
+                <li>{{ 'FeinwerkUptimeMonitor_ConnectorInstallerManualStep2'|translate('<code>FeinwerkMarketplaceConnector</code>')|raw }}</li>
+                {% if installerPluginsAdmin %}
+                <li>{{ 'FeinwerkUptimeMonitor_ConnectorInstallerManualStep3'|translate }}</li>
+                {% else %}
+                <li>{{ 'FeinwerkUptimeMonitor_ConnectorInstallerManualStep3Console'|translate }}
+                    <code>{{ installerConsoleCommand }}</code></li>
+                {% endif %}
+            </ol>
+        {% else %}
+            <p><a class="btn" href="{{ installerConnectorUrl }}">{{ 'FeinwerkUptimeMonitor_ConnectorInstallerOpen'|translate }}</a></p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

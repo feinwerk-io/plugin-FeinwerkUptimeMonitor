@@ -1,0 +1,35 @@
+{
+    "name": "FeinwerkUptimeMonitor",
+    "description": "Shows in Matomo whether your website and your Matomo tracking are reachable: uptime, response times, outages and certificate expiry at a glance.",
+    "version": "5.0.1",
+    "theme": false,
+    "require": {
+        "matomo": ">=5.0.0,<7.0.0-b1",
+        "php": ">=8.1.0"
+    },
+    "authors": [
+        {
+            "name": "Peter Boehlke, Feinwerk.io",
+            "email": "support@feinwerk.io",
+            "homepage": "https://feinwerk.io"
+        }
+    ],
+    "homepage": "https://plugins.feinwerk.io/en/plugins/FeinwerkUptimeMonitor?mtm_campaign=matomo-marketplace&mtm_source=FeinwerkUptimeMonitor",
+    "license": "GPL v3+",
+    "category": "insights",
+    "support": {
+        "email": "support@feinwerk.io",
+        "docs": "https://plugins.feinwerk.io/en/docs/plugins/FeinwerkUptimeMonitor"
+    },
+    "keywords": [
+        "uptime",
+        "monitoring",
+        "availability",
+        "tracker",
+        "response time",
+        "outage",
+        "certificate",
+        "tag manager",
+        "sentinel"
+    ]
+}

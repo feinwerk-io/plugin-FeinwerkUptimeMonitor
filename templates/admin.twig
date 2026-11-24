@@ -1,0 +1,10 @@
+{% extends 'admin.twig' %}
+
+{% set title %}{{ 'FeinwerkUptimeMonitor_MenuTitle'|translate }}{% endset %}
+
+{% block content %}
+    <div class="fwum-mount"
+         vue-entry="FeinwerkUptimeMonitor.AdminPage"
+         lang="{{ language|e('html_attr') }}"
+         config="{{ props|json_encode|e('html_attr') }}"></div>
+{% endblock %}

@@ -1,0 +1,205 @@
+<?php
+
+/**
+ * Matomo - free/libre analytics platform
+ *
+ * @link    https://matomo.org
+ * @license https://www.gnu.org/licenses/gpl-3.0.html GPL v3 or later
+ */
+
+namespace Piwik\Plugins\FeinwerkUptimeMonitor\Store;
+
+use Piwik\Db;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Check\CheckResult;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Outcome;
+
+/**
+ * Outages (per target and source) and gaps without any measurement (instance wide, idtarget 0). An outage opens on
+ * the first `down` and closes on the next `up`; `not_checkable` neither opens nor closes one.
+ */
+final class IncidentStore
+{
+    public const OUTAGE = 'outage';
+    public const GAP = 'gap';
+
+    private static function table(): string
+    {
+        return Schema::table(Schema::INCIDENT);
+    }
+
+    /**
+     * @param CheckResult[] $results
+     */
+    public function apply(array $results, string $source = StateStore::LOCAL): void
+    {
+        $ids = array_values(array_unique(array_map(static fn(CheckResult $r): int => $r->idTarget, $results)));
+        if ($ids === []) {
+            return;
+        }
+        $open = $this->openFor($ids, $source);
+
+        $insert = [];
+        $close = [];
+        $stillDown = [];
+        foreach ($results as $r) {
+            $incident = $open[$r->idTarget][$source] ?? null;
+            if ($r->outcome === Outcome::DOWN) {
+                if ($incident === null) {
+                    $insert[] = [$r->idTarget, $source, self::OUTAGE, $r->checkedAt, null, $r->error,
+                        $r->status !== null ? 'HTTP ' . $r->status : null, 1];
+                } else {
+                    $stillDown[] = (int) $incident['idincident'];
+                }
+            } elseif ($r->outcome === Outcome::UP && $incident !== null) {
+                $close[(int) $incident['idincident']] = $r->checkedAt;
+            }
+        }
+
+        Sql::insertRows(
+            self::table(),
+            ['idtarget', 'source', 'kind', 'started_at', 'ended_at', 'cause', 'detail', 'down_samples'],
+            $insert,
+            'down_samples = down_samples'
+        );
+        if ($insert) {
+            // two overlapping runs could both open an outage: keep the older one only
+            $opened = array_values(array_unique(array_column($insert, 0)));
+            Db::query(
+                'DELETE newer FROM ' . self::table() . ' newer JOIN ' . self::table() . ' older'
+                . ' ON older.idtarget = newer.idtarget AND older.source = newer.source AND older.kind = newer.kind'
+                . ' AND older.ended_at IS NULL AND newer.ended_at IS NULL AND older.started_at < newer.started_at'
+                . ' WHERE newer.kind = ? AND newer.idtarget IN (' . Sql::placeholders($opened) . ')',
+                array_merge([self::OUTAGE], $opened)
+            );
+        }
+        if ($stillDown) {
+            Db::query(
+                'UPDATE ' . self::table() . ' SET down_samples = down_samples + 1 WHERE idincident IN (' . Sql::placeholders($stillDown) . ')',
+                $stillDown
+            );
+        }
+        if ($close) {
+            $case = '';
+            $bind = [];
+            foreach ($close as $id => $at) {
+                $case .= ' WHEN ? THEN ?';
+                $bind[] = $id;
+                $bind[] = $at;
+            }
+            $ids = array_keys($close);
+            Db::query(
+                'UPDATE ' . self::table() . ' SET ended_at = CASE idincident' . $case . ' END WHERE idincident IN (' . Sql::placeholders($ids) . ')',
+                array_merge($bind, $ids)
+            );
+        }
+    }
+
+    /**
+     * Ends the open outages of targets that are no longer checked (retired, switched off, removed): their outage is
+     * over for this plugin, not ongoing for ever.
+     *
+     * @param int[] $idTargets
+     */
+    public function closeOpen(array $idTargets, string $at): void
+    {
+        if ($idTargets === []) {
+            return;
+        }
+        Db::query(
+            'UPDATE ' . self::table() . ' SET ended_at = ? WHERE ended_at IS NULL AND idtarget IN (' . Sql::placeholders($idTargets) . ')',
+            array_merge([$at], $idTargets)
+        );
+    }
+
+    /**
+     * A stretch without any measurement (Matomo or its cron was not running), seen on the first run after it.
+     */
+    public function recordGap(string $from, string $to): void
+    {
+        Sql::insertRows(
+            self::table(),
+            ['idtarget', 'source', 'kind', 'started_at', 'ended_at', 'cause', 'detail', 'down_samples'],
+            [[0, StateStore::LOCAL, self::GAP, $from, $to, null, null, 0]],
+            'ended_at = VALUES(ended_at)'
+        );
+    }
+
+    /**
+     * Open incidents of the given targets, one query.
+     *
+     * @param int[] $idTargets
+     * @return array<int, array<string, array>> by idtarget and source
+     */
+    public function openFor(array $idTargets, ?string $source = null): array
+    {
+        if ($idTargets === []) {
+            return [];
+        }
+        $sql = 'SELECT * FROM ' . self::table() . ' WHERE ended_at IS NULL AND kind = ? AND idtarget IN (' . Sql::placeholders($idTargets) . ')';
+        $bind = array_merge([self::OUTAGE], $idTargets);
+        if ($source !== null) {
+            $sql .= ' AND source = ?';
+            $bind[] = $source;
+        }
+        $open = [];
+        foreach (Db::fetchAll($sql, $bind) as $row) {
+            $open[(int) $row['idtarget']][(string) $row['source']] = $row;
+        }
+
+        return $open;
+    }
+
+    /**
+     * Incidents of a website's targets (idSite 0: the instance targets and the gaps) that overlap [$from, $to).
+     *
+     * @param string $state all|open|closed
+     */
+    public function find(int $idSite, string $from, string $to, string $state, int $limit, string $source = 'all'): array
+    {
+        $targets = Schema::table(Schema::TARGET);
+        $sql = 'SELECT i.idincident, i.idtarget, i.source, i.kind, i.started_at, i.ended_at, i.cause, i.detail, i.down_samples,'
+            . ' t.target_key, t.kind AS target_kind, t.url'
+            . ' FROM ' . self::table() . ' i LEFT JOIN ' . $targets . ' t ON t.idtarget = i.idtarget'
+            . ' WHERE i.started_at < ? AND (i.ended_at IS NULL OR i.ended_at >= ?)';
+        $bind = [$to, $from];
+        if ($idSite === 0) {
+            $sql .= ' AND (t.idsite = 0 OR (i.idtarget = 0 AND i.kind = ?))';
+            $bind[] = self::GAP;
+        } else {
+            $sql .= ' AND t.idsite = ?';
+            $bind[] = $idSite;
+        }
+        if ($state === 'open') {
+            $sql .= ' AND i.ended_at IS NULL';
+        } elseif ($state === 'closed') {
+            $sql .= ' AND i.ended_at IS NOT NULL';
+        }
+        if ($source !== 'all') {
+            $sql .= ' AND i.source = ?';
+            $bind[] = $source;
+        }
+        $sql .= ' ORDER BY i.started_at DESC, i.idincident DESC LIMIT ' . max(1, min(1000, $limit));
+
+        return Db::fetchAll($sql, $bind);
+    }
+
+    /**
+     * Upserts incidents written by Pro (exact start and end), keyed by target, source, kind and start.
+     *
+     * @param array<int, array{idtarget: int, source: string, kind: string, started_at: string, ended_at: ?string, cause: ?string, detail: ?string, down_samples: int}> $rows
+     */
+    public function upsert(array $rows): void
+    {
+        $values = [];
+        foreach ($rows as $row) {
+            $values[] = [$row['idtarget'], $row['source'], $row['kind'], $row['started_at'], $row['ended_at'],
+                $row['cause'], $row['detail'], $row['down_samples']];
+        }
+        Sql::insertRows(
+            self::table(),
+            ['idtarget', 'source', 'kind', 'started_at', 'ended_at', 'cause', 'detail', 'down_samples'],
+            $values,
+            'ended_at = VALUES(ended_at), cause = VALUES(cause), detail = VALUES(detail), down_samples = VALUES(down_samples)'
+        );
+    }
+}

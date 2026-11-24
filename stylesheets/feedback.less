@@ -1,0 +1,111 @@
+// Feinwerk feedback kit (FeinwerkEmailReportsPro docs/feedback-kit.md): question with thumbs, thanks and support link
+// (vue/src/FeedbackBar.vue). Top level on purpose, so it works anywhere. Colours are Matomo's CSS custom properties with
+// light fallbacks (no Matomo LESS variables: the plugin runs on Matomo 5.0 to 6.x), so it follows dark mode where Matomo
+// has one.
+
+@fwum-text-light: ~"var(--theme-color-text-light, #444)";
+@fwum-text-lighter: ~"var(--theme-color-text-lighter, #646464)";
+@fwum-brand: ~"var(--theme-color-brand, #43a047)";
+@fwum-link: ~"var(--theme-color-link, #1976d2)";
+@fwum-focus-ring: ~"var(--theme-color-focus-ring, #0969da)";
+@fwum-border: ~"var(--theme-color-border, #e0e0e0)";
+
+// Feedback row, footer variant A (Peter, 2026-11-13; Page Filter Report docs/footer.md): one row under a hairline that
+// never wraps; the question ends with an ellipsis (full text in its title), borderless thumbs, a quiet grey Support link
+// with a help icon at the end. After a vote the thanks takes the place of question and thumbs.
+.fwum-feedback {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 8px 0 2px;
+  border-top: 1px solid @fwum-border;
+  font-size: 12px;
+  line-height: 1.4;
+  color: @fwum-text-lighter;
+}
+
+.fwum-feedback__question {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.fwum-feedback__thumb {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  padding: 1px 2px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: @fwum-text-lighter;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    color: @fwum-brand;
+  }
+}
+
+.fwum-feedback__thumb svg,
+.fwum-feedback__support svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.fwum-feedback__thumb:focus-visible,
+.fwum-feedback__support:focus-visible {
+  outline: 2px solid @fwum-focus-ring;
+  outline-offset: 2px;
+}
+
+.fwum-feedback__icon--down {
+  transform: rotate(180deg);
+}
+
+// after a vote: the thanks replaces question and thumbs in the same row
+.fwum-feedback.is-voted .fwum-feedback__question,
+.fwum-feedback.is-voted .fwum-feedback__thumb {
+  display: none;
+}
+
+.fwum-feedback__thanks {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: @fwum-text-light;
+}
+
+// stays in the document while empty (so screen readers announce the thanks), but takes no room
+.fwum-feedback__thanks:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.fwum-feedback__support {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  color: @fwum-text-lighter;
+  text-decoration: none;
+  white-space: nowrap;
+
+  &:hover,
+  &:focus-visible {
+    color: @fwum-link;
+  }
+}
