@@ -157,6 +157,19 @@ class ProberTest extends TestCase
         $this->assertSame(Outcome::DNS, $response->error, 'a slow resolver is no slow website');
     }
 
+    /** Regression (demo, 2026-11-24): the login page of a Matomo with many plugins is larger than MAX_BODY. */
+    public function test_largeLoginPage_isReadToTheEnd_forTheInterface(): void
+    {
+        $url = 'http://127.0.0.1:' . HttpFixtureServer::port() . '/big-login';
+        $ui = new Target(1, 0, 'ui', Kind::UI, $url, 'default', ['matomoHost' => '127.0.0.1']);
+        $web = new Target(2, 1, 'web:big', Kind::WEB, $url, 'default');
+        $responses = self::prober(new AddressGuard(true, null, true))->probeAll([$ui, $web], microtime(true) + 30);
+        $this->assertGreaterThan(Prober::MAX_BODY, strlen($responses[1]->body));
+        $this->assertStringContainsString('name="form_login"', $responses[1]->body);
+        $this->assertLessThanOrEqual(Prober::MAX_BODY, strlen($responses[2]->body), 'website pages stay capped');
+        $this->assertSame(200, $responses[2]->status);
+    }
+
     public function test_slowDns_doesNotEatOtherChecksTime(): void
     {
         $guard = new AddressGuard(true, static function (string $host): array {

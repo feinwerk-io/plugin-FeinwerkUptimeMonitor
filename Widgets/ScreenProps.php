@@ -33,6 +33,10 @@ final class ScreenProps
         return [
             'idSite' => $idSite,
             'siteName' => self::siteName($idSite),
+            // times on the screens follow the website's timezone (Peter's 6a); Matomo's names, also "UTC+2"
+            'timezone' => self::timezone($idSite),
+            // the admin page's status rows (Peter's 3a): whether a system cron runs the checks, and how often
+            'cron' => $variant === 'admin' ? self::cron() : null,
             'variant' => $variant,
             'isSuperUser' => Piwik::hasUserSuperUserAccess(),
             'isAdmin' => $idSite > 0 && Piwik::isUserHasAdminAccess($idSite),
@@ -66,6 +70,27 @@ final class ScreenProps
         } catch (\Throwable $e) {
             return null;
         }
+    }
+
+    private static function timezone(int $idSite): string
+    {
+        try {
+            return $idSite > 0 ? (string) \Piwik\Site::getTimezoneFor($idSite) : 'UTC';
+        } catch (\Throwable $e) {
+            return 'UTC';
+        }
+    }
+
+    /**
+     * @return array{active: bool, intervalSeconds: int|null}
+     */
+    private static function cron(): array
+    {
+        $tracker = new \Piwik\Plugins\FeinwerkUptimeMonitor\Runner\IntervalTracker();
+        $now = time();
+        $active = $tracker->cronActive($now);
+
+        return ['active' => $active, 'intervalSeconds' => $active ? $tracker->interval($now) : null];
     }
 
     /** The website's name for headings such as the panel title (idSite 0: Matomo). */

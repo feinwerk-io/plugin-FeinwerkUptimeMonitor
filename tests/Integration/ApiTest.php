@@ -373,6 +373,35 @@ class ApiTest extends IntegrationTestCase
         $this->assertSame(1, $row['up']);
     }
 
+    /** Peter's D2: the hour strip. Hours for a day, local days for a week; up, partial, down and nothing measured. */
+    public function test_getTimeline_hoursForADay_daysForAWeek(): void
+    {
+        $row = fn(string $hour, int $measured, int $up): array => ['idtarget' => $this->web, 'hour' => $hour,
+            'source' => StateStore::EXTERNAL, 'samples' => 60, 'up_samples' => 60, 'measured_seconds' => $measured,
+            'up_seconds' => $up, 'ms_p50' => 80, 'ms_p95' => 90, 'ms_max' => 100, 'cert_not_after' => null];
+        (new RollupStore())->upsertHours([$row('2026-03-14 10:00:00', 3600, 3600), $row('2026-03-14 11:00:00', 3600, 1800),
+            $row('2026-03-14 12:00:00', 3600, 0)]);
+
+        $day = self::api('getTimeline', ['idSite' => 1, 'period' => 'day', 'date' => '2026-03-14']);
+        $this->assertSame('hour', $day['grain']);
+        $this->assertCount(24, $day['cells']);
+        $states = array_column($day['cells'], 'state', 'time');
+        $this->assertSame(['none', 'up', 'partial', 'down'], [$states['2026-03-14T09:00:00Z'], $states['2026-03-14T10:00:00Z'],
+            $states['2026-03-14T11:00:00Z'], $states['2026-03-14T12:00:00Z']]);
+
+        $week = self::api('getTimeline', ['idSite' => 1, 'period' => 'week', 'date' => '2026-03-14']);
+        $this->assertSame('day', $week['grain']);
+        $this->assertCount(7, $week['cells']);
+        $byDay = array_column($week['cells'], null, 'time');
+        $this->assertSame(['measuredSeconds' => 10800, 'upSeconds' => 5400, 'state' => 'partial'],
+            array_intersect_key($byDay['2026-03-14T00:00:00Z'], array_flip(['measuredSeconds', 'upSeconds', 'state'])));
+
+        $this->assertBadRequest('getTimeline', ['idSite' => 1, 'period' => 'decade', 'date' => '2026-03-14'], "'period'");
+        FakeAccess::clearAccess(false, [], [1], 'anonymous');
+        $this->expectException(\Piwik\NoAccessException::class);
+        self::api('getTimeline', ['idSite' => 0, 'period' => 'day', 'date' => '2026-03-14']);
+    }
+
     public function test_matomosUptime_followsTheViewedWebsitesDay(): void
     {
         $idSite = Fixture::createWebsite('2026-01-01 00:00:00', 0, 'Tokyo', 'https://tokyo.example/', 1, null, null, 'Asia/Tokyo');

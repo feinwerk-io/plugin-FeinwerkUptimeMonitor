@@ -209,7 +209,7 @@ export default defineComponent({
       });
     },
     when(iso: string): string {
-      return dateTime(iso, this.config.language);
+      return dateTime(iso, this.config.language, this.config.timezone || '');
     },
     since(iso: string): string {
       return ago(iso, this.config.language);

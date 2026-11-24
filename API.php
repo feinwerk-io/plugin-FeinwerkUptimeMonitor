@@ -100,6 +100,31 @@ class API extends \Piwik\Plugin\API
     }
 
     /**
+     * The hour strip of a website (idSite 0: Matomo itself) over a Matomo period: one cell per hour for periods up to two
+     * days, per day (in the website's timezone) up to 31 days, per UTC day beyond. A cell sums every check target of the
+     * website: up when all measured time was up, down when none was, partial between, none when nothing was measured.
+     *
+     * @param int $idSite website ID, or 0 for the Matomo instance
+     * @param string $period day|week|month|year|range (Matomo's periods, in the website's timezone; UTC for idSite 0)
+     * @param string $date a date (YYYY-MM-DD, today, yesterday) or for range "YYYY-MM-DD,YYYY-MM-DD"
+     * @param string $source all|local|external, default all
+     * @param int $timezoneOf only with idSite 0: a website ID whose timezone the period follows; default 0 = UTC
+     * @return array {grain: hour|day, cells: list of {time: ISO time (start of the hour or day, UTC), measuredSeconds:
+     *               int, upSeconds: int, state: up|down|partial|none}}; at most about 400 cells
+     */
+    public function getTimeline($idSite, $period, $date, $source = 'all', $timezoneOf = 0)
+    {
+        $idSite = $this->viewableSite($idSite);
+        $source = $this->oneOf('source', $source, UptimeReport::SOURCES);
+        $report = new UptimeReport();
+        $range = $this->range($report, $idSite, $period, $date, $timezoneOf);
+        $zoneSite = $idSite > 0 ? $idSite : (int) $timezoneOf;
+        $timezone = $zoneSite > 0 ? Site::getTimezoneFor($zoneSite) : 'UTC';
+
+        return $report->timeline($idSite, $range, $source, $timezone);
+    }
+
+    /**
      * Response time series of one check target over a Matomo period: per hour for periods up to 31 days while the
      * hourly values exist (90 days), else per UTC day.
      *

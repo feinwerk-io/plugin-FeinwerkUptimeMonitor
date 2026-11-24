@@ -28,10 +28,59 @@ export function milliseconds(value: number | null, language: string): string {
   return value === null ? '' : `${new Intl.NumberFormat(locale(language)).format(value)} ms`;
 }
 
-export function dateTime(iso: string, language: string): string {
-  return new Intl.DateTimeFormat(locale(language), {
-    dateStyle: 'medium', timeStyle: 'short',
-  }).format(new Date(iso));
+/**
+ * A timezone for Intl: IANA names as they are; Matomo's fixed offsets ("UTC+2", "UTC-5.5") as
+ * minutes, which Intl cannot read; anything unknown as the browser's zone.
+ */
+export function zoneOf(timezone = ''): { name?: string; offsetMinutes?: number; label?: string } {
+  const fixed = /^UTC([+-])(\d+(?:\.\d+)?)$/.exec(timezone);
+  if (fixed) {
+    const minutes = Math.round(parseFloat(fixed[2]) * 60) * (fixed[1] === '-' ? -1 : 1);
+    return { offsetMinutes: minutes, label: timezone };
+  }
+  if (timezone === '') {
+    return {};
+  }
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: timezone }).format(0);
+    return { name: timezone };
+  } catch (e) {
+    return {};
+  }
+}
+
+/** A time in the page language and the website's timezone (a fixed offset: shifted UTC). */
+function formatIn(
+  iso: string,
+  language: string,
+  timezone: string,
+  options: Intl.DateTimeFormatOptions,
+  withLabel = false,
+): string {
+  const zone = zoneOf(timezone);
+  if (zone.offsetMinutes !== undefined) {
+    const shifted = new Date(new Date(iso).getTime() + zone.offsetMinutes * 60000);
+    const text = new Intl.DateTimeFormat(locale(language), { ...options, timeZone: 'UTC' })
+      .format(shifted);
+    return withLabel ? `${text} ${zone.label}` : text;
+  }
+  const zoned = zone.name ? { ...options, timeZone: zone.name } : options;
+  return new Intl.DateTimeFormat(locale(language), zoned).format(new Date(iso));
+}
+
+/** Date and time in the website's timezone (Peter's 6a, like Matomo's reports). */
+export function dateTime(iso: string, language: string, timezone = ''): string {
+  return formatIn(iso, language, timezone, { dateStyle: 'medium', timeStyle: 'short' }, true);
+}
+
+/** The hour of a time ("14:00") in the website's timezone, for the hour strip. */
+export function hourOf(iso: string, language: string, timezone = ''): string {
+  return formatIn(iso, language, timezone, { hour: '2-digit', minute: '2-digit' });
+}
+
+/** The day of a time ("Mar 14") in the website's timezone, for the strip of longer periods. */
+export function dayOf(iso: string, language: string, timezone = ''): string {
+  return formatIn(iso, language, timezone, { month: 'short', day: 'numeric' });
 }
 
 /** "3 minutes ago" in the page language. */

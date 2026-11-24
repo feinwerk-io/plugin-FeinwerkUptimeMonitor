@@ -9,6 +9,7 @@
 
 namespace Piwik\Plugins\FeinwerkUptimeMonitor\Report;
 
+use Piwik\Date;
 use Piwik\Period\Factory as PeriodFactory;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Kind;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Target;
@@ -136,6 +137,81 @@ final class UptimeReport
         }
 
         return $out;
+    }
+
+    /**
+     * The hour strip (Peter's D2): one cell per hour for a day, per local day (the website's timezone) for periods up to
+     * 31 days, per UTC day beyond (when only day rows are kept). A cell sums every target of the website (idSite 0:
+     * Matomo's own, without the processing time): up when all measured time was up, down when none was, partial between,
+     * none when nothing was measured.
+     *
+     * @param array{from: int, to: int, grain: string} $range from range()
+     * @param string $timezone the timezone the local days follow (Matomo's names, also "UTC+2")
+     * @return array{grain: string, cells: list<array{time: string, measuredSeconds: int, upSeconds: int, state: string}>}
+     */
+    public function timeline(int $idSite, array $range, string $source, string $timezone): array
+    {
+        $ids = array_map(static fn(Target $t): int => $t->id,
+            array_filter($this->targets($idSite), static fn(Target $t): bool => $t->kind !== Kind::PROCESSING));
+        $span = $range['to'] - $range['from'];
+        $cells = [];
+        if ($ids !== [] && $span > 0) {
+            if ($range['grain'] === 'hour') {
+                $rows = (new RollupStore())->hours($ids, self::utc(intdiv($range['from'], 3600) * 3600), self::utc($range['to']), $source);
+                if ($span <= 2 * 86400) {
+                    $grain = 'hour';
+                    for ($t = intdiv($range['from'], 3600) * 3600; $t < $range['to']; $t += 3600) {
+                        $cells[$t] = [0, 0];
+                    }
+                    foreach ($rows as $row) {
+                        $t = (int) strtotime($row['hour'] . ' UTC');
+                        if (isset($cells[$t])) {
+                            $cells[$t][0] += (int) $row['measured_seconds'];
+                            $cells[$t][1] += (int) $row['up_seconds'];
+                        }
+                    }
+                } else {
+                    $grain = 'day';
+                    // local days: the start of each local day as a UTC instant
+                    $starts = [];
+                    for ($t = $range['from']; $t < $range['to']; $t += 86400) {
+                        $local = Date::factory($t)->setTimezone($timezone)->toString('Y-m-d');
+                        $starts[$local] ??= $t;
+                    }
+                    foreach ($starts as $t) {
+                        $cells[$t] = [0, 0];
+                    }
+                    foreach ($rows as $row) {
+                        $local = Date::factory((int) strtotime($row['hour'] . ' UTC'))->setTimezone($timezone)->toString('Y-m-d');
+                        if (isset($starts[$local])) {
+                            $cells[$starts[$local]][0] += (int) $row['measured_seconds'];
+                            $cells[$starts[$local]][1] += (int) $row['up_seconds'];
+                        }
+                    }
+                }
+            } else {
+                $grain = 'day';
+                $first = gmdate('Y-m-d', $range['from'] + 43200);
+                $last = gmdate('Y-m-d', $range['to'] + 43200);
+                for ($day = $first; $day < $last; $day = gmdate('Y-m-d', (int) strtotime($day . ' UTC') + 86400)) {
+                    $cells[(int) strtotime($day . ' UTC')] = [0, 0];
+                }
+                foreach ((new RollupStore())->days($ids, $first, $last, $source) as $row) {
+                    $t = (int) strtotime($row['day'] . ' UTC');
+                    if (isset($cells[$t])) {
+                        $cells[$t][0] += (int) $row['measured_seconds'];
+                        $cells[$t][1] += (int) $row['up_seconds'];
+                    }
+                }
+            }
+        }
+        $out = [];
+        foreach ($cells as $t => [$measured, $up]) {
+            $state = $measured <= 0 ? 'none' : ($up >= $measured ? 'up' : ($up <= 0 ? 'down' : 'partial'));
+            $out[] = ['time' => self::iso($t), 'measuredSeconds' => $measured, 'upSeconds' => $up, 'state' => $state];
+        }
+
+        return ['grain' => $grain ?? ($range['grain'] === 'hour' ? 'hour' : 'day'), 'cells' => $out];
     }
 
     /**

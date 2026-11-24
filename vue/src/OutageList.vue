@@ -72,6 +72,8 @@ export default defineComponent({
     incidents: { type: Array as PropType<Incident[]>, required: true },
     labels: { type: Object as PropType<Record<string, string>>, required: true },
     language: { type: String, default: '' },
+    /** the website's timezone (Peter's 6a) */
+    timezone: { type: String, default: '' },
     /** more outages than the ones listed */
     truncated: { type: Boolean, default: false },
   },
@@ -84,7 +86,7 @@ export default defineComponent({
   methods: {
     translate,
     when(iso: string): string {
-      return dateTime(iso, this.language);
+      return dateTime(iso, this.language, this.timezone);
     },
     length(seconds: number): string {
       return duration(seconds, this.language);

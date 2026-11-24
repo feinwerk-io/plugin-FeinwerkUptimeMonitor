@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.0.2
+
+- No more false outage of the interface on Matomo instances with many plugins: Matomo's login page is read to the
+  end (it can be larger than 256 KB), and so are Tag Manager containers.
+- Times on the uptime screens follow the website's timezone.
+
 ## 5.0.1
 
 - An address that cannot be checked from the Matomo server now says why right under its list (super users get the

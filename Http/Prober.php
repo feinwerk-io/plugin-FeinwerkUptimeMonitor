@@ -26,6 +26,12 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Target;
 final class Prober
 {
     public const MAX_BODY = 262144;
+    /**
+     * Matomo's login page and Tag Manager containers can be far larger: the login page inlines the client-side
+     * translations of every plugin (about 500 KB with thirty plugins, the form after them), a container carries the Tag
+     * Manager runtime before its id and revision. Their content check needs the whole file.
+     */
+    public const MAX_BODY_LARGE = 4194304;
     public const MAX_REDIRECTS = 3;
 
     private const FOLLOWS_REDIRECTS = [Kind::WEB, Kind::UI];
@@ -229,6 +235,7 @@ final class Prober
         $decision = $state['decision'];
         $remaining = max(1, $this->totalTimeoutMs - $state['spent']);
         $handle = curl_init();
+        $cap = in_array($state['target']->kind, [Kind::UI, Kind::CONTAINER], true) ? self::MAX_BODY_LARGE : self::MAX_BODY;
         $options = [
             CURLOPT_URL => $state['url'],
             CURLOPT_FOLLOWLOCATION => false,
@@ -245,8 +252,8 @@ final class Prober
             CURLOPT_CERTINFO => $decision->scheme === 'https',
             CURLOPT_FRESH_CONNECT => true,
             CURLOPT_FORBID_REUSE => true,
-            CURLOPT_WRITEFUNCTION => static function ($curl, string $chunk) use ($sink): int {
-                $room = self::MAX_BODY - strlen($sink->body);
+            CURLOPT_WRITEFUNCTION => static function ($curl, string $chunk) use ($sink, $cap): int {
+                $room = $cap - strlen($sink->body);
                 if (strlen($chunk) > $room) {
                     $sink->body .= substr($chunk, 0, max(0, $room));
                     $sink->capped = true;

@@ -42,6 +42,11 @@ switch ($path) {
         $send(200, '/* there was an error loading matomo.js */', ['Content-Type: application/javascript; charset=UTF-8']);
         break;
     case '/index.php':
+    case '/big-login':
+        // Matomo's login page with many plugins: the translations come before the form (about 500 KB on the demo)
+        $send(200, '<html><head><script>var translations = {' . str_repeat('"x":"y",', 60000) . '};</script></head>'
+            . '<body><form name="form_login" method="post"></form></body></html>');
+        break;
     case '/login':
         $send(200, '<html><body><form name="form_login" method="post"></form></body></html>');
         break;

@@ -131,6 +131,10 @@ export interface ScreenConfig {
   feedback: { enabled: boolean; supportUrl: string; version: string } | null;
   /** the website's name (idSite 0: Matomo) */
   siteName?: string;
+  /** the website's timezone (Matomo's names, also "UTC+2"); times on the screens follow it */
+  timezone?: string;
+  /** admin page: whether a system cron runs the checks */
+  cron?: { active: boolean; intervalSeconds: number | null } | null;
   /** anonymous viewers get no data about Matomo itself (API idSite 0) */
   isAnonymous?: boolean;
   /** the kit's tip line (Promo\PromoLine::current()): admins only, never embedded */

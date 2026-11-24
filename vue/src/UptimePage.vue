@@ -268,6 +268,7 @@
         :incidents="incidents"
         :labels="labels"
         :language="config.language"
+        :timezone="config.timezone || ''"
         :truncated="incidentsCut"
       />
 
@@ -562,7 +563,7 @@ export default defineComponent({
       } else if (state.stale) {
         outcome = 'stale';
         text = translate('FeinwerkUptimeMonitor_UiNoRecentCheck',
-          dateTime(state.checkedAt, this.config.language));
+          dateTime(state.checkedAt, this.config.language, this.config.timezone || ''));
       } else if (state.outcome === 'up') {
         text = milliseconds(state.responseMs, this.config.language);
       } else if (state.outcome === 'not_checkable') {
