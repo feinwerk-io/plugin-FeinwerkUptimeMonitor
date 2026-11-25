@@ -1,5 +1,22 @@
 # Changelog
 
+## 5.1.3
+
+- The uptime page on a dashboard (widget "Uptime" from Visitors) keeps its margins: its figures, hour strips and
+  tables no longer touch the edges of the widget. In a narrow dashboard column, as in Matomo's default three columns,
+  the page and the widgets take their phone layout.
+- "Check now" and "Edit check targets" are two small icons next to "checked 3 minutes ago", with their names as
+  tooltips; while a check runs the reload icon turns and the line says so.
+- Visitors > Uptime shows the uptime of Matomo and of the website at the end of each hour strip, with the measured
+  share; the figures above keep the tracker's processing time and the certificate.
+- On phones the figures stand in two columns, addresses wrap after their dots and slashes instead of inside a word,
+  and "HTTP-Status 403" stays on one line.
+- Administration > Diagnostic > Uptime Monitor links Feinwerk Sentinel's settings for the whole instance (from Sentinel
+  5.4.0 on its own page, tab "Whole instance").
+- Tips from Feinwerk: the campaigns tip offers the free plugin Feinwerk Campaign Manager; with Campaign Manager
+  installed it opens its campaign overview, and once it is connected, or switched off, that tip no longer shows. On a narrow line the connector tip uses a
+  short link text. The Feinwerk Connector installer keeps its progress label inside the button on phones.
+
 ## 5.1.2
 
 - Tag Manager containers are listed and counted with Matomo, not with the website: Matomo serves their files, so a

@@ -149,7 +149,8 @@ the admin page asks for its update):
 Sentinel sends them by e-mail, Slack or Teams. Without your own cron the checks run hourly and so does Sentinel, so an
 alert can come up to two hours after an outage began; with the cron line above, up to one hour.
 
-- Alarms about Matomo itself go to the super users chosen in Sentinel's settings, its e-mail addresses for the instance
+- Alarms about Matomo itself go to the super users chosen in Sentinel's settings (from Sentinel 5.4.0 on its own page,
+  tab "Whole instance", linked on the admin page), its e-mail addresses for the instance
   and its instance webhook. If none of these is set, they reach nobody.
 - When Sentinel reports no visits or a drop in visits for a website that is down, the alarm says so.
 - A completely stopped Matomo cannot report itself; those hours show as not measured.

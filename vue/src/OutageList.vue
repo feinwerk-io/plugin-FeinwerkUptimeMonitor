@@ -66,7 +66,7 @@
                 v-if="incident.open"
                 class="fwum-ongoing"
               >{{ translate('FeinwerkUptimeMonitor_UiOngoing') }}, </span>
-              {{ length(incident.durationSeconds) }}
+              <span class="fwum-nowrap">{{ length(incident.durationSeconds) }}</span>
             </td>
             <td>{{ what(incident) }}</td>
             <td>{{ cause(incident) }}</td>

@@ -152,8 +152,12 @@ export interface ScreenConfig {
   sentinel: 'active' | 'old' | 'inactive' | 'absent';
   /** the installed Sentinel's version (admin page only) */
   sentinelVersion?: string | null;
+  /** admin page: Sentinel's settings for the whole instance (its tab from 5.4.0 on) */
+  sentinelSettings?: string | null;
   /** the super-user setting "Allow private addresses" is on */
   allowPrivate?: boolean;
+  /** the uptime page shown as a widget (on a dashboard or embedded): it brings its own padding */
+  inWidget?: boolean;
   embedded: boolean;
   feedback: { enabled: boolean; supportUrl: string; version: string } | null;
   /** the website's name (idSite 0: Matomo) */

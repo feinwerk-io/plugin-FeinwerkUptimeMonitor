@@ -14,7 +14,9 @@
 <template>
   <div
     class="fwum-page"
-    :class="`fwum-page--${config.variant}`"
+    :class="[`fwum-page--${config.variant}`, {
+      'fwum-page--in-widget': config.inWidget, 'is-narrow': narrow,
+    }]"
     :lang="config.language || undefined"
   >
     <div
@@ -85,36 +87,51 @@
                 v-if="line.detail"
                 class="fwum-answer__detail"
               >{{ line.detail }}</span>
+              <!-- freshness and quiet icons (Peter, 2026-11-25: no labels) wrap as one unit -->
               <span
-                v-if="i === freshnessLine && freshness"
-                class="fwum-muted"
-              >{{ freshness }}</span>
+                v-if="i === freshnessLine && (freshness || showTools)"
+                class="fwum-fresh"
+              >
+                <span
+                  v-if="freshness || checking"
+                  class="fwum-muted"
+                >{{ checking ? checkLabel : freshness }}</span>
+                <span
+                  v-if="showTools"
+                  class="fwum-tools"
+                >
+                  <button
+                    v-if="canCheck && (siteRows.length || !siteTargetCount
+                      || containers.some((t) => t.enabled))"
+                    type="button"
+                    class="fwum-tool"
+                    :class="{ 'is-busy': checking }"
+                    :aria-disabled="checking ? 'true' : undefined"
+                    :title="checkLabel"
+                    :aria-label="translate('FeinwerkUptimeMonitor_UiCheckNow')"
+                    @click="checkNow"
+                  ><span
+                    class="icon-reload"
+                    aria-hidden="true"
+                  /></button>
+                  <button
+                    type="button"
+                    class="fwum-tool"
+                    :title="translate('FeinwerkUptimeMonitor_UiEditTargets')"
+                    :aria-label="translate('FeinwerkUptimeMonitor_UiEditTargets')"
+                    @click="panelOpen = true"
+                  ><span
+                    class="icon-edit"
+                    aria-hidden="true"
+                  /></button>
+                </span>
+              </span>
             </p>
+            <span
+              class="fwum-sr"
+              role="status"
+            >{{ announce }}</span>
           </div>
-          <span
-            v-if="isPage && config.isAdmin"
-            class="fwum-answer__actions"
-          >
-            <button
-              v-if="siteRows.length || !siteTargetCount || containers.some((t) => t.enabled)"
-              type="button"
-              class="btn-flat fwum-icon-button"
-              :disabled="checking"
-              @click="checkNow"
-            ><span
-              class="icon-reload"
-              aria-hidden="true"
-            /> {{ translate(checking ? 'FeinwerkUptimeMonitor_UiChecking'
-              : 'FeinwerkUptimeMonitor_UiCheckNow') }}</button>
-            <button
-              type="button"
-              class="btn-flat fwum-icon-button"
-              @click="panelOpen = true"
-            ><span
-              class="icon-edit"
-              aria-hidden="true"
-            /> {{ translate('FeinwerkUptimeMonitor_UiEditTargets') }}</button>
-          </span>
         </div>
         <p
           v-if="checkNote"
@@ -165,6 +182,7 @@
             v-for="strip in strips"
             :key="strip.key"
             class="fwum-strips__row"
+            :class="{ 'fwum-strips__row--page': isPage }"
           >
             <div
               v-if="isPage"
@@ -182,6 +200,16 @@
               :small="!isPage"
               :now="tick"
             />
+            <!-- D3 (Peter, 2026-11-25, "alles in 5.1.3 umsetzen"): uptime ends the strip -->
+            <div
+              v-if="strip.uptime"
+              class="fwum-strips__uptime"
+            >
+              <span class="fwum-sr">{{ translate('FeinwerkUptimeMonitor_UiUptime') }}
+                {{ strip.name }}:</span>
+              <strong>{{ strip.uptime.value }}</strong>
+              <span class="fwum-strips__measured">{{ strip.uptime.sub }}</span>
+            </div>
           </div>
           <ul
             v-if="isPage"
@@ -262,10 +290,13 @@
                       class="fwum-dot"
                       aria-hidden="true"
                     />
-                    <span class="fwum-targets__label">{{ row.label }}</span>
+                    <span class="fwum-targets__label"><template
+                      v-for="(part, p) in breakParts(row.label)"
+                      :key="p"
+                    >{{ part }}<wbr></template></span>
                   </span>
                 </td>
-                <td class="column fwum-targets__text">{{ row.text }}</td>
+                <td class="column fwum-targets__text">{{ keepHyphens(row.text) }}</td>
                 <td class="column">{{ row.uptime }}</td>
                 <td
                   v-if="hasCerts"
@@ -291,12 +322,17 @@
               :class="`is-${row.outcome}`"
               :title="row.title"
             >
-              <span
-                class="fwum-dot"
-                aria-hidden="true"
-              />
-              <span class="fwum-targets__label">{{ row.label }}</span>
-              <span class="fwum-targets__text">{{ row.text }}</span>
+              <span class="fwum-cell-label">
+                <span
+                  class="fwum-dot"
+                  aria-hidden="true"
+                />
+                <span class="fwum-targets__label"><template
+                  v-for="(part, p) in breakParts(row.label)"
+                  :key="p"
+                >{{ part }}<wbr></template></span>
+              </span>
+              <span class="fwum-targets__text">{{ keepHyphens(row.text) }}</span>
               <span class="fwum-targets__uptime">{{ row.uptime }}</span>
               <span
                 class="fwum-targets__cert"
@@ -352,13 +388,6 @@
         >
           <a :href="uptimePageUrl">{{ translate('FeinwerkUptimeMonitor_UiOpenPage') }}</a>
         </p>
-        <!-- the kit's card on dashboards (Peter's 7b): after the widget's content; the server
-             sends it for widgets only (the page on a dashboard too); the page has the tip line -->
-        <PromoCard
-          :card="config.promoCard || null"
-          :dismiss-label="translate('FeinwerkUptimeMonitor_PromoDismiss')"
-        />
-
         <OutageList
           v-if="isPage"
           :incidents="shownIncidents"
@@ -370,6 +399,12 @@
           :can-show-more="canShowMore"
           :loading-more="loadingMore"
           @more="showMoreOutages"
+        />
+        <!-- the kit's card on dashboards (Peter's 7b): after the widget's whole content, the
+             outages too; the server sends it for widgets only; the page has the tip line -->
+        <PromoCard
+          :card="config.promoCard || null"
+          :dismiss-label="translate('FeinwerkUptimeMonitor_PromoDismiss')"
         />
       </template>
 
@@ -463,9 +498,13 @@ interface Strip {
   name: string;
   timeline: Timeline;
   targets: number;
+  /** the group's uptime at the end of its strip (page only, D3) */
+  uptime: { value: string; sub: string } | null;
 }
 
 const MATOMO_KINDS = ['ui', 'tracker', 'js'];
+/** below this width (px) the page and widgets take the phone layout (.fwum-narrow) */
+const NARROW_PX = 600;
 /**
  * A Tag Manager container is a file on the Matomo server: listed and counted with Matomo, not
  * with the website (Peter, 2026-11-25, "a)"). Its alarm stays the website's (Sentinel U02).
@@ -491,6 +530,11 @@ export default defineComponent({
       loading: true,
       loaded: false,
       failed: false,
+      /** narrower than a phone: a narrow dashboard column too (is-narrow, the phone rules) */
+      narrow: false,
+      /** what screen readers hear about a check: that it runs, then the new freshness */
+      announce: '',
+      resize: null as ResizeObserver | null,
       checking: false,
       checkNote: '',
       panelOpen: false,
@@ -698,7 +742,9 @@ export default defineComponent({
     /** uptime Matomo, uptime website, the tracker's processing time, the soonest certificate */
     figures(): Figure[] {
       const out: Figure[] = [];
-      const matomo = this.showMatomo
+      // the page shows the uptime of each group at the end of its strip (D3); without a strip here
+      const stripped = (key: string) => this.isPage && this.strips.some((s) => s.key === key);
+      const matomo = this.showMatomo && !stripped('matomo')
         ? this.uptimeOf(this.matomoRows, [...this.matomoUptimeRows, ...this.siteUptimeRows],
           this.matomoTimeline) : null;
       if (matomo) {
@@ -709,7 +755,7 @@ export default defineComponent({
           ...matomo,
         });
       }
-      const site = this.showSite
+      const site = this.showSite && !stripped('site')
         ? this.uptimeOf(this.siteRows, this.siteUptimeRows, this.siteTimeline) : null;
       if (site) {
         out.push({
@@ -764,23 +810,30 @@ export default defineComponent({
     },
     strips(): Strip[] {
       const out: Strip[] = [];
-      const add = (key: string, name: string, timeline: Timeline | null, rows: Row[]) => {
+      const add = (
+        key: string,
+        name: string,
+        timeline: Timeline | null,
+        rows: Row[],
+        uptimeRows: UptimeRow[],
+      ) => {
         if (timeline && timeline.cells.length) {
           out.push({
             key,
             name,
             timeline,
             targets: this.measurable(rows),
+            uptime: this.isPage ? this.uptimeOf(rows, uptimeRows, timeline) : null,
           });
         }
       };
       if (this.showMatomo) {
         add('matomo', translate('FeinwerkUptimeMonitor_UiMatomo'), this.matomoTimeline,
-          this.matomoRows);
+          this.matomoRows, [...this.matomoUptimeRows, ...this.siteUptimeRows]);
       }
       if (this.showSite) {
         add('site', translate('FeinwerkUptimeMonitor_UiThisWebsite'), this.siteTimeline,
-          this.siteRows);
+          this.siteRows, this.siteUptimeRows);
       }
       return out;
     },
@@ -793,6 +846,14 @@ export default defineComponent({
     /** the widget's one group */
     widgetGroup(): Group | null {
       return this.groups.length ? this.groups[0] : null;
+    },
+    /** the quiet icons: admins of the website, not in an embed */
+    showTools(): boolean {
+      return this.isPage && this.config.isAdmin && !this.config.embedded;
+    },
+    checkLabel(): string {
+      return translate(this.checking ? 'FeinwerkUptimeMonitor_UiChecking'
+        : 'FeinwerkUptimeMonitor_UiCheckNow');
     },
     /** the website widget: which of the website's containers are down (they count with Matomo) */
     containerNote(): string {
@@ -856,6 +917,24 @@ export default defineComponent({
   },
   mounted() {
     this.load();
+    // the page and the widgets follow their own width, not the screen's: Matomo's default dashboard
+    // has three columns, about 370 px each (Peter, 2026-11-25: the big widget looked broken there)
+    if (typeof ResizeObserver !== 'undefined' && this.$el instanceof HTMLElement) {
+      this.resize = new ResizeObserver((entries) => {
+        // a dashboard reload replaces the widget's HTML without unmounting the app: let go then
+        if (!(this.$el as HTMLElement).isConnected) {
+          if (this.resize) {
+            this.resize.disconnect();
+          }
+          return;
+        }
+        const width = entries[0] ? entries[0].contentRect.width : 0;
+        if (width > 0) {
+          this.narrow = width < NARROW_PX;
+        }
+      });
+      this.resize.observe(this.$el);
+    }
     this.timer = window.setInterval(() => {
       // Matomo 5's dashboard reload replaces a widget's HTML without unmounting the app
       if (!(this.$el as HTMLElement | undefined)?.isConnected) {
@@ -867,9 +946,28 @@ export default defineComponent({
   },
   beforeUnmount() {
     window.clearInterval(this.timer);
+    if (this.resize) {
+      this.resize.disconnect();
+    }
   },
   methods: {
     translate,
+    /**
+     * An address in pieces that may wrap after ".", "/", "?", "&", "=", "-" or "_" (a <wbr> after
+     * each): on a phone "www.outdoor-shop-demo.example" wraps between its parts, not inside a word
+     */
+    breakParts(text: string): string[] {
+      const parts = text.replace(/([./?&=_-])/g, '$1\u0001').split('\u0001').filter((p) => p !== '');
+      // "www." never stands alone on a line
+      if (parts.length > 1 && parts[0].toLowerCase() === 'www.') {
+        parts.splice(0, 2, parts[0] + parts[1]);
+      }
+      return parts;
+    },
+    /** "HTTP-Status 403" stays whole on a phone: non-breaking hyphens in a short state text */
+    keepHyphens(text: string): string {
+      return text.replace(/-/g, '\u2011');
+    },
     load(): Promise<void> {
       if (this.loaded && !(this.$el as HTMLElement | undefined)?.isConnected) {
         // a detached copy after a dashboard reload: the new one loads for itself
@@ -972,7 +1070,12 @@ export default defineComponent({
         });
     },
     checkNow(): void {
+      // aria-disabled keeps the focus on the button: the click is ignored here instead
+      if (this.checking) {
+        return;
+      }
       this.checking = true;
+      this.announce = this.checkLabel;
       this.checkNote = '';
       const idSite = this.showSite ? this.config.idSite : 0;
       // the Matomo widget lists the website's containers too: they are checked with the website
@@ -993,7 +1096,10 @@ export default defineComponent({
           if (answer.locked) {
             this.checkNote = translate('FeinwerkUptimeMonitor_UiCheckBusy');
           }
-          return this.load();
+          return this.load().then(() => {
+            // "checked just now": the check is done
+            this.announce = this.freshness;
+          });
         })
         .catch((e: unknown) => {
           // e.g. "once a minute": said here, next to the button

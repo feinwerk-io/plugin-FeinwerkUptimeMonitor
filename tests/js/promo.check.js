@@ -24,7 +24,7 @@ function check(name, actual, expected) {
 
 async function load(page, order) {
     for (const version of order) {
-        await page.addScriptTag({ content: version === 2 ? V2 : (version === 'old3' ? OLD3 : (version === 'old4' ? OLD4 : V3)) });
+        await page.addScriptTag({ content: version === 2 ? V2 : ({ old3: OLD3, old4: OLD4, old5: OLD5 }[version] || V3) });
     }
     await page.waitForTimeout(200);
 }
@@ -199,6 +199,53 @@ const compact = (page) => page.evaluate(() => Array.from(document.querySelectorA
                     await p.evaluate(() => document.activeElement && document.activeElement.id), 'prev');
                 await context.close();
             }
+        }
+        // version 6 (Campaign Manager's UI review 2026-11-25; Peter: "Kurzer Linktext"): every tip link of every language
+        // (lang/*.json) keeps the line inside its place on a phone; the connector link takes its short form there and keeps
+        // the full one on a wide line; also next to the released versions 4 and 5 and among 20 mixed copies
+        const PAIRS = [['PromoCampaignsText', 'PromoCampaignsLink'], ['PromoCampaignsInstallText', 'PromoCampaignsInstallLink'],
+            ['PromoCampaignsInstallText', 'PromoCampaignsStoreLink'], ['PromoCampaignsOpenText', 'PromoCampaignsOpenLink'],
+            ['PromoHostingText', 'PromoHostingLink'], ['PromoCapiText', 'PromoCapiLink'], ['PromoSentinelText', 'PromoSentinelLink'],
+            ['PromoConnectorText', 'PromoConnectorLink', 'PromoConnectorLinkShort']];
+        const realLine = (id, text, link, short) => '<div class="fwpromo-line" data-fwpromo-id="' + id + '" data-fwpromo-placement="line" data-fwpromo-days="30">'
+            + LOGO + '<span class="fwpromo-line__text">' + text + '</span><a class="fwpromo-line__link" href="#">'
+            + (short ? '<span class="fwpromo-line__link-full">' + link + '</span><span class="fwpromo-line__link-short">' + short + '</span>' : link)
+            + '</a><button type="button" class="fwpromo-line__dismiss fwpromo-dismiss">x</button></div>';
+        const many6 = Array.from({ length: 20 }, (_, i) => [2, 'old3', 'old4', 'old5', 3][i % 5]);
+        for (const order of [[3], ['old5', 3], [3, 'old5'], ['old4', 3], many6]) {
+            const label = (order.length > 5 ? '20 copies (2, old 3, old 4, old 5, 6)' : 'order ' + order.join(' then ')) + ': ';
+            const context = await browser.newContext();
+            const p = await open(context, page(390, ''), order);
+            const bad = [];
+            let n = 0;
+            for (const lang of ['en', 'de', 'fr', 'es', 'it']) {
+                const t = LANG[lang].FeinwerkUptimeMonitor;
+                for (const [textKey, linkKey, shortKey] of PAIRS) {
+                    n++;
+                    await p.evaluate((html) => { document.getElementById('report').innerHTML = html; }, realLine('r' + n, t[textKey], t[linkKey], shortKey ? t[shortKey] : ''));
+                    for (const width of [300, 320, 360, 390, 1000]) {
+                        await p.evaluate((w) => { document.getElementById('report').style.width = w + 'px'; }, width);
+                        await p.waitForTimeout(50);
+                        const st = await p.evaluate(() => {
+                            const l = document.querySelector('.fwpromo-line[data-fwpromo-ready]');
+                            if (!l) return { missing: true };
+                            const link = l.querySelector('.fwpromo-line__link');
+                            const x = l.querySelector('.fwpromo-line__dismiss').getBoundingClientRect();
+                            const box = l.getBoundingClientRect();
+                            return {
+                                overflow: l.scrollWidth > l.clientWidth + 1 || x.right > box.right + 1,
+                                linkCut: link.scrollWidth > link.clientWidth + 1,
+                                short: l.classList.contains('fwpromo-line--short'),
+                            };
+                        });
+                        if (st.missing || st.overflow || st.linkCut || (width === 1000 && st.short)) {
+                            bad.push(lang + ' ' + linkKey + ' ' + width + ' ' + JSON.stringify(st));
+                        }
+                    }
+                }
+            }
+            check(label + 'every tip link in five languages fits 300 to 390 px, full link at 1000 px', bad, []);
+            await context.close();
         }
     } finally {
         await browser.close();

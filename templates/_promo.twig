@@ -7,11 +7,15 @@
    30 days and once per page in javascripts/promo.js. A link inside Matomo (the connector in the instance's own
    Marketplace) opens in the same tab; the admin note of the connector message is the link's title (one line).
    The Feinwerk Plugins logo starts the line (Peter, 2026-11-17: "werbung um footer verbessern. feinwerk logo immer
-   dabei"), at text height; on a narrow line only its round mark (stylesheets/promo.css). #}
+   dabei"), at text height; on a narrow line only its round mark (stylesheets/promo.css).
+   promo.linkShort (the connector message): the link's short form for a line too narrow for the full one (Peter,
+   2026-11-25: "Kurzer Linktext"; javascripts/promo.js 6), the full text then in the link's title. #}
 <div class="fwpromo-line" data-fwpromo-id="{{ promo.id }}" data-fwpromo-placement="line" data-fwpromo-days="{{ promo.dismissDays }}"{% if promo.demo ?? false %} data-fwpromo-demo="1"{% endif %}>
     {% include '@FeinwerkUptimeMonitor/_feinwerkLogo.twig' %}
     <span class="fwpromo-line__text" title="{{ promo.text }}">{{ promo.text }}</span>
-    <a class="fwpromo-line__link" href="{{ promo.url }}"{% if promo.external ?? true %} target="_blank" rel="noopener"{% endif %}{% if promo.note ?? '' %} title="{{ promo.note }}"{% endif %}>{{ promo.link }}</a>
+    {% set linkShort = promo.linkShort ?? '' %}
+    {% set linkTitle = linkShort ? promo.link ~ ((promo.note ?? '') ? '. ' ~ promo.note : '') : (promo.note ?? '') %}
+    <a class="fwpromo-line__link" href="{{ promo.url }}"{% if promo.external ?? true %} target="_blank" rel="noopener"{% endif %}{% if linkTitle %} title="{{ linkTitle }}"{% endif %}>{% if linkShort %}<span class="fwpromo-line__link-full">{{ promo.link }}</span><span class="fwpromo-line__link-short">{{ linkShort }}</span>{% else %}{{ promo.link }}{% endif %}</a>
     <button type="button" class="fwpromo-line__dismiss fwpromo-dismiss" title="{{ 'FeinwerkUptimeMonitor_PromoDismiss'|translate }}"
             aria-label="{{ 'FeinwerkUptimeMonitor_PromoDismiss'|translate }}"><span aria-hidden="true">&times;</span></button>
 </div>

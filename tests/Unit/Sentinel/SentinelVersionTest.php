@@ -38,6 +38,17 @@ class SentinelVersionTest extends TestCase
         $this->assertTrue(SentinelVersion::supports(null), 'no version known: as before, the interface check decides');
     }
 
+    /** Sentinel 5.4.0 moved its instance settings to its own page, tab "Whole instance" (Sentinel session, 2026-11-25). */
+    public function test_instanceSettings_onSentinelsTabFrom540_elseGeneralSettings(): void
+    {
+        $this->assertSame('module=FeinwerkSentinel&action=index&tab=instance', SentinelVersion::instanceSettingsQuery('5.4.0'));
+        // L8: without a website Sentinel redirects to its first one and drops the tab
+        $this->assertSame('module=FeinwerkSentinel&action=index&idSite=3&period=day&date=yesterday&tab=instance',
+            SentinelVersion::instanceSettingsQuery('6.0.1', 3));
+        $this->assertSame('module=CoreAdminHome&action=generalSettings#/FeinwerkSentinel', SentinelVersion::instanceSettingsQuery('5.3.1'));
+        $this->assertSame('module=CoreAdminHome&action=generalSettings#/FeinwerkSentinel', SentinelVersion::instanceSettingsQuery(null));
+    }
+
     public function test_sentinelState_namesAnOldSentinel(): void
     {
         $this->assertSame('active', ScreenProps::sentinelState(true, true, '5.3.1'));

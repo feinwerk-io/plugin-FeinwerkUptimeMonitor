@@ -36,6 +36,23 @@ final class SentinelVersion
         }
     }
 
+    /** the first Sentinel with its own settings page, tab "Whole instance" (Sentinel session, 2026-11-25) */
+    public const INSTANCE_TAB = '5.4.0';
+
+    /**
+     * Where a super user sets whom Sentinel alerts about the whole instance: Sentinel's page, tab "Whole instance", from
+     * 5.4.0 on; before, Matomo's general settings. A query string for index.php.
+     */
+    public static function instanceSettingsQuery(?string $version, int $idSite = 0): string
+    {
+        if ($version === null || version_compare($version, self::INSTANCE_TAB, '<')) {
+            return 'module=CoreAdminHome&action=generalSettings#/FeinwerkSentinel';
+        }
+        // with a website: Sentinel's page redirects a request without one to its first website and drops the tab
+        return 'module=FeinwerkSentinel&action=index'
+            . ($idSite > 0 ? '&idSite=' . $idSite . '&period=day&date=yesterday' : '') . '&tab=instance';
+    }
+
     /** whether a Sentinel of this version runs the checks; an unknown version (null) counts as able */
     public static function supports(?string $version): bool
     {

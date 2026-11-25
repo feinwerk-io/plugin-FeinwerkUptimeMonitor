@@ -43,6 +43,8 @@ final class ScreenProps
             // the admin page's status rows (Peter's 3a): whether a system cron runs the checks, and how often
             'cron' => $variant === 'admin' ? self::cron() : null,
             'variant' => $variant,
+            // the page as a dashboard widget or an embed: Matomo's widget frame has no padding of its own
+            'inWidget' => $variant === 'page' && ($onDashboard || $embedded),
             'isSuperUser' => Piwik::hasUserSuperUserAccess(),
             'isAdmin' => $idSite > 0 && Piwik::isUserHasAdminAccess($idSite),
             // anonymous visitors of a public dashboard see the website only, not Matomo's own health
@@ -59,6 +61,9 @@ final class ScreenProps
             ),
             // named in the "too old" row of the admin page
             'sentinelVersion' => $variant === 'admin' ? SentinelVersion::loaded() : null,
+            // the admin page (super users): where Sentinel's recipients for the whole instance are set
+            'sentinelSettings' => $variant === 'admin'
+                ? 'index.php?' . SentinelVersion::instanceSettingsQuery(SentinelVersion::loaded(), self::anySite()) : null,
             'embedded' => $embedded,
             // the feedback row: under the uptime page only, never in dashboard widgets or Widgetize embeds
             'feedback' => $ownPage ? self::feedback() : null,
@@ -188,6 +193,22 @@ final class ScreenProps
         }
 
         return $installed ? 'inactive' : 'absent';
+    }
+
+    /** the website of the request, else the first one the user can see (0 without any) */
+    private static function anySite(): int
+    {
+        try {
+            $idSite = Common::getRequestVar('idSite', 0, 'int');
+            if ($idSite > 0) {
+                return $idSite;
+            }
+            $ids = \Piwik\Plugins\SitesManager\API::getInstance()->getSitesIdWithAtLeastViewAccess();
+
+            return (int) (reset($ids) ?: 0);
+        } catch (\Throwable $e) {
+            return 0;
+        }
     }
 
     private static function allowPrivate(): bool

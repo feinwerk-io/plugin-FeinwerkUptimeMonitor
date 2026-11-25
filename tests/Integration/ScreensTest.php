@@ -44,7 +44,7 @@ class ScreensTest extends IntegrationTestCase
 
     public function tearDown(): void
     {
-        unset($_GET['idSite'], $_GET['disableLink']);
+        unset($_GET['idSite'], $_GET['disableLink'], $_GET['widget']);
         Fixture::resetTranslations();
         parent::tearDown();
     }
@@ -106,6 +106,23 @@ class ScreensTest extends IntegrationTestCase
         $props = ScreenProps::for(1, 'site');
         $this->assertTrue($props['embedded']);
         $this->assertNull($props['feedback']);
+    }
+
+    /**
+     * Regression (Peter, 2026-11-25: "Das große Uptime widget via Visitors->Uptime ist immer noch kaputt"): on a
+     * dashboard Matomo's widget frame has no padding, so the page must know it is a widget and bring its own.
+     */
+    public function test_page_onADashboard_isMarkedAsWidget(): void
+    {
+        $this->assertFalse(ScreenProps::for(1, 'page')['inWidget'], 'Visitors > Uptime: the card of Matomo pads it');
+        $_GET['widget'] = '1';
+        $props = ScreenProps::for(1, 'page');
+        $this->assertTrue($props['inWidget'], 'on a dashboard');
+        $this->assertNull($props['feedback'], 'no feedback row in a widget');
+        $this->assertFalse(ScreenProps::for(1, 'site')['inWidget'], 'the small widgets pad themselves');
+        unset($_GET['widget']);
+        $_GET['disableLink'] = '1';
+        $this->assertTrue(ScreenProps::for(1, 'page')['inWidget'], 'an embed is a widget frame too');
     }
 
     public function test_page_withoutViewAccess_isRefused(): void

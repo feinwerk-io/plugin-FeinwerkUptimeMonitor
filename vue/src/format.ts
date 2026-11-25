@@ -227,7 +227,11 @@ export function causeText(cause: string | null, detail: string | null): string {
     return '';
   }
   const text = translate(`FeinwerkUptimeMonitor_Cause_${cause}`);
-  return cause === 'http_status' && detail ? `${text} ${detail.replace('HTTP ', '')}` : text;
+  if (cause !== 'http_status' || !detail) {
+    return text;
+  }
+  // "HTTP status 403" in one piece (no-break spaces): it never wraps between its words
+  return `${text} ${detail.replace('HTTP ', '')}`.replace(/ /g, '\u00a0');
 }
 
 /** What a card or an overview row counts; one rule for the uptime page and the admin overview. */

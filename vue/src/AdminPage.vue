@@ -197,7 +197,13 @@
           />
           <div v-if="config.sentinel === 'active'">
             <p>{{ translate('FeinwerkUptimeMonitor_UiSentinelActive') }}</p>
-            <p class="fwum-muted">{{ translate('FeinwerkUptimeMonitor_UiSentinelFacts') }}</p>
+            <p class="fwum-muted">
+              {{ translate('FeinwerkUptimeMonitor_UiSentinelFacts') }}
+              <a
+                v-if="config.sentinelSettings"
+                :href="config.sentinelSettings"
+              >{{ translate('FeinwerkUptimeMonitor_UiSentinelSettingsLink') }}</a>
+            </p>
           </div>
           <div v-else-if="config.sentinel === 'old'">
             <p>
