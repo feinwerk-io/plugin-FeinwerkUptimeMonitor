@@ -32,6 +32,8 @@ final class UptimeReport
 {
     public const PERIODS = ['day', 'week', 'month', 'year', 'range'];
     public const SOURCES = ['all', StateStore::LOCAL, StateStore::EXTERNAL];
+    /** the strips of getTimeline: every target, or grouped as the screens show them */
+    public const GROUPS = ['all', 'matomo', 'website'];
     private const HOUR_ROWS_DAYS = 31;
 
     public function __construct(private ?\Closure $now = null)
@@ -143,18 +145,19 @@ final class UptimeReport
 
     /**
      * The hour strip (Peter's D2): one cell per hour for a day, per local day (the website's timezone) for periods up to
-     * 31 days, per UTC day beyond (when only day rows are kept). A cell sums every target of the website (idSite 0:
-     * Matomo's own, without the processing time): up when all measured time was up, down when none was, partial between,
-     * none when nothing was measured.
+     * 31 days, per UTC day beyond (when only day rows are kept). A cell sums the switched-on targets of the group (see
+     * groupTargets(); the processing time never counts): up when all measured time was up, down when none was, partial
+     * between, none when nothing was measured, future after now.
      *
      * @param array{from: int, to: int, grain: string} $range from range()
      * @param string $timezone the timezone the local days follow (Matomo's names, also "UTC+2")
+     * @param string $group all|matomo|website, see groupTargets()
      * @return array{grain: string, days: ?string, cells: list<array{time: string, measuredSeconds: int, upSeconds: int, state: string}>}
      */
-    public function timeline(int $idSite, array $range, string $source, string $timezone, string $period = ''): array
+    public function timeline(int $idSite, array $range, string $source, string $timezone, string $period = '', string $group = 'all'): array
     {
         // the switched-on addresses, as on the screens (a switched-off address no longer counts)
-        $ids = array_map(static fn(Target $t): int => $t->id, array_filter($this->targets($idSite),
+        $ids = array_map(static fn(Target $t): int => $t->id, array_filter($this->groupTargets($idSite, $group),
             static fn(Target $t): bool => $t->kind !== Kind::PROCESSING && $t->enabled));
         $now = $this->now();
         $span = $range['to'] - $range['from'];
@@ -349,10 +352,34 @@ final class UptimeReport
     }
 
     /**
-     * One row per website and one for Matomo (idSite 0): how many targets, how many are down or cannot be checked,
-     * the last check, the soonest certificate expiry. Four queries for all websites.
+     * The targets of a strip. Group all: every target of the website (idSite 0: Matomo's own). Group matomo: what runs
+     * on the Matomo server for this website, Matomo's own addresses and the website's Tag Manager containers, whose
+     * file Matomo serves (Peter, 2026-11-25, "a)"). Group website: the website's own addresses and its tracking proxy.
      *
-     * @return list<array{idSite: int, name: string, timezone: string, targets: int, off: int, up: int, down: int, notCheckable: int, stale: int, lastCheckedAt: ?string, certificateDaysLeft: ?int}>
+     * @return Target[]
+     */
+    public function groupTargets(int $idSite, string $group): array
+    {
+        if ($group === 'matomo') {
+            $own = array_filter($this->targets(0), static fn(Target $t): bool => in_array($t->kind, Kind::INSTANCE, true));
+            $containers = $idSite > 0
+                ? array_filter($this->targets($idSite), static fn(Target $t): bool => $t->kind === Kind::CONTAINER) : [];
+
+            return array_merge(array_values($own), array_values($containers));
+        }
+        $targets = $this->targets($idSite);
+
+        return $group === 'website'
+            ? array_values(array_filter($targets, static fn(Target $t): bool => $t->kind !== Kind::CONTAINER))
+            : $targets;
+    }
+
+    /**
+     * One row per website and one for Matomo (idSite 0): how many targets, how many are down or cannot be checked,
+     * the last check, the soonest certificate expiry. Tag Manager containers count in Matomo's row, which names the
+     * websites whose container is down (containersDown). Four queries for all websites.
+     *
+     * @return list<array{idSite: int, name: string, timezone: string, targets: int, off: int, up: int, down: int, notCheckable: int, stale: int, lastCheckedAt: ?string, certificateDaysLeft: ?int, containersDown: list<array{idSite: int, name: string}>}>
      */
     public function overview(): array
     {
@@ -369,14 +396,16 @@ final class UptimeReport
             if (!isset($names[$target->idSite])) {
                 continue;
             }
-            $row = $rows[$target->idSite] ?? ['idSite' => $target->idSite, 'name' => $names[$target->idSite],
-                'timezone' => $zones[$target->idSite] ?? 'UTC', 'targets' => 0,
+            // a Tag Manager container is a file on the Matomo server: it counts with Matomo (Peter, 2026-11-25, "a)")
+            $idRow = $target->kind === Kind::CONTAINER ? 0 : $target->idSite;
+            $row = $rows[$idRow] ?? ['idSite' => $idRow, 'name' => $names[$idRow],
+                'timezone' => $zones[$idRow] ?? 'UTC', 'targets' => 0,
                 'off' => 0, 'up' => 0, 'down' => 0, 'notCheckable' => 0, 'stale' => 0, 'lastCheckedAt' => null,
-                'certificateDaysLeft' => null];
+                'certificateDaysLeft' => null, 'containersDown' => []];
             if (!$target->enabled) {
-                // listed so that a super user can switch it on again from the overview
+                // listed so that a super user can switch it on again from the overview (a container: from its website)
                 $row['off']++;
-                $rows[$target->idSite] = $row;
+                $rows[$idRow] = $row;
                 continue;
             }
             $row['targets']++;
@@ -389,6 +418,10 @@ final class UptimeReport
                 } else {
                     $row['up'] += $state['outcome'] === 'up' ? 1 : 0;
                     $row['down'] += $state['outcome'] === 'down' ? 1 : 0;
+                    if ($target->kind === Kind::CONTAINER && $state['outcome'] === 'down') {
+                        // Matomo's row says whose container fails: the fix may be in that website's Tag Manager
+                        $row['containersDown'][$target->idSite] = ['idSite' => $target->idSite, 'name' => $names[$target->idSite]];
+                    }
                     $row['notCheckable'] += $state['outcome'] === 'not_checkable' ? 1 : 0;
                 }
                 $checked = self::iso($checkedTs);
@@ -398,9 +431,14 @@ final class UptimeReport
                     $row['certificateDaysLeft'] = $row['certificateDaysLeft'] === null ? $days : min($row['certificateDaysLeft'], $days);
                 }
             }
-            $rows[$target->idSite] = $row;
+            $rows[$idRow] = $row;
         }
         ksort($rows);
+        foreach ($rows as &$row) {
+            ksort($row['containersDown']);
+            $row['containersDown'] = array_values($row['containersDown']);
+        }
+        unset($row);
 
         return array_values($rows);
     }

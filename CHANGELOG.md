@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.1.2
+
+- Tag Manager containers are listed and counted with Matomo, not with the website: Matomo serves their files, so a
+  container that cannot be loaded is a Matomo problem. The website's uptime now counts only its own addresses and its
+  tracking proxy. On Administration > Diagnostic > Uptime Monitor the Matomo row names the websites whose container is
+  not reachable. The alarm stays with the website (Feinwerk Sentinel check U02), so the "Uptime: Website" widget names
+  a container of the website that is not reachable in one line, without changing its figures.
+- "Why?" next to addresses that cannot be checked also names a password or a block on automated requests; the link to
+  allow private addresses no longer shows when they are already allowed.
+- API: getTimeline takes `group` (all, matomo or website); getSitesOverview gives `containersDown` in Matomo's row.
+
 ## 5.1.1
 
 - Administration > Diagnostic > Uptime Monitor sums up the websites that cannot be checked from the Matomo server in

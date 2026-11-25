@@ -67,15 +67,16 @@ export const api = {
   },
   /**
    * The hour strip: one cell per hour (a day) or per day, checked from the Matomo server, like
-   * the rest of the page. A failing strip leaves the page as it is: no toast.
+   * the rest of the page. group matomo: Matomo's addresses and the website's containers; website:
+   * the website without its containers. A failing strip leaves the page as it is: no toast.
    */
-  timeline(idSite: number, period: Period, timezoneOf = 0): Promise<Timeline> {
+  timeline(idSite: number, period: Period, group: 'matomo' | 'website'): Promise<Timeline> {
     return AjaxHelper.fetch<Timeline>({
       method: `${MODULE}.getTimeline`,
       idSite,
       ...period,
       source: 'local',
-      timezoneOf,
+      group,
     }, { createErrorNotification: false });
   },
   targets(idSite: number): Promise<{ targets: TargetRow[]; suggestions: Suggestion[] }> {

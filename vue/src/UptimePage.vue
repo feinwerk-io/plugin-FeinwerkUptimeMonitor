@@ -96,7 +96,7 @@
             class="fwum-answer__actions"
           >
             <button
-              v-if="siteRows.length || !siteTargetCount"
+              v-if="siteRows.length || !siteTargetCount || containers.some((t) => t.enabled)"
               type="button"
               class="btn-flat fwum-icon-button"
               :disabled="checking"
@@ -320,7 +320,7 @@
               @click="whyOpen = !whyOpen"
             >{{ translate('FeinwerkUptimeMonitor_UiWhy') }}</button>
             <a
-              v-if="config.isSuperUser && !config.embedded"
+              v-if="config.isSuperUser && !config.embedded && !config.allowPrivate"
               :href="settingsUrl"
             >{{ translate('FeinwerkUptimeMonitor_UiAllowPrivate') }}</a>
           </p>
@@ -330,10 +330,22 @@
             :id="`${uid}-why`"
             class="fwum-note fwum-nc__why"
           >{{ translate('FeinwerkUptimeMonitor_UiNotCheckableHelp') }}<template
-            v-if="!(config.isSuperUser && !config.embedded)"
+            v-if="!(config.isSuperUser && !config.embedded) && !config.allowPrivate"
           > {{ translate('FeinwerkUptimeMonitor_UiNotCheckableSettings') }}</template></p>
         </div>
 
+        <!-- the website widget: its container counts with Matomo, but the alarm (U02) goes to the
+             website, so its admins see why (Peter, 2026-11-25, "go" to option a) -->
+        <p
+          v-if="containerNote"
+          class="fwum-note fwum-container-note"
+        >
+          {{ containerNote }}
+          <a
+            v-if="!config.embedded && !widgetDown"
+            :href="uptimePageUrl"
+          >{{ translate('FeinwerkUptimeMonitor_UiOpenPage') }}</a>
+        </p>
         <p
           v-if="!isPage && widgetDown && !config.embedded"
           class="fwum-open-page"
@@ -390,7 +402,8 @@ import {
   Certificate, Incident, ScreenConfig, SeriesPoint, Status, TargetStatus, Timeline, UptimeRow,
 } from './types';
 import {
-  ago, causeText, clockOrDate, dateTime, errorText, milliseconds, percent, sharePercent, statusOf,
+  ago, causeText, clockOrDate, dateTime, errorText, listOf, milliseconds, percent, sharePercent,
+  statusOf,
   targetLabel,
 } from './format';
 import { stripTotals } from './timeline';
@@ -453,6 +466,11 @@ interface Strip {
 }
 
 const MATOMO_KINDS = ['ui', 'tracker', 'js'];
+/**
+ * A Tag Manager container is a file on the Matomo server: listed and counted with Matomo, not
+ * with the website (Peter, 2026-11-25, "a)"). Its alarm stays the website's (Sentinel U02).
+ */
+const CONTAINER = 'container';
 const ORDER = ['ui', 'tracker', 'js', 'web', 'proxy', 'container'];
 /** the answer line names the worst group first */
 const SEVERITY = ['down', 'partial', 'stale', 'not_checkable', 'none', 'off', 'up'];
@@ -523,14 +541,22 @@ export default defineComponent({
       const allowed = this.config.variant === 'matomo' ? this.config.isSuperUser : this.config.isAdmin;
       return allowed && !this.config.embedded;
     },
+    /** the website's Tag Manager containers: shown in the Matomo group */
+    containers(): TargetStatus[] {
+      return (this.site?.targets || []).filter((t) => t.kind === CONTAINER);
+    },
     matomoRows(): Row[] {
-      return (this.matomo?.targets || [])
+      const own = (this.matomo?.targets || [])
         .filter((t) => t.enabled && MATOMO_KINDS.includes(t.kind))
         .sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind))
         .map((t) => this.row(t, this.matomoUptimeRows));
+      const containers = this.containers.filter((t) => t.enabled)
+        .sort((a, b) => a.targetKey.localeCompare(b.targetKey))
+        .map((t) => this.row(t, this.siteUptimeRows));
+      return [...own, ...containers];
     },
     siteRows(): Row[] {
-      return (this.site?.targets || []).filter((t) => t.enabled)
+      return (this.site?.targets || []).filter((t) => t.enabled && t.kind !== CONTAINER)
         .sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind)
           || a.targetKey.localeCompare(b.targetKey))
         .map((t) => this.row(t, this.siteUptimeRows));
@@ -562,13 +588,16 @@ export default defineComponent({
           ...params, category: 'General_Visitors', subcategory: 'FeinwerkUptimeMonitor_Uptime',
         })}`;
     },
-    /** the website's targets, switched on or off (none before a new website's first check run) */
+    /** the website's own targets, on or off (none before a new website's first check run) */
     siteTargetCount(): number {
-      return (this.site?.targets || []).length;
+      return (this.site?.targets || []).filter((t) => t.kind !== CONTAINER).length;
     },
-    /** Matomo's own addresses exist but every one is switched off */
+    /** Matomo's addresses (with the website's containers) exist but every one is switched off */
     matomoAllOff(): boolean {
-      const own = (this.matomo?.targets || []).filter((t) => MATOMO_KINDS.includes(t.kind));
+      const own = [
+        ...(this.matomo?.targets || []).filter((t) => MATOMO_KINDS.includes(t.kind)),
+        ...this.containers,
+      ];
       return own.length > 0 && own.every((t) => !t.enabled);
     },
     nothingChecked(): boolean {
@@ -660,7 +689,9 @@ export default defineComponent({
         out[t.targetKey] = translate('FeinwerkUptimeMonitor_UiMatomoTarget', targetLabel(t));
       });
       (this.site?.targets || []).forEach((t) => {
-        out[t.targetKey] = targetLabel(t);
+        // a container is listed with Matomo: named so in the outage list too
+        out[t.targetKey] = t.kind === CONTAINER
+          ? translate('FeinwerkUptimeMonitor_UiMatomoTarget', targetLabel(t)) : targetLabel(t);
       });
       return out;
     },
@@ -668,7 +699,8 @@ export default defineComponent({
     figures(): Figure[] {
       const out: Figure[] = [];
       const matomo = this.showMatomo
-        ? this.uptimeOf(this.matomoRows, this.matomoUptimeRows, this.matomoTimeline) : null;
+        ? this.uptimeOf(this.matomoRows, [...this.matomoUptimeRows, ...this.siteUptimeRows],
+          this.matomoTimeline) : null;
       if (matomo) {
         out.push({
           key: 'matomo',
@@ -762,6 +794,24 @@ export default defineComponent({
     widgetGroup(): Group | null {
       return this.groups.length ? this.groups[0] : null;
     },
+    /** the website widget: which of the website's containers are down (they count with Matomo) */
+    containerNote(): string {
+      // anonymous viewers never see a container: it belongs to Matomo's group
+      if (this.config.variant !== 'site' || this.config.isAnonymous) {
+        return '';
+      }
+      const down = this.containers
+        .filter((t) => t.enabled && t.states.local && t.states.local.outcome === 'down'
+          && !t.states.local.stale)
+        .map((t) => targetLabel(t));
+      if (!down.length) {
+        return '';
+      }
+      const names = listOf(down, this.config.language);
+      return down.length === 1
+        ? translate('FeinwerkUptimeMonitor_UiContainerDownOne', names)
+        : translate('FeinwerkUptimeMonitor_UiContainerDownMany', names);
+    },
     widgetDown(): boolean {
       return !!this.widgetGroup && this.widgetGroup.rows.some((r) => r.outcome === 'down');
     },
@@ -836,16 +886,25 @@ export default defineComponent({
         requests.push(api.uptime(0, period, idSite).then((r) => { this.matomoUptimeRows = r; }));
         requests.push(this.loadSeries(period));
         // the strip is an addition: without it the page still answers
-        requests.push(api.timeline(0, period, idSite).catch(() => null)
+        requests.push(api.timeline(idSite, period, 'matomo').catch(() => null)
           .then((t) => { this.matomoTimeline = t; }));
         open.push(api.openIncidents(0, idSite).catch(() => [] as Incident[]));
       }
+      // the website's targets also for the Matomo widget: its containers belong to Matomo's group
       if (this.showSite) {
         requests.push(api.status(idSite).then((s) => { this.site = s; }));
         requests.push(api.uptime(idSite, period).then((r) => { this.siteUptimeRows = r; }));
-        requests.push(api.timeline(idSite, period).catch(() => null)
-          .then((t) => { this.siteTimeline = t; }));
         open.push(api.openIncidents(idSite).catch(() => [] as Incident[]));
+      } else if (this.showMatomo && idSite > 0) {
+        // the Matomo widget: the website's containers are an addition, a failure leaves the rest
+        requests.push(api.status(idSite).then((s) => { this.site = s; }).catch(() => undefined));
+        requests.push(api.uptime(idSite, period).then((r) => { this.siteUptimeRows = r; })
+          .catch(() => undefined));
+        open.push(api.openIncidents(idSite).catch(() => [] as Incident[]));
+      }
+      if (this.showSite) {
+        requests.push(api.timeline(idSite, period, 'website').catch(() => null)
+          .then((t) => { this.siteTimeline = t; }));
       }
       requests.push(Promise.all(open).then((lists) => {
         this.openIncidents = ([] as Incident[]).concat(...lists);
@@ -873,7 +932,9 @@ export default defineComponent({
       return Promise.all([api.incidents(idSite, period, 0, limit), matomoIncidents])
         .then(([own, matomo]) => {
           this.incidentsMore = own.length >= limit || matomo.length >= limit;
-          this.incidents = [...own, ...matomo].sort((a, b) => b.start.localeCompare(a.start));
+          // a container is listed in Matomo's group: not shown to viewers without it (anonymous)
+          const site = this.showMatomo ? own : own.filter((i) => i.kind !== CONTAINER);
+          this.incidents = [...site, ...matomo].sort((a, b) => b.start.localeCompare(a.start));
         });
     },
     /** "Show more": the next outages, loading up to the API's limit when a list was cut */
@@ -914,18 +975,33 @@ export default defineComponent({
       this.checking = true;
       this.checkNote = '';
       const idSite = this.showSite ? this.config.idSite : 0;
-      api.checkNow(idSite).then((answer) => {
-        if (answer.locked) {
-          this.checkNote = translate('FeinwerkUptimeMonitor_UiCheckBusy');
-          return undefined;
-        }
-        return this.load();
-      }).catch((e: unknown) => {
-        // e.g. "once a minute": said here, next to the button
-        this.checkNote = errorText(e);
-      }).finally(() => {
-        this.checking = false;
-      });
+      // the Matomo widget lists the website's containers too: they are checked with the website
+      const containersToo = idSite === 0 && this.config.idSite > 0
+        && this.containers.some((t) => t.enabled);
+      api.checkNow(idSite)
+        .then((answer) => {
+          if (answer.locked) {
+            this.checkNote = translate('FeinwerkUptimeMonitor_UiCheckBusy');
+            return undefined;
+          }
+          return containersToo ? api.checkNow(this.config.idSite) : answer;
+        })
+        .then((answer) => {
+          if (!answer) {
+            return undefined;
+          }
+          if (answer.locked) {
+            this.checkNote = translate('FeinwerkUptimeMonitor_UiCheckBusy');
+          }
+          return this.load();
+        })
+        .catch((e: unknown) => {
+          // e.g. "once a minute": said here, next to the button
+          this.checkNote = errorText(e);
+        })
+        .finally(() => {
+          this.checking = false;
+        });
     },
     onPanelClose(changed: boolean): void {
       this.panelOpen = false;

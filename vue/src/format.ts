@@ -14,6 +14,7 @@ export function locale(language: string): string | undefined {
 
 type ListFormatter = new (lang: string | undefined, options: { style: string; type: string }) => {
   format(items: string[]): string;
+  formatToParts?(items: string[]): Array<{ type: string; value: string }>;
 };
 
 /** "A, B and C" in the page language (Intl.ListFormat), else joined with commas */
@@ -27,6 +28,41 @@ export function listOf(items: string[], language: string): string {
     // an unknown language: the commas below
   }
   return items.join(', ');
+}
+
+/**
+ * The pieces of "A, B and C" in the page language: each element with its index in items (to
+ * make it a link), the words between with index -1; else commas
+ */
+export function listParts(
+  items: string[],
+  language: string,
+): Array<{ index: number; text: string }> {
+  const { ListFormat } = Intl as unknown as { ListFormat?: ListFormatter };
+  try {
+    const formatter = ListFormat
+      ? new ListFormat(locale(language), { style: 'long', type: 'conjunction' }) : null;
+    if (formatter && typeof formatter.formatToParts === 'function') {
+      let next = 0;
+      return formatter.formatToParts(items).map((part) => {
+        if (part.type !== 'element') {
+          return { index: -1, text: part.value };
+        }
+        next += 1;
+        return { index: next - 1, text: part.value };
+      });
+    }
+  } catch (e) {
+    // an unknown language: the commas below
+  }
+  const out: Array<{ index: number; text: string }> = [];
+  items.forEach((item, index) => {
+    if (index > 0) {
+      out.push({ index: -1, text: ', ' });
+    }
+    out.push({ index, text: item });
+  });
+  return out;
 }
 
 export function percent(value: number | null, language: string, digits = 2): string {

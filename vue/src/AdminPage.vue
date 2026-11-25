@@ -96,6 +96,22 @@
                   <span>{{ status(row).text }}</span>
                 </span>
                 <span
+                  v-if="row.containersDown && row.containersDown.length > 3"
+                  class="fwum-admin__containers"
+                >{{ translate('FeinwerkUptimeMonitor_UiAdminContainersDownMany',
+                  String(row.containersDown.length)) }}</span>
+                <span
+                  v-else-if="row.containersDown && row.containersDown.length"
+                  class="fwum-admin__containers"
+                >{{ containerLine(row).before }}<template
+                  v-for="(part, i) in containerLine(row).parts"
+                  :key="i"
+                ><a
+                  v-if="part.index >= 0"
+                  :href="pageUrl(row.containersDown[part.index].idSite)"
+                >{{ part.text }}</a><template v-else>{{ part.text }}</template></template>{{
+                  containerLine(row).after }}</span>
+                <span
                   v-if="row.lastCheckedAt"
                   class="fwum-muted fwum-narrow-only"
                   :title="when(row.lastCheckedAt, row.timezone)"
@@ -132,7 +148,10 @@
               :aria-controls="`${uid}-why`"
               @click="whyOpen = !whyOpen"
             >{{ translate('FeinwerkUptimeMonitor_UiWhy') }}</button>
-            <a :href="settingsUrl">{{ translate('FeinwerkUptimeMonitor_UiAllowPrivate') }}</a>
+            <a
+              v-if="!config.allowPrivate"
+              :href="settingsUrl"
+            >{{ translate('FeinwerkUptimeMonitor_UiAllowPrivate') }}</a>
           </p>
           <p
             v-show="whyOpen"
@@ -220,7 +239,7 @@ import { ContentBlock, MatomoUrl, translate } from 'CoreHome';
 import { api } from './api';
 import { ScreenConfig, SiteOverview } from './types';
 import {
-  ago, dateTime, duration, listOf, statusOf, zoneOf,
+  ago, dateTime, duration, listOf, listParts, statusOf, zoneOf,
 } from './format';
 import TargetPanel from './TargetPanel.vue';
 
@@ -345,6 +364,19 @@ export default defineComponent({
     },
     since(iso: string): string {
       return ago(iso, this.config.language, this.tick);
+    },
+    /**
+     * Matomo's row: whose Tag Manager container is down (containers count with Matomo), each
+     * website a link to its uptime page, up to three like the fold line
+     */
+    containerLine(row: SiteOverview): {
+      before: string; after: string; parts: Array<{ index: number; text: string }>;
+    } {
+      const mark = '\u0001';
+      const [before, after = ''] = translate('FeinwerkUptimeMonitor_UiAdminContainersDown', mark)
+        .split(mark);
+      const names = (row.containersDown || []).map((s) => s.name);
+      return { before, after, parts: listParts(names, this.config.language) };
     },
     openPanel(row: SiteOverview): void {
       this.panelName = row.name;

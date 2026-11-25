@@ -104,23 +104,32 @@ class API extends \Piwik\Plugin\API
     /**
      * The hour strip of a website (idSite 0: Matomo itself) over a whole Matomo period, with a fixed axis: one cell per
      * hour for a day (and a range up to two days), per day in the website's timezone for a week, a month or a range up
-     * to 31 days, per UTC day beyond. A cell sums every switched-on check target of the website: up when all measured
-     * time was up, down when none was, partial between, none when nothing was measured, future after now.
+     * to 31 days, per UTC day beyond. A cell sums the switched-on check targets of the group (see group): up when all
+     * measured time was up, down when none was, partial between, none when nothing was measured, future after now.
      *
      * @param int $idSite website ID, or 0 for the Matomo instance
      * @param string $period day|week|month|year|range (Matomo's periods, in the website's timezone; UTC for idSite 0)
      * @param string $date a date (YYYY-MM-DD, today, yesterday) or for range "YYYY-MM-DD,YYYY-MM-DD"
      * @param string $source all|local|external, default all
      * @param int $timezoneOf only with idSite 0: a website ID whose timezone the period follows; default 0 = UTC
+     * @param string $group which targets the strip sums: all (default) every switched-on target of idSite; matomo
+     *                      Matomo's own addresses plus the website's Tag Manager containers (their file is served by
+     *                      Matomo; not for anonymous viewers); website the website's addresses and tracking proxy
+     *                      without its containers. With idSite 0 only all or matomo.
      * @return array {grain: hour|day, days: local|utc|null (with grain day: whether a cell is a day in the website's
      *               timezone or a UTC day), cells: list of {time: ISO time (start of the hour or day, UTC),
      *               measuredSeconds: int, upSeconds: int, state: up|down|partial|none|future}}; at most 367 cells; a period
      *               longer than 366 days is refused with HTTP 400 naming 'period'
      */
-    public function getTimeline($idSite, $period, $date, $source = 'all', $timezoneOf = 0)
+    public function getTimeline($idSite, $period, $date, $source = 'all', $timezoneOf = 0, $group = 'all')
     {
         $idSite = $this->viewableSite($idSite);
         $source = $this->oneOf('source', $source, UptimeReport::SOURCES);
+        $group = $this->oneOf('group', $group, $idSite === 0 ? ['all', 'matomo'] : UptimeReport::GROUPS);
+        if ($group === 'matomo') {
+            // Matomo's own health, as for idSite 0: never anonymous visitors of a public dashboard
+            Piwik::checkUserIsNotAnonymous();
+        }
         $report = new UptimeReport();
         // the whole period: the strip has a fixed axis, the hours or days after now are "future"
         $range = $this->range($report, $idSite, $period, $date, $timezoneOf, false);
@@ -130,7 +139,7 @@ class API extends \Piwik\Plugin\API
         $zoneSite = $idSite > 0 ? $idSite : (int) $timezoneOf;
         $timezone = $zoneSite > 0 ? Site::getTimezoneFor($zoneSite) : 'UTC';
 
-        return $report->timeline($idSite, $range, $source, $timezone, (string) $period);
+        return $report->timeline($idSite, $range, $source, $timezone, (string) $period, $group);
     }
 
     /**
@@ -404,12 +413,15 @@ class API extends \Piwik\Plugin\API
     /**
      * Overview for super users: one row for Matomo (idSite 0) and one per website with check targets, saying how many
      * of its switched-on targets are up, down or cannot be checked from this server, and how many are switched off.
+     * Tag Manager containers count in Matomo's row: their file is served by the Matomo server.
      *
      * @return array list of {idSite: int (0 = Matomo), name: string, timezone: string (the website's, Matomo's names
      *               such as Europe/Berlin or UTC+2; UTC for Matomo), targets: int (switched on), off: int (switched
      *               off), up: int, down: int, notCheckable: int, stale: int (results older than two check intervals: the
      *               checks stopped; counted neither as up nor as down), lastCheckedAt: ISO time|null,
-     *               certificateDaysLeft: int|null (soonest expiry; negative when expired)}
+     *               certificateDaysLeft: int|null (soonest expiry; negative when expired), containersDown: list of
+     *               {idSite: int, name: string} (in Matomo's row: the websites whose Tag Manager container is not
+     *               reachable; empty in the other rows)}
      */
     public function getSitesOverview()
     {

@@ -138,6 +138,8 @@ export interface SiteOverview {
   off: number;
   lastCheckedAt: string | null;
   certificateDaysLeft: number | null;
+  /** Matomo's row: the websites whose Tag Manager container is not reachable */
+  containersDown?: Array<{ idSite: number; name: string }>;
 }
 
 export interface ScreenConfig {
@@ -150,6 +152,8 @@ export interface ScreenConfig {
   sentinel: 'active' | 'old' | 'inactive' | 'absent';
   /** the installed Sentinel's version (admin page only) */
   sentinelVersion?: string | null;
+  /** the super-user setting "Allow private addresses" is on */
+  allowPrivate?: boolean;
   embedded: boolean;
   feedback: { enabled: boolean; supportUrl: string; version: string } | null;
   /** the website's name (idSite 0: Matomo) */

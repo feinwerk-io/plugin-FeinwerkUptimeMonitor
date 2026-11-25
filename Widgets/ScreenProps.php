@@ -16,6 +16,7 @@ use Piwik\Plugin\Manager;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Feedback\PluginFeedback;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Promo\PromoLine;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Sentinel\SentinelVersion;
+use Piwik\Plugins\FeinwerkUptimeMonitor\SystemSettings;
 use Piwik\Translation\Translator;
 
 /**
@@ -48,7 +49,9 @@ final class ScreenProps
             'isAnonymous' => Piwik::isUserIsAnonymous(),
             'language' => self::language(),
             'queuedTracking' => self::active('QueuedTracking'),
-            // active, old (active but without add-on checks), installed (files there, deactivated) or absent
+            // private addresses already allowed: no link "Allow private addresses", no sentence about it
+            'allowPrivate' => !Piwik::isUserIsAnonymous() && self::allowPrivate(),
+            // active, old (active but too old for these checks), inactive (files there, deactivated) or absent
             'sentinel' => self::sentinelState(
                 self::active('FeinwerkSentinel'),
                 self::installed('FeinwerkSentinel'),
@@ -185,6 +188,15 @@ final class ScreenProps
         }
 
         return $installed ? 'inactive' : 'absent';
+    }
+
+    private static function allowPrivate(): bool
+    {
+        try {
+            return (bool) (new SystemSettings())->allowPrivate->getValue();
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     private static function installed(string $plugin): bool

@@ -374,6 +374,66 @@ class ApiTest extends IntegrationTestCase
         $this->assertSame('UTC', $row['timezone']);
     }
 
+    /** Peter, 2026-11-25, "a)": a Tag Manager container counts with Matomo, served by the Matomo server. */
+    public function test_getSitesOverview_countsContainersWithMatomo(): void
+    {
+        $targets = new TargetStore();
+        // syncDefaults retires the defaults it is not given: the setUp's three again, plus the container
+        $targets->syncDefaults([
+            ['idSite' => 0, 'key' => 'ui', 'kind' => Kind::UI, 'url' => 'https://matomo.example.com/index.php', 'extra' => []],
+            ['idSite' => 0, 'key' => 'tracker', 'kind' => Kind::TRACKER, 'url' => 'https://matomo.example.com/matomo.php', 'extra' => []],
+            ['idSite' => 1, 'key' => DefaultTargets::webKey(self::$base . '/page-proxy'), 'kind' => Kind::WEB, 'url' => self::$base . '/page-proxy', 'extra' => []],
+            ['idSite' => 1, 'key' => 'ctr:abc123', 'kind' => Kind::CONTAINER, 'url' => 'https://matomo.example.com/js/container_abc123.js', 'extra' => ['idContainer' => 'abc123']],
+        ]);
+        $container = $targets->get(1, 'ctr:abc123')->id;
+        $now = gmdate('Y-m-d H:i:s');
+        (new StateStore())->upsertMany([
+            new CheckResult($container, Outcome::DOWN, Outcome::HTTP_STATUS, null, 403, [], null, $now),
+            new CheckResult($this->web, Outcome::UP, null, null, 200, [], null, $now),
+        ], StateStore::LOCAL);
+        $rows = array_column(self::api('getSitesOverview'), null, 'idSite');
+        $this->assertSame([3, 1], [$rows[0]['targets'], $rows[0]['down']], 'Matomo: ui, tracker and the container');
+        $this->assertSame([1, 0, 1], [$rows[1]['targets'], $rows[1]['down'], $rows[1]['up']], 'the website: its address only');
+        $this->assertSame([['idSite' => 1, 'name' => 'Shop']], $rows[0]['containersDown'], 'Matomo says whose container');
+        $this->assertSame([], $rows[1]['containersDown']);
+    }
+
+    /** Peter, 2026-11-25, "a)": the strips as the screens group them, the container in Matomo's. */
+    public function test_getTimeline_groups_containerInMatomosStrip(): void
+    {
+        $targets = new TargetStore();
+        $targets->syncDefaults([
+            ['idSite' => 0, 'key' => 'ui', 'kind' => Kind::UI, 'url' => 'https://matomo.example.com/index.php', 'extra' => []],
+            ['idSite' => 0, 'key' => 'tracker', 'kind' => Kind::TRACKER, 'url' => 'https://matomo.example.com/matomo.php', 'extra' => []],
+            ['idSite' => 1, 'key' => DefaultTargets::webKey(self::$base . '/page-proxy'), 'kind' => Kind::WEB, 'url' => self::$base . '/page-proxy', 'extra' => []],
+            ['idSite' => 1, 'key' => 'ctr:abc123', 'kind' => Kind::CONTAINER, 'url' => 'https://matomo.example.com/js/container_abc123.js', 'extra' => ['idContainer' => 'abc123']],
+        ]);
+        $row = fn(int $id, int $up): array => ['idtarget' => $id, 'hour' => '2026-03-14 10:00:00',
+            'source' => StateStore::LOCAL, 'samples' => 60, 'up_samples' => 60, 'measured_seconds' => 3600,
+            'up_seconds' => $up, 'ms_p50' => 80, 'ms_p95' => 90, 'ms_max' => 100, 'cert_not_after' => null];
+        (new RollupStore())->upsertHours([
+            $row($targets->get(0, 'ui')->id, 3600),
+            $row($targets->get(0, 'tracker')->id, 3600),
+            $row($this->web, 3600),
+            $row($targets->get(1, 'ctr:abc123')->id, 0),
+        ]);
+        $cell = function (array $params): array {
+            $cells = array_column(self::api('getTimeline', $params + ['period' => 'day', 'date' => '2026-03-14'])['cells'], null, 'time');
+            return [$cells['2026-03-14T10:00:00Z']['measuredSeconds'], $cells['2026-03-14T10:00:00Z']['upSeconds'], $cells['2026-03-14T10:00:00Z']['state']];
+        };
+        $this->assertSame([10800, 7200, 'partial'], $cell(['idSite' => 1, 'group' => 'matomo']), 'ui, tracker and the down container');
+        $this->assertSame([3600, 3600, 'up'], $cell(['idSite' => 1, 'group' => 'website']), 'the website without its container');
+        $this->assertSame([7200, 3600, 'partial'], $cell(['idSite' => 1]), 'default all: every target of the website, as before');
+        $this->assertSame([7200, 7200, 'up'], $cell(['idSite' => 0, 'group' => 'matomo']), 'idSite 0: no website, no container');
+
+        $this->assertBadRequest('getTimeline', ['idSite' => 0, 'period' => 'day', 'date' => '2026-03-14', 'group' => 'website'], "'group'");
+        $this->assertBadRequest('getTimeline', ['idSite' => 1, 'period' => 'day', 'date' => '2026-03-14', 'group' => 'server'], "'group'");
+        FakeAccess::clearAccess(false, [], [1], 'anonymous');
+        $this->assertSame([3600, 3600, 'up'], $cell(['idSite' => 1, 'group' => 'website']), 'anonymous viewers see the website');
+        $this->expectException(\Piwik\NoAccessException::class);
+        $cell(['idSite' => 1, 'group' => 'matomo']);
+    }
+
     /** Peter's D2: the hour strip. Hours for a day, local days for a week; up, partial, down and nothing measured. */
     public function test_getTimeline_hoursForADay_daysForAWeek(): void
     {
@@ -444,25 +504,30 @@ class ApiTest extends IntegrationTestCase
     public function test_getTimeline_fixedAxis_withFutureCells(): void
     {
         // today: the hours before the current one are past, those after it future; at 23:xx UTC there is none after
-        // it, so the test reads the clock instead of expecting a future last hour (it failed in CI at 23:32 UTC)
+        // it, so the test reads the clock instead of expecting a future last hour (it failed in CI at 23:32 UTC). A
+        // call across midnight checks no hour: either day could be the one the API saw.
+        $dayBefore = gmdate('Y-m-d');
         $hourBefore = (int) gmdate('G');
         $day = self::api('getTimeline', ['idSite' => 1, 'period' => 'day', 'date' => 'today']);
+        $dayAfter = gmdate('Y-m-d');
         $hourAfter = (int) gmdate('G');
         $this->assertSame('hour', $day['grain']);
         $this->assertCount(24, $day['cells'], 'website 1 is in UTC: 24 hours');
         $states = array_column($day['cells'], 'state');
-        foreach ($states as $hour => $state) {
-            if ($hour < $hourBefore) {
-                $this->assertNotSame('future', $state, "hour $hour is past");
-            } elseif ($hour > $hourAfter || ($hourAfter < $hourBefore && $hour > $hourBefore)) {
-                $this->assertSame('future', $state, "hour $hour is to come");
+        if ($dayBefore === $dayAfter) {
+            foreach ($states as $hour => $state) {
+                if ($hour < $hourBefore) {
+                    $this->assertNotSame('future', $state, "hour $hour is past");
+                } elseif ($hour > $hourAfter) {
+                    $this->assertSame('future', $state, "hour $hour is to come");
+                }
             }
         }
 
-        // tomorrow: every hour is still to come, whatever the time of the run
-        $tomorrow = self::api('getTimeline', ['idSite' => 1, 'period' => 'day', 'date' => gmdate('Y-m-d', time() + 86400)]);
-        $this->assertCount(24, $tomorrow['cells']);
-        $this->assertSame(['future'], array_values(array_unique(array_column($tomorrow['cells'], 'state'))));
+        // the day after tomorrow: every hour is still to come, even when midnight passes during the test
+        $later = self::api('getTimeline', ['idSite' => 1, 'period' => 'day', 'date' => gmdate('Y-m-d', time() + 2 * 86400)]);
+        $this->assertCount(24, $later['cells']);
+        $this->assertSame(['future'], array_values(array_unique(array_column($later['cells'], 'state'))));
 
         $week = self::api('getTimeline', ['idSite' => 1, 'period' => 'week', 'date' => '2026-03-11']);
         $this->assertSame(['day', 'local'], [$week['grain'], $week['days']], 'a past week: days, not hours');
