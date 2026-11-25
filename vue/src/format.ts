@@ -12,6 +12,23 @@ export function locale(language: string): string | undefined {
   return language !== '' ? language : undefined;
 }
 
+type ListFormatter = new (lang: string | undefined, options: { style: string; type: string }) => {
+  format(items: string[]): string;
+};
+
+/** "A, B and C" in the page language (Intl.ListFormat), else joined with commas */
+export function listOf(items: string[], language: string): string {
+  const { ListFormat } = Intl as unknown as { ListFormat?: ListFormatter };
+  try {
+    if (ListFormat) {
+      return new ListFormat(locale(language), { style: 'long', type: 'conjunction' }).format(items);
+    }
+  } catch (e) {
+    // an unknown language: the commas below
+  }
+  return items.join(', ');
+}
+
 export function percent(value: number | null, language: string, digits = 2): string {
   if (value === null) {
     return '';

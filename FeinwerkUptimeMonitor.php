@@ -97,7 +97,9 @@ class FeinwerkUptimeMonitor extends \Piwik\Plugin
      */
     public function registerSentinelChecks(&$checks): void
     {
-        if (!interface_exists('Piwik\\Plugins\\FeinwerkSentinel\\Check\\Check')) {
+        // the checks implement Sentinel 5.0.0's interface: an older Sentinel (0.x) would fail on them
+        if (!interface_exists('Piwik\\Plugins\\FeinwerkSentinel\\Check\\Check')
+            || !Sentinel\SentinelVersion::supports(Sentinel\SentinelVersion::loaded())) {
             return;
         }
         $checks[] = new Sentinel\MatomoUnreachable();

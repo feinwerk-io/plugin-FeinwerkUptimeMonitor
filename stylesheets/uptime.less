@@ -209,8 +209,12 @@
     .fwum-table-wrap table.fwum-outages__table.dataTable {
       th, td { padding-left: 0; padding-right: 10px; }
       td.fwum-outages__start { white-space: normal; min-width: 6em; }
+      // L1: three columns, the duration under the start
+      .fwum-outages__wide { display: none; }
+      .fwum-outages__narrow { display: block; font-weight: normal; margin-top: 2px; color: var(--fwum-muted); }
     }
   }
+  .fwum-outages__narrow { display: none; }
   // the dot stays with the first line of a long address
   .fwum-cell-label { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; }
   .fwum-cell-label .fwum-dot { flex-shrink: 0; }
@@ -232,7 +236,17 @@
   }
 
   // addresses this server cannot check: one line, the reason on demand (B1)
-  .fwum-nc { margin-top: 8px; .fwum-note { margin: 0 0 4px; } }
+  .fwum-open-page { margin: 8px 0 0; }
+
+  .fwum-ongoing { color: var(--fwum-down); font-weight: 600; }
+  .fwum-outages { margin-top: 16px; }
+  .fwum-outages__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 0 8px; }
+  .fwum-outages__title { font-size: 1.05em; font-weight: 600; margin: 0; }
+  .fwum-more { margin-top: 4px; padding-left: 0; }
+}
+
+// the uptime page and the admin page: link buttons and the note line for what cannot be checked
+.fwum-page, .fwum-admin {
   .fwum-link-button {
     margin: 0 6px 0 2px; padding: 0; border: 0; background: none; font: inherit; cursor: pointer;
     color: ~"var(--theme-color-link, #1976d2)"; text-decoration: underline;
@@ -241,14 +255,10 @@
     &:focus-visible { outline: 2px solid ~"var(--theme-color-focus-ring, #0969da)"; outline-offset: 2px; border-radius: 2px; }
   }
   .fwum-nc__why { max-width: 60em; }
-  .fwum-open-page { margin: 8px 0 0; }
-
-  .fwum-ongoing { color: var(--fwum-down); font-weight: 600; }
   .fwum-note { font-size: 0.9em; color: var(--fwum-muted); margin-top: 8px; }
-  .fwum-outages { margin-top: 16px; }
-  .fwum-outages__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 0 8px; }
-  .fwum-outages__title { font-size: 1.05em; font-weight: 600; margin: 0; }
-  .fwum-more { margin-top: 4px; padding-left: 0; }
+  .fwum-nc { margin-top: 8px; .fwum-note { margin: 0 0 4px; } }
+  // a number stays with its unit ("32 min")
+  .fwum-nowrap { white-space: nowrap; }
 }
 
 // dashboard widgets: no inner title, the state first, compact

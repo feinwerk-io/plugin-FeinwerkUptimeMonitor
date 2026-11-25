@@ -443,12 +443,26 @@ class ApiTest extends IntegrationTestCase
     /** A fixed axis (UI review D1): the whole day in hours and the whole week in days; what lies after now is future. */
     public function test_getTimeline_fixedAxis_withFutureCells(): void
     {
+        // today: the hours before the current one are past, those after it future; at 23:xx UTC there is none after
+        // it, so the test reads the clock instead of expecting a future last hour (it failed in CI at 23:32 UTC)
+        $hourBefore = (int) gmdate('G');
         $day = self::api('getTimeline', ['idSite' => 1, 'period' => 'day', 'date' => 'today']);
+        $hourAfter = (int) gmdate('G');
         $this->assertSame('hour', $day['grain']);
         $this->assertCount(24, $day['cells'], 'website 1 is in UTC: 24 hours');
         $states = array_column($day['cells'], 'state');
-        $this->assertSame('future', end($states));
-        $this->assertNotSame('future', $states[0]);
+        foreach ($states as $hour => $state) {
+            if ($hour < $hourBefore) {
+                $this->assertNotSame('future', $state, "hour $hour is past");
+            } elseif ($hour > $hourAfter || ($hourAfter < $hourBefore && $hour > $hourBefore)) {
+                $this->assertSame('future', $state, "hour $hour is to come");
+            }
+        }
+
+        // tomorrow: every hour is still to come, whatever the time of the run
+        $tomorrow = self::api('getTimeline', ['idSite' => 1, 'period' => 'day', 'date' => gmdate('Y-m-d', time() + 86400)]);
+        $this->assertCount(24, $tomorrow['cells']);
+        $this->assertSame(['future'], array_values(array_unique(array_column($tomorrow['cells'], 'state'))));
 
         $week = self::api('getTimeline', ['idSite' => 1, 'period' => 'week', 'date' => '2026-03-11']);
         $this->assertSame(['day', 'local'], [$week['grain'], $week['days']], 'a past week: days, not hours');

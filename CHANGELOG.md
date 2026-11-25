@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.1.1
+
+- Administration > Diagnostic > Uptime Monitor sums up the websites that cannot be checked from the Matomo server in
+  one line below the list (up to three by name), with the reason on demand and the link to allow private addresses;
+  "Show" brings them back at the end of the list, edit button included.
+- On phones the outage list keeps three columns: the duration stands under the start, so the cause stays readable.
+- With a Feinwerk Sentinel older than 5.0.0 the alerts stay off and the admin page names its version and links to the
+  plugin list for the update, instead of promising alerts that would not come.
+- The note on addresses that cannot be checked reads more smoothly in English and French; the Spanish texts on Feinwerk
+  Sentinel say "rastreador" like the rest of the plugin.
+
 ## 5.1.0
 
 - Visitors > Uptime answers first: one line says whether Matomo and the website are reachable and when they were last

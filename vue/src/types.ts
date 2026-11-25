@@ -147,7 +147,9 @@ export interface ScreenConfig {
   isAdmin: boolean;
   language: string;
   queuedTracking: boolean;
-  sentinel: 'active' | 'inactive' | 'absent';
+  sentinel: 'active' | 'old' | 'inactive' | 'absent';
+  /** the installed Sentinel's version (admin page only) */
+  sentinelVersion?: string | null;
   embedded: boolean;
   feedback: { enabled: boolean; supportUrl: string; version: string } | null;
   /** the website's name (idSite 0: Matomo) */

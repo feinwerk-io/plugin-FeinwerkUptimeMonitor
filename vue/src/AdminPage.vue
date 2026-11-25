@@ -7,7 +7,9 @@
   Administration > Diagnostic > Uptime Monitor (super users), spec 10: every website in one
   list, Matomo's own targets, the cron line for checks every minute, the alert status. The last
   check reads "3 minutes ago" (it follows the clock), its hover the time in the row's own
-  timezone with the zone named, since the rows' timezones differ (L3).
+  timezone with the zone named, since the rows' timezones differ (L3). Websites that cannot be
+  checked from this server fold into one line below the table (Peter's 3a, D4), like the uptime
+  page's line for addresses; "Show" brings their rows back, pencil included.
 -->
 <template>
   <div
@@ -42,7 +44,10 @@
         v-else-if="rows.length"
         class="fwum-table-wrap"
       >
-        <table class="entityTable dataTable fwum-admin__table">
+        <table
+          :id="`${uid}-table`"
+          class="entityTable dataTable fwum-admin__table"
+        >
           <thead>
             <tr>
               <th scope="col">{{ translate('FeinwerkUptimeMonitor_UiSiteName') }}</th>
@@ -59,7 +64,7 @@
           </thead>
           <tbody>
             <tr
-              v-for="row in sorted"
+              v-for="row in visibleRows"
               :key="row.idSite"
             >
               <td class="fwum-admin__name">
@@ -106,6 +111,35 @@
             </tr>
           </tbody>
         </table>
+        <div
+          v-if="foldedRows.length"
+          class="fwum-nc"
+        >
+          <p class="fwum-note">
+            {{ foldedText }}
+            <button
+              type="button"
+              class="fwum-link-button"
+              :aria-expanded="showFolded ? 'true' : 'false'"
+              :aria-controls="`${uid}-table`"
+              @click="showFolded = !showFolded"
+            >{{ translate(showFolded ? 'FeinwerkUptimeMonitor_UiHide'
+              : 'FeinwerkUptimeMonitor_UiShow') }}</button>
+            <button
+              type="button"
+              class="fwum-link-button"
+              :aria-expanded="whyOpen ? 'true' : 'false'"
+              :aria-controls="`${uid}-why`"
+              @click="whyOpen = !whyOpen"
+            >{{ translate('FeinwerkUptimeMonitor_UiWhy') }}</button>
+            <a :href="settingsUrl">{{ translate('FeinwerkUptimeMonitor_UiAllowPrivate') }}</a>
+          </p>
+          <p
+            v-show="whyOpen"
+            :id="`${uid}-why`"
+            class="fwum-note fwum-nc__why"
+          >{{ translate('FeinwerkUptimeMonitor_UiAdminNotCheckableHelp') }}</p>
+        </div>
       </div>
       <p
         v-else-if="!loading"
@@ -146,6 +180,13 @@
             <p>{{ translate('FeinwerkUptimeMonitor_UiSentinelActive') }}</p>
             <p class="fwum-muted">{{ translate('FeinwerkUptimeMonitor_UiSentinelFacts') }}</p>
           </div>
+          <div v-else-if="config.sentinel === 'old'">
+            <p>
+              {{ translate('FeinwerkUptimeMonitor_UiSentinelOld', config.sentinelVersion || '') }}
+              <a :href="pluginsUrl">{{
+                translate('FeinwerkUptimeMonitor_UiSentinelPluginsLink') }}</a>
+            </p>
+          </div>
           <div v-else>
             <!-- the link to Feinwerk Sentinel is no promotion (Peter, 2026-11-24, 3a) -->
             <p>
@@ -179,7 +220,7 @@ import { ContentBlock, MatomoUrl, translate } from 'CoreHome';
 import { api } from './api';
 import { ScreenConfig, SiteOverview } from './types';
 import {
-  ago, dateTime, duration, statusOf, zoneOf,
+  ago, dateTime, duration, listOf, statusOf, zoneOf,
 } from './format';
 import TargetPanel from './TargetPanel.vue';
 
@@ -196,6 +237,10 @@ export default defineComponent({
       copied: false,
       panelSite: null as number | null,
       panelName: '',
+      /** the folded websites shown in the table again, and the reason open */
+      showFolded: false,
+      whyOpen: false,
+      uid: `fwum-admin-${Math.random().toString(36).slice(2, 8)}`,
       /** the screen's clock: "3 minutes ago" follows it every minute */
       tick: Date.now(),
       timer: 0,
@@ -215,6 +260,27 @@ export default defineComponent({
       return [...this.rows].sort((a, b) => Number(b.idSite === 0) - Number(a.idSite === 0)
         || rank(a) - rank(b) || a.idSite - b.idSite);
     },
+    /** websites (never Matomo) this server cannot check: one line below the table (D4) */
+    foldedRows(): SiteOverview[] {
+      return this.sorted.filter((row) => row.idSite > 0 && this.status(row).outcome === 'not_checkable');
+    },
+    /** shown again, the folded rows come last, right above their line */
+    visibleRows(): SiteOverview[] {
+      const folded = this.foldedRows.map((row) => row.idSite);
+      const rest = this.sorted.filter((row) => !folded.includes(row.idSite));
+      return this.showFolded ? [...rest, ...this.foldedRows] : rest;
+    },
+    /** up to three websites by name (the answer without a click), more as a count */
+    foldedText(): string {
+      const count = this.foldedRows.length;
+      if (count <= 3) {
+        const names = listOf(this.foldedRows.map((row) => row.name), this.config.language);
+        return count === 1
+          ? translate('FeinwerkUptimeMonitor_UiAdminNotCheckableNamedOne', names)
+          : translate('FeinwerkUptimeMonitor_UiAdminNotCheckableNamedMany', names);
+      }
+      return translate('FeinwerkUptimeMonitor_UiAdminNotCheckableMany', String(count));
+    },
     /** a system cron runs the checks (IntervalTracker on the server) */
     cronOk(): boolean {
       return !!this.config.cron?.active;
@@ -229,6 +295,10 @@ export default defineComponent({
     sentinelKey(): string {
       return this.config.sentinel === 'inactive' ? 'FeinwerkUptimeMonitor_UiSentinelInactive'
         : 'FeinwerkUptimeMonitor_UiSentinelMissing';
+    },
+    /** Administration > Plugins, where an old Sentinel gets its update */
+    pluginsUrl(): string {
+      return `?${MatomoUrl.stringify({ module: 'CorePluginsAdmin', action: 'plugins' })}`;
     },
     /** Feinwerk Sentinel's store page in the page language (German or English) */
     sentinelUrl(): string {

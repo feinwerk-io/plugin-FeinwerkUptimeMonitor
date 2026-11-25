@@ -15,6 +15,7 @@ use Piwik\Piwik;
 use Piwik\Plugin\Manager;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Feedback\PluginFeedback;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Promo\PromoLine;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Sentinel\SentinelVersion;
 use Piwik\Translation\Translator;
 
 /**
@@ -47,8 +48,14 @@ final class ScreenProps
             'isAnonymous' => Piwik::isUserIsAnonymous(),
             'language' => self::language(),
             'queuedTracking' => self::active('QueuedTracking'),
-            // active, installed (files there, deactivated) or absent
-            'sentinel' => self::active('FeinwerkSentinel') ? 'active' : (self::installed('FeinwerkSentinel') ? 'inactive' : 'absent'),
+            // active, old (active but without add-on checks), installed (files there, deactivated) or absent
+            'sentinel' => self::sentinelState(
+                self::active('FeinwerkSentinel'),
+                self::installed('FeinwerkSentinel'),
+                SentinelVersion::loaded()
+            ),
+            // named in the "too old" row of the admin page
+            'sentinelVersion' => $variant === 'admin' ? SentinelVersion::loaded() : null,
             'embedded' => $embedded,
             // the feedback row: under the uptime page only, never in dashboard widgets or Widgetize embeds
             'feedback' => $ownPage ? self::feedback() : null,
@@ -165,6 +172,19 @@ final class ScreenProps
         } catch (\Throwable $e) {
             return null;
         }
+    }
+
+    /**
+     * Feinwerk Sentinel as the admin page names it: "active", "old" (active, but too old to run this plugin's checks
+     * U01 to U04, so no alerts), "inactive" (files there, deactivated) or "absent".
+     */
+    public static function sentinelState(bool $active, bool $installed, ?string $version): string
+    {
+        if ($active) {
+            return SentinelVersion::supports($version) ? 'active' : 'old';
+        }
+
+        return $installed ? 'inactive' : 'absent';
     }
 
     private static function installed(string $plugin): bool

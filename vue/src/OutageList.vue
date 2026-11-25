@@ -32,7 +32,10 @@
               scope="col"
               class="label"
             >{{ translate('FeinwerkUptimeMonitor_UiStart') }}</th>
-            <th scope="col">{{ translate('FeinwerkUptimeMonitor_UiDuration') }}</th>
+            <th
+              scope="col"
+              class="fwum-outages__wide"
+            >{{ translate('FeinwerkUptimeMonitor_UiDuration') }}</th>
             <th scope="col">{{ translate('FeinwerkUptimeMonitor_UiWhat') }}</th>
             <th scope="col">{{ translate('FeinwerkUptimeMonitor_UiCause') }}</th>
             <th
@@ -46,8 +49,19 @@
             v-for="incident in incidents"
             :key="incident.idIncident"
           >
-            <td class="label fwum-outages__start">{{ when(incident.start) }}</td>
-            <td>
+            <td class="label fwum-outages__start">
+              {{ when(incident.start) }}
+              <!-- phones (L1): the duration under the start, so What and Cause keep their room -->
+              <span class="fwum-outages__narrow">
+                <span class="fwum-sr">{{ translate('FeinwerkUptimeMonitor_UiDuration') }}: </span>
+                <span
+                  v-if="incident.open"
+                  class="fwum-ongoing"
+                >{{ translate('FeinwerkUptimeMonitor_UiOngoing') }}, </span>
+                <span class="fwum-nowrap">{{ length(incident.durationSeconds) }}</span>
+              </span>
+            </td>
+            <td class="fwum-outages__wide">
               <span
                 v-if="incident.open"
                 class="fwum-ongoing"

@@ -70,7 +70,8 @@ by hand, copy the folder to `plugins/FeinwerkUptimeMonitor` and activate it unde
   first and, when something is down, only what failed, with a link to the uptime page.
 - **Administration > Diagnostic > Uptime Monitor** (super users): all websites in one list, Matomo first, and checks
   and alerts as status rows: whether a system cron runs the checks (else the cron line to copy) and whether alerts go
-  out through Feinwerk Sentinel.
+  out through Feinwerk Sentinel. Websites that cannot be checked from the Matomo server are summed up in one line
+  below the list; "Show" brings them back into it.
 
 ### How often it checks
 
@@ -136,7 +137,8 @@ database write per sampled request. With the plugin QueuedTracking it shows the 
 
 ### Alerts through Feinwerk Sentinel
 
-With Feinwerk Sentinel installed, four checks appear in its settings:
+With Feinwerk Sentinel 5.0.0 or newer installed, four checks appear in its settings (an older Sentinel gets none, and
+the admin page asks for its update):
 
 - **U01 Matomo not reachable** (Matomo itself),
 - **U02 Website not reachable** (website, container or tracking proxy, per website),
