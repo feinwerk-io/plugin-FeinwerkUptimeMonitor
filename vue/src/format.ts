@@ -147,6 +147,11 @@ export function dayOf(iso: string, language: string, timezone = ''): string {
   return formatIn(iso, language, timezone, { month: 'short', day: 'numeric' });
 }
 
+/** the day of a moment in a timezone as YYYY-MM-DD */
+export function dayKey(iso: string, timezone = ''): string {
+  return formatIn(iso, 'en-CA', timezone, { year: 'numeric', month: '2-digit', day: '2-digit' });
+}
+
 /**
  * A time of today ("10:42") or else date and time, in the website's timezone: the start of an
  * outage in the answer line.
@@ -230,8 +235,8 @@ export function causeText(cause: string | null, detail: string | null): string {
   if (cause !== 'http_status' || !detail) {
     return text;
   }
-  // "HTTP status 403" in one piece (no-break spaces): it never wraps between its words
-  return `${text} ${detail.replace('HTTP ', '')}`.replace(/ /g, '\u00a0');
+  // "HTTP status 403" in one piece (no-break spaces and hyphens): it never wraps inside
+  return `${text} ${detail.replace('HTTP ', '')}`.replace(/ /g, '\u00a0').replace(/-/g, '\u2011');
 }
 
 /** What a card or an overview row counts; one rule for the uptime page and the admin overview. */

@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.1.4
+
+- In a narrow dashboard column and on phones, Visitors > Uptime lists the addresses like the dashboard widgets, under
+  the headings Matomo and This website, instead of a table that had to cut its columns.
+- The end of each hour strip shows the uptime alone; the measured share appears only when less than 95 % of the time
+  was measured (always as the number's tooltip).
+- On Administration > Diagnostic > Uptime Monitor the words "Sentinel's settings" in the alerts note are the link to
+  them.
+- The values in the narrow list say what they are for screen readers, and the certificate names itself on hover.
+- On a past day the answer line gives the date of a running outage's start ("since Nov 25, 10:06 PM"), not the clock
+  alone, and "HTTP-Status 403" stays whole in the outage list and the widgets.
+
 ## 5.1.3
 
 - The uptime page on a dashboard (widget "Uptime" from Visitors) keeps its margins: its figures, hour strips and

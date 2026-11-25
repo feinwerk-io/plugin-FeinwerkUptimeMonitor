@@ -204,11 +204,16 @@
             <div
               v-if="strip.uptime"
               class="fwum-strips__uptime"
+              :title="strip.uptime.sub"
             >
               <span class="fwum-sr">{{ translate('FeinwerkUptimeMonitor_UiUptime') }}
                 {{ strip.name }}:</span>
               <strong>{{ strip.uptime.value }}</strong>
-              <span class="fwum-strips__measured">{{ strip.uptime.sub }}</span>
+              <!-- P2: one number; the measured share only where it matters -->
+              <span
+                :class="Math.round(strip.uptime.measured) < measuredShown
+                  ? 'fwum-strips__measured' : 'fwum-sr'"
+              >{{ strip.uptime.sub }}</span>
             </div>
           </div>
           <ul
@@ -226,7 +231,82 @@
           v-if="isPage"
           class="fwum-table-wrap"
         >
-          <table class="dataTable fwum-table">
+          <!-- P1 (Peter, 2026-11-25): narrow, the addresses as the widgets' list -->
+          <div
+            v-if="narrow"
+            class="fwum-narrow-list"
+          >
+            <template
+              v-for="group in groups"
+              :key="group.key"
+            >
+              <div
+                class="fwum-narrow-list__group"
+                role="heading"
+                aria-level="3"
+              >{{ group.name }}</div>
+              <p
+                v-if="!group.rows.length"
+                class="fwum-muted"
+              >
+                {{ group.note }}
+                <button
+                  v-if="group.key === 'site' && config.isAdmin"
+                  type="button"
+                  class="btn-flat fwum-icon-button"
+                  @click="panelOpen = true"
+                ><span
+                  class="icon-edit"
+                  aria-hidden="true"
+                /> {{ translate('FeinwerkUptimeMonitor_UiEditTargets') }}</button>
+                <a
+                  v-if="group.key === 'matomo' && config.isSuperUser && !config.embedded"
+                  class="fwum-inline-link"
+                  :href="adminUrl"
+                >{{ translate('FeinwerkUptimeMonitor_UiEditTargets') }}</a>
+              </p>
+              <ul
+                v-else
+                class="fwum-targets"
+              >
+                <li
+                  v-for="row in group.rows"
+                  :key="row.key"
+                  :class="`is-${row.outcome}`"
+                  :title="row.title"
+                >
+                  <span class="fwum-cell-label">
+                    <span
+                      class="fwum-dot"
+                      aria-hidden="true"
+                    />
+                    <span class="fwum-targets__label"><template
+                      v-for="(part, p) in breakParts(row.label)"
+                      :key="p"
+                    >{{ part }}<wbr></template></span>
+                  </span>
+                  <span class="fwum-targets__text"><span class="fwum-sr">{{
+                    translate('FeinwerkUptimeMonitor_UiResponse') }}: </span>{{
+                    keepHyphens(row.text) }}</span>
+                  <span class="fwum-targets__uptime"><span class="fwum-sr">{{
+                    translate('FeinwerkUptimeMonitor_UiUptime') }}: </span>{{ row.uptime }}</span>
+                  <span
+                    class="fwum-targets__cert"
+                    :class="`is-${row.certLevel}`"
+                    :title="row.cert ? certTitle(row.cert) : undefined"
+                  ><span
+                    v-if="row.cert"
+                    class="fwum-sr"
+                  >{{ translate('FeinwerkUptimeMonitor_UiCertificate') }}: </span>{{
+                    row.cert }}</span>
+                </li>
+              </ul>
+            </template>
+          </div>
+          <table
+            v-else
+            class="dataTable fwum-table"
+          >
             <thead>
               <tr>
                 <th
@@ -332,12 +412,20 @@
                   :key="p"
                 >{{ part }}<wbr></template></span>
               </span>
-              <span class="fwum-targets__text">{{ keepHyphens(row.text) }}</span>
-              <span class="fwum-targets__uptime">{{ row.uptime }}</span>
+              <span class="fwum-targets__text"><span class="fwum-sr">{{
+                translate('FeinwerkUptimeMonitor_UiResponse') }}: </span>{{
+                    keepHyphens(row.text) }}</span>
+              <span class="fwum-targets__uptime"><span class="fwum-sr">{{
+                translate('FeinwerkUptimeMonitor_UiUptime') }}: </span>{{ row.uptime }}</span>
               <span
                 class="fwum-targets__cert"
                 :class="`is-${row.certLevel}`"
-              >{{ row.cert }}</span>
+                :title="row.cert ? certTitle(row.cert) : undefined"
+              ><span
+                v-if="row.cert"
+                class="fwum-sr"
+              >{{ translate('FeinwerkUptimeMonitor_UiCertificate') }}: </span>{{
+                    row.cert }}</span>
             </li>
           </ul>
         </template>
@@ -437,7 +525,8 @@ import {
   Certificate, Incident, ScreenConfig, SeriesPoint, Status, TargetStatus, Timeline, UptimeRow,
 } from './types';
 import {
-  ago, causeText, clockOrDate, dateTime, errorText, listOf, milliseconds, percent, sharePercent,
+  ago, causeText, clockOrDate, dateTime, dayKey, errorText, listOf, milliseconds, percent,
+  sharePercent,
   statusOf,
   targetLabel,
 } from './format';
@@ -499,10 +588,12 @@ interface Strip {
   timeline: Timeline;
   targets: number;
   /** the group's uptime at the end of its strip (page only, D3) */
-  uptime: { value: string; sub: string } | null;
+  uptime: { value: string; sub: string; measured: number } | null;
 }
 
 const MATOMO_KINDS = ['ui', 'tracker', 'js'];
+/** P2 (Peter, 2026-11-25): the measured share shows at the strip end only below this (percent) */
+const MEASURED_SHOWN = 95;
 /** below this width (px) the page and widgets take the phone layout (.fwum-narrow) */
 const NARROW_PX = 600;
 /**
@@ -847,6 +938,18 @@ export default defineComponent({
     widgetGroup(): Group | null {
       return this.groups.length ? this.groups[0] : null;
     },
+    /** the selected period is the single day of today, in the website's timezone */
+    todaySelected(): boolean {
+      const { period, date } = this.period;
+      if (period !== 'day') {
+        return false;
+      }
+      return date === 'today'
+        || date === dayKey(new Date(this.tick).toISOString(), this.config.timezone || '');
+    },
+    measuredShown(): number {
+      return MEASURED_SHOWN;
+    },
     /** the quiet icons: admins of the website, not in an embed */
     showTools(): boolean {
       return this.isPage && this.config.isAdmin && !this.config.embedded;
@@ -963,6 +1066,9 @@ export default defineComponent({
         parts.splice(0, 2, parts[0] + parts[1]);
       }
       return parts;
+    },
+    certTitle(cert: string): string {
+      return `${translate('FeinwerkUptimeMonitor_UiCertificate')}: ${cert}`;
     },
     /** "HTTP-Status 403" stays whole on a phone: non-breaking hyphens in a short state text */
     keepHyphens(text: string): string {
@@ -1181,8 +1287,11 @@ export default defineComponent({
         .sort();
       const parts: string[] = [];
       if (starts.length) {
-        parts.push(translate('FeinwerkUptimeMonitor_UiSince', clockOrDate(starts[0],
-          this.config.language, this.config.timezone || '', this.tick)));
+        // the clock alone only while today is selected: else "since 22:06" reads as that day
+        const since = this.todaySelected
+          ? clockOrDate(starts[0], this.config.language, this.config.timezone || '', this.tick)
+          : dateTime(starts[0], this.config.language, this.config.timezone || '');
+        parts.push(translate('FeinwerkUptimeMonitor_UiSince', since));
       }
       const cause = down.length ? down[0].text : '';
       if (cause) {
@@ -1198,7 +1307,7 @@ export default defineComponent({
      * was measured, rounded to 3 decimals (float sums never show 99.99 % for 100 %).
      */
     uptimeOf(rows: Row[], uptimeRows: UptimeRow[], timeline: Timeline | null):
-      { value: string; sub: string; level: string } | null {
+      { value: string; sub: string; level: string; measured: number } | null {
       const { language } = this.config;
       if (timeline && timeline.cells.length) {
         const totals = stripTotals(timeline, this.tick, this.measurable(rows));
@@ -1209,6 +1318,7 @@ export default defineComponent({
           value: percent(totals.uptime, language, 2),
           sub: translate('FeinwerkUptimeMonitor_UiMeasured', sharePercent(totals.measured, language)),
           level: '',
+          measured: totals.measured,
         };
       }
       const keys = rows.map((r) => r.key);
@@ -1226,6 +1336,7 @@ export default defineComponent({
         value: percent(Math.round((up / weight) * 1000) / 1000, language, 2),
         sub: translate('FeinwerkUptimeMonitor_UiMeasured', sharePercent(coverage, language)),
         level: '',
+        measured: coverage,
       };
     },
     /** the addresses a strip cell sums: those this server cannot check measure nothing */

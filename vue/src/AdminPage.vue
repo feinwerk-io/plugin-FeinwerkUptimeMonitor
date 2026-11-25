@@ -197,13 +197,13 @@
           />
           <div v-if="config.sentinel === 'active'">
             <p>{{ translate('FeinwerkUptimeMonitor_UiSentinelActive') }}</p>
-            <p class="fwum-muted">
-              {{ translate('FeinwerkUptimeMonitor_UiSentinelFacts') }}
-              <a
-                v-if="config.sentinelSettings"
-                :href="config.sentinelSettings"
-              >{{ translate('FeinwerkUptimeMonitor_UiSentinelSettingsLink') }}</a>
-            </p>
+            <!-- P3 (Peter, 2026-11-25): the link on the words that name Sentinel's settings -->
+            <p class="fwum-muted">{{ sentinelFacts.before }}<a
+              v-if="config.sentinelSettings && sentinelFacts.link"
+              :href="config.sentinelSettings"
+            >{{ sentinelFacts.link }}</a><template
+              v-else
+            >{{ sentinelFacts.link }}</template>{{ sentinelFacts.after }}</p>
           </div>
           <div v-else-if="config.sentinel === 'old'">
             <p>
@@ -315,6 +315,13 @@ export default defineComponent({
       return seconds <= 90
         ? translate('FeinwerkUptimeMonitor_UiCronActiveMinute')
         : translate('FeinwerkUptimeMonitor_UiCronActive', duration(seconds, this.config.language));
+    },
+    /** UiSentinelFacts around its link words (%1$s ... %2$s) */
+    sentinelFacts(): { before: string; link: string; after: string } {
+      const [before, rest = ''] = translate('FeinwerkUptimeMonitor_UiSentinelFacts', '\u0001', '\u0002')
+        .split('\u0001');
+      const [link, after = ''] = rest.split('\u0002');
+      return { before, link, after };
     },
     /** installed but deactivated, or not there at all */
     sentinelKey(): string {

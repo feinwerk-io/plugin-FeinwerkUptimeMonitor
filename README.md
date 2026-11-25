@@ -59,12 +59,13 @@ by hand, copy the folder to `plugins/FeinwerkUptimeMonitor` and activate it unde
 
 - **Visitors > Uptime** (everyone who may view the website; anonymous visitors of a public dashboard see only the
   website's part): first one answer line, whether Matomo and the website are reachable and when they were last
-  checked, or which part has been unreachable since when and why. Below it the key figures (uptime of Matomo and of the
-  website with the measured share, the tracker's processing time, the soonest certificate expiry) and an hour strip
-  for each, which shows every hour of the day (every day of longer periods) as reachable, partly reachable, not
-  reachable or not measured. Then one table with Matomo's addresses together with the website's Tag Manager
-  containers (Matomo serves their files, so they count in Matomo's uptime), the website's addresses and its tracking
-  proxy, and the outages of the chosen period. Times follow the website's timezone.
+  checked, or which part has been unreachable since when and why. Below it the key figures (the tracker's processing
+  time, the soonest certificate expiry) and an hour strip for Matomo and for the website, which shows every hour of
+  the day (every day of longer periods) as reachable, partly reachable, not reachable or not measured, with the
+  uptime at its end (and the measured share when less than 95 % of the time was measured). Then one table with
+  Matomo's addresses together with the website's Tag Manager containers (Matomo serves their files, so they count in
+  Matomo's uptime), the website's addresses and its tracking proxy (on phones and in narrow dashboard columns a list),
+  and the outages of the chosen period. Times follow the website's timezone.
   Admins of the website change the check targets with **Edit check targets** and check at once with **Check now**
   (once a minute).
 - **Dashboard widgets:** add "Uptime: Matomo" and "Uptime: Website" from the category **Uptime**. They show the state

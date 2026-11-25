@@ -144,7 +144,7 @@
   // the page: name, strip and the group's uptime at its end (D3)
   .fwum-strips__row--page {
     // a fixed uptime column: the strips of Matomo and of the website line up hour by hour
-    display: grid; grid-template-columns: 110px minmax(0, 1fr) 10em; grid-template-areas: "name strip uptime";
+    display: grid; grid-template-columns: 110px minmax(0, 1fr) 7.5em; grid-template-areas: "name strip uptime";
     column-gap: 12px; align-items: start;
     .fwum-strips__name { grid-area: name; }
     > .fwum-strip { grid-area: strip; }
@@ -154,6 +154,13 @@
     strong { display: block; font-size: 1.1em; font-variant-numeric: tabular-nums; }
   }
   .fwum-strips__measured { display: block; font-size: 0.8em; color: var(--fwum-muted); text-wrap: balance; }
+  // P1: the narrow address list under its group headings, like the table's group rows
+  .fwum-narrow-list { margin: 8px 0 0; }
+  .fwum-narrow-list__group {
+    margin: 12px 0 0; padding: 4px 0; font-size: 0.8em; font-weight: 600; letter-spacing: 0.05em;
+    text-transform: uppercase; color: @fwum-text-light; border-bottom: 1px solid @fwum-border;
+  }
+  .fwum-narrow-list .fwum-targets { margin-top: 0; }
   .fwum-legend {
     display: flex; flex-wrap: wrap; gap: 2px 16px; list-style: none; margin: 2px 0 0 122px; padding: 0;
     font-size: 0.85em; color: var(--fwum-muted);
