@@ -156,6 +156,38 @@ final class IncidentStore
     }
 
     /**
+     * The outages of the given targets that are open or ended at or after $endedSince, one query (index open): per
+     * target and source the open one, else the one that ended last. The other side of a one-sided failure
+     * (UptimeReport::overview()): an outage it closed after the failing side's latest failing check still counts.
+     *
+     * @param int[] $idTargets
+     * @param string $endedSince Y-m-d H:i:s UTC
+     * @return array<int, array<string, array{idtarget: string, source: string, started_at: string, ended_at: ?string}>>
+     *         by idtarget and source
+     */
+    public function openOrEndedSince(array $idTargets, string $endedSince): array
+    {
+        if ($idTargets === []) {
+            return [];
+        }
+        $rows = Db::fetchAll(
+            'SELECT idtarget, source, started_at, ended_at FROM ' . self::table()
+            . ' WHERE kind = ? AND idtarget IN (' . Sql::placeholders($idTargets) . ') AND (ended_at IS NULL OR ended_at >= ?)',
+            array_merge([self::OUTAGE], $idTargets, [$endedSince])
+        );
+        $out = [];
+        foreach ($rows as $row) {
+            $kept = $out[(int) $row['idtarget']][(string) $row['source']] ?? null;
+            // Y-m-d H:i:s compares as text
+            if ($kept === null || ($kept['ended_at'] !== null && ($row['ended_at'] === null || $row['ended_at'] > $kept['ended_at']))) {
+                $out[(int) $row['idtarget']][(string) $row['source']] = $row;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
      * Incidents of a website's targets (idSite 0: the instance targets and the gaps) that overlap [$from, $to).
      *
      * @param string $state all|open|closed
@@ -192,7 +224,11 @@ final class IncidentStore
     /**
      * Upserts incidents written by Pro (exact start and end), keyed by target, source, kind and start. An outage that
      * has ended here (closeOpen(): switched off, retired, no longer checked by its source) is never opened again by a
-     * row that still carries it open; a row with an end replaces the end set here.
+     * row that still carries it open; a row with an end replaces the end set here. Accepted (review of the 5.2.0 fixes,
+     * NIT 4): an address switched off and on again while its outage from outside goes on reads that outage as ended
+     * until the source reports the end, which then replaces it. Reopening rows of switched-on targets would instead let
+     * a pull that was under way while the source stopped checking an address (endOutages() after its push) open that
+     * outage for good: no later pull carries the address.
      *
      * @param array<int, array{idtarget: int, source: string, kind: string, started_at: string, ended_at: ?string, cause: ?string, detail: ?string, down_samples: int}> $rows
      */

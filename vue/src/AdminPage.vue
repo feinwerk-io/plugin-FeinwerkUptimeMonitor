@@ -15,8 +15,12 @@
   rows name it (delivering, with the time of its latest results, or not active) with the link to
   its settings; without such a plugin nothing about it shows. While it delivers, the table
   combines both sides (API getSitesOverview), so only websites no side can check are folded (named
-  "from this server" unless the outside said it cannot check them either, 5.2.0 review B3), and
-  when it sends alerts itself the alert row names it instead of "No alerts".
+  "from the Matomo server", follow-up W2, unless the outside said it cannot check them either,
+  5.2.0 review B3), and a
+  status names the side of a one-sided failure (Peter's 3a, 2026-11-26: only from the Matomo
+  server while the outside reaches it is amber). P4 (UI review 5.2.0): the row for the checks from
+  outside comes right under the cron row and says when it sends alerts itself; Sentinel's row
+  follows when Sentinel sends alerts, never "No alerts" while that plugin sends them.
 -->
 <template>
   <div
@@ -160,7 +164,10 @@
                 class="fwum-admin__cert"
                 :class="certClass(row)"
               >{{ certText(row.certificateDaysLeft) }}</td>
-              <td :title="row.lastCheckedAt ? when(row.lastCheckedAt, row.timezone) : ''">
+              <td
+                class="fwum-admin__when"
+                :title="row.lastCheckedAt ? when(row.lastCheckedAt, row.timezone) : ''"
+              >
                 {{ row.lastCheckedAt ? since(row.lastCheckedAt) : '' }}
               </td>
             </tr>
@@ -208,7 +215,10 @@
     <!-- Peter's 3a (P2): status rows like Diagnostic > System Check -->
     <ContentBlock :content-title="translate('FeinwerkUptimeMonitor_UiChecksAndAlerts')">
       <ul class="fwum-checks">
-        <li :class="cronOk ? 'is-ok' : 'is-warn'">
+        <li
+          class="fwum-checks__cron"
+          :class="cronOk ? 'is-ok' : 'is-warn'"
+        >
           <span
             :class="cronOk ? 'icon-ok' : 'icon-warning'"
             aria-hidden="true"
@@ -229,14 +239,39 @@
             </template>
           </div>
         </li>
-        <li :class="alertsOk ? 'is-ok' : 'is-warn'">
+        <!-- results checked from outside: only while a plugin that adds them is there; P4: right
+             under the cron row -->
+        <li
+          v-if="config.external"
+          class="fwum-checks__outside"
+          :class="config.external.active ? 'is-ok' : 'is-warn'"
+        >
+          <span
+            :class="config.external.active ? 'icon-ok' : 'icon-warning'"
+            aria-hidden="true"
+          />
+          <div>
+            <p>
+              {{ outsideRowText }}
+              <a
+                v-if="config.external.settingsUrl"
+                :href="config.external.settingsUrl"
+              >{{ translate('FeinwerkUptimeMonitor_UiOutsideSettings') }}</a>
+            </p>
+          </div>
+        </li>
+        <!-- the plugin that checks from outside sends alerts itself: Sentinel's row only when
+             Sentinel sends alerts too, never "No alerts" -->
+        <li
+          v-if="!outsideAlerts || config.sentinel === 'active'"
+          class="fwum-checks__alerts"
+          :class="alertsOk ? 'is-ok' : 'is-warn'"
+        >
           <span
             :class="alertsOk ? 'icon-ok' : 'icon-warning'"
             aria-hidden="true"
           />
           <div v-if="alertsOk">
-            <!-- the plugin that checks from outside sends alerts itself: never "No alerts" then -->
-            <p v-if="outsideAlerts">{{ outsideAlertsText }}</p>
             <template v-if="config.sentinel === 'active'">
               <p>{{ translate('FeinwerkUptimeMonitor_UiSentinelActive') }}</p>
               <!-- P3 (Peter, 2026-11-25): the link on the words that name Sentinel's settings -->
@@ -267,25 +302,6 @@
             </p>
           </div>
         </li>
-        <!-- results checked from outside: only while a plugin that adds them is there -->
-        <li
-          v-if="config.external"
-          :class="config.external.active ? 'is-ok' : 'is-warn'"
-        >
-          <span
-            :class="config.external.active ? 'icon-ok' : 'icon-warning'"
-            aria-hidden="true"
-          />
-          <div>
-            <p>
-              {{ outsideText }}
-              <a
-                v-if="config.external.settingsUrl"
-                :href="config.external.settingsUrl"
-              >{{ translate('FeinwerkUptimeMonitor_UiOutsideSettings') }}</a>
-            </p>
-          </div>
-        </li>
       </ul>
       <p>
         <a :href="settingsUrl">{{ translate('FeinwerkUptimeMonitor_UiSettings') }}</a>
@@ -307,7 +323,7 @@ import { ContentBlock, MatomoUrl, translate } from 'CoreHome';
 import { api } from './api';
 import { ScreenConfig, SiteOverview } from './types';
 import {
-  ago, dateTime, duration, keepUnits, listOf, statusOf, zoneOf,
+  ago, dateTime, duration, keepUnits, listOf, sidedStatusOf, zoneOf,
 } from './format';
 import { observeNarrow } from './narrow';
 import { uptimePageToday } from './links';
@@ -370,13 +386,16 @@ export default defineComponent({
     },
     /**
      * up to three websites by name (the answer without a click), more as a count; "from this
-     * server" unless no side can check them (B3)
+     * server" unless no side can check them (B3); while results from outside come in "from the
+     * Matomo server", as the status rows say (follow-up W2)
      */
     foldedText(): string {
       const count = this.foldedRows.length;
+      const side = this.outside ? 'FromServer' : '';
       const keys = this.foldedEither
         ? ['UiAdminCannotCheckNamedOne', 'UiAdminCannotCheckNamedMany', 'UiAdminCannotCheckMany']
-        : ['UiAdminNotCheckableNamedOne', 'UiAdminNotCheckableNamedMany', 'UiAdminNotCheckableMany'];
+        : ['UiAdminNotCheckableNamedOne', 'UiAdminNotCheckableNamedMany', 'UiAdminNotCheckableMany']
+          .map((key) => `${key}${side}`);
       if (count <= 3) {
         const names = listOf(this.foldedRows.map((row) => row.name), this.config.language);
         return translate(`FeinwerkUptimeMonitor_${keys[count === 1 ? 0 : 1]}`, names);
@@ -386,6 +405,10 @@ export default defineComponent({
     /** another plugin delivers results checked from outside: the overview combines both sides */
     outside(): boolean {
       return !!this.config.external && this.config.external.active;
+    },
+    /** P4: one row: checked from outside, when the latest results arrived, and its alerts */
+    outsideRowText(): string {
+      return this.outsideAlerts ? `${this.outsideText} ${this.outsideAlertsText}` : this.outsideText;
     },
     /** that plugin sends alerts for outages itself */
     outsideAlerts(): boolean {
@@ -505,18 +528,20 @@ export default defineComponent({
       this.panelSite = row.idSite;
     },
     /**
-     * the same rule as the cards of the uptime page (format.ts statusOf); not checkable from either
-     * side (the outside says so too): both named, as the page's answer line does (B3)
+     * the same rule as the cards of the uptime page (format.ts sidedStatusOf): a one-sided failure
+     * names its side (3a: only from the Matomo server, amber); not checkable from either side (the
+     * outside says so too): both named, as the page's answer line does (B3)
      */
-    status(row: SiteOverview): { outcome: string; text: string } {
-      const state = statusOf({
+    status(row: SiteOverview): { outcome: string; text: string; side?: string } {
+      const state = sidedStatusOf({
         total: row.targets,
         off: row.off,
         up: row.up,
         down: row.down,
         stale: row.stale,
         notCheckable: row.notCheckable,
-      });
+      }, this.outside ? row.downFromServerOnly || 0 : 0,
+      this.outside ? row.downFromOutsideOnly || 0 : 0, this.outside);
       return state.outcome === 'not_checkable' && this.outside && this.eitherSide(row)
         ? { outcome: state.outcome, text: translate('FeinwerkUptimeMonitor_UiNotCheckableEither') }
         : state;

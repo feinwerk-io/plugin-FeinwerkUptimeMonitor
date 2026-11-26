@@ -8,7 +8,11 @@
   dashboard column) a list like the addresses' (B1): start and duration on the first line,
   what on the second, the cause on the third, each value with its name for screen readers.
   Final review D1: outages of one group at the same time are one row naming its addresses; on a
-  past day or a longer period a row's duration is its part inside it ("30 min of 1 h").
+  past day or a longer period a row's duration is its part inside it ("30 min of 1 h"). With
+  results from outside (follow-up D1, Peter, 2026-11-26): one row also when both sides saw it
+  (outages.ts outageRows). D3 (Peter, 2026-11-26, "Ansonsten alle wie empfohlen umsetzen"): the
+  table has no column for the side either; like the narrow list it follows the cause in muted words
+  ("no connection, from the Matomo server", "..., from the Matomo server and from outside").
 -->
 <template>
   <div class="fwum-outages">
@@ -58,11 +62,11 @@
         >
           <span v-if="cause(row)"><span class="fwum-sr">{{
             translate('FeinwerkUptimeMonitor_UiCause') }}: </span>{{ cause(row) }}</span>
+          <!-- review of the 5.2.0 fixes, NIT 3: no column heading here, so the side in words -->
           <span
             v-if="hasExternal"
             class="fwum-muted"
-          ><span class="fwum-sr">{{ translate('FeinwerkUptimeMonitor_UiSource') }}: </span>{{
-            source(row.source) }}</span>
+          ><span class="fwum-sr">, </span>{{ sidePhrase(row.source) }}</span>
         </span>
       </li>
     </ul>
@@ -83,10 +87,6 @@
             >{{ translate('FeinwerkUptimeMonitor_UiDuration') }}</th>
             <th scope="col">{{ translate('FeinwerkUptimeMonitor_UiWhat') }}</th>
             <th scope="col">{{ translate('FeinwerkUptimeMonitor_UiCause') }}</th>
-            <th
-              v-if="hasExternal"
-              scope="col"
-            >{{ translate('FeinwerkUptimeMonitor_UiSource') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -114,8 +114,13 @@
               <span>{{ length(row) }}</span>
             </td>
             <td>{{ what(row) }}</td>
-            <td>{{ cause(row) }}</td>
-            <td v-if="hasExternal">{{ source(row.source) }}</td>
+            <td class="fwum-outages__cause">
+              <span v-if="cause(row)">{{ cause(row) }}</span>
+              <span
+                v-if="hasExternal"
+                class="fwum-muted fwum-outages__side"
+              ><span class="fwum-sr">, </span>{{ sidePhrase(row.source) }}</span>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -138,6 +143,14 @@ import {
   causeText, dateTime, duration, listOf,
 } from './format';
 import { KIND_ORDER, OutageRow } from './outages';
+import { keepServer } from './sides';
+
+/** a row's side in words after its cause, by its source (follow-up D1: both) */
+const SIDE_PHRASES: Record<string, string> = {
+  local: 'FeinwerkUptimeMonitor_UiFromServer',
+  external: 'FeinwerkUptimeMonitor_UiFromOutside',
+  both: 'FeinwerkUptimeMonitor_UiFromBoth',
+};
 
 export default defineComponent({
   props: {
@@ -161,7 +174,7 @@ export default defineComponent({
     narrow: { type: Boolean, default: false },
     /** nothing was measured in the period: no outages say nothing */
     notMeasured: { type: Boolean, default: false },
-    /** the screen shows results from outside: every outage names its side (5.2.0 review L2) */
+    /** the screen shows results from outside: every row names its side or both (5.2.0 review L2) */
     outside: { type: Boolean, default: false },
   },
   emits: ['more'],
@@ -176,9 +189,10 @@ export default defineComponent({
         ? 'FeinwerkUptimeMonitor_UiOutagesOfAtLeast'
         : 'FeinwerkUptimeMonitor_UiOutagesOf', String(this.outages.length), String(this.total));
     },
-    /** the column helps only once results come from outside (the free plugin checks from Matomo) */
+    /** the side helps only once results come from outside (the free plugin checks from Matomo) */
     hasExternal(): boolean {
-      return this.outside || this.outages.some((row) => row.source === 'external');
+      return this.outside || this.outages.some((row) => row.source === 'external'
+        || row.source === 'both');
     },
   },
   methods: {
@@ -219,11 +233,12 @@ export default defineComponent({
         .filter((c, n, all) => c !== '' && all.indexOf(c) === n);
       return listOf(causes, this.language);
     },
-    /** L1: a noun under "Checked from", never "Checked from: from outside" */
-    source(source: string): string {
-      return translate(source === 'external'
-        ? 'FeinwerkUptimeMonitor_UiSourceOutside'
-        : 'FeinwerkUptimeMonitor_UiSourceServer');
+    /**
+     * the side after the cause, in the narrow list and the table (D3): "from outside", "from the
+     * Matomo server", both (follow-up D1); the server's name whole (W8)
+     */
+    sidePhrase(source: string): string {
+      return keepServer(translate(SIDE_PHRASES[source] || SIDE_PHRASES.local));
     },
   },
 });

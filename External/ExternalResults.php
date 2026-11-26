@@ -154,6 +154,11 @@ final class ExternalResults
     }
 
     /**
+     * Writes outages checked from outside with their exact start and end (upserts on target, source and start). An
+     * outage ended here (switched off, retired, endOutages()) is never opened again by a row that still carries it
+     * open; a row with an end replaces the end set here (IncidentStore::upsert() says why an address switched off and
+     * on again keeps such an outage ended until the source reports its end).
+     *
      * @param list<array{idtarget: int, started_at: string, ended_at: ?string, cause: ?string, detail: ?string, down_samples: int, source?: string}> $rows
      */
     public function writeIncidents(array $rows): void

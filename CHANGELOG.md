@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.3.0
+
+- Administration > Diagnostic > Uptime Monitor: a long status wraps onto a second line, so the column Last check stays
+  in view on narrower screens.
+- "Too large to check (over 4 MB)" no longer breaks inside the brackets.
+
 ## 5.2.0
 
 - An address the Matomo server does not check, such as 192.168.1.10 or 127.0.0.1 while private addresses are not

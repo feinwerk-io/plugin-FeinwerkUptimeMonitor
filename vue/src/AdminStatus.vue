@@ -19,7 +19,7 @@
   <span
     v-if="row.containersDown && row.containersDown.length > 3"
     class="fwum-admin__containers"
-  >{{ translate('FeinwerkUptimeMonitor_UiAdminContainersDownMany',
+  >{{ translate(`FeinwerkUptimeMonitor_UiAdminContainersDownMany${status.side || ''}`,
     String(row.containersDown.length)) }}</span>
   <span
     v-else-if="row.containersDown && row.containersDown.length"
@@ -51,7 +51,14 @@ interface ContainerLine {
 export default defineComponent({
   props: {
     row: { type: Object as PropType<SiteOverview>, required: true },
-    status: { type: Object as PropType<{ outcome: string; text: string }>, required: true },
+    /**
+     * the row's status; side FromServer or FromOutside when it names the side of a one-sided
+     * failure
+     */
+    status: {
+      type: Object as PropType<{ outcome: string; text: string; side?: string }>,
+      required: true,
+    },
     language: { type: String, default: '' },
   },
   computed: {
@@ -62,9 +69,12 @@ export default defineComponent({
     containerLine(): ContainerLine {
       const mark = '\u0001';
       const names = (this.row.containersDown || []).map((s) => s.name);
+      // the status above names the side of a one-sided failure: the containers fail on that side
+      // (UI review F1)
+      const side = this.status.side || '';
       const [before, after = ''] = translate(names.length > 1
-        ? 'FeinwerkUptimeMonitor_UiAdminContainersDownSeveral'
-        : 'FeinwerkUptimeMonitor_UiAdminContainersDown', mark).split(mark);
+        ? `FeinwerkUptimeMonitor_UiAdminContainersDownSeveral${side}`
+        : `FeinwerkUptimeMonitor_UiAdminContainersDown${side}`, mark).split(mark);
       return { before, after, parts: listParts(names, this.language) };
     },
   },

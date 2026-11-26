@@ -12,6 +12,9 @@ import {
 
 const MODULE = 'FeinwerkUptimeMonitor';
 
+/** the API's limit of getIncidents: recentIncidents asks for all it gives */
+export const RECENT_LIMIT = 1000;
+
 export interface Period {
   period: string;
   date: string;
@@ -74,6 +77,25 @@ export const api = {
       limit: 100,
       timezoneOf,
       source,
+    }, { createErrorNotification: false });
+  },
+  /**
+   * Review of the 5.3.0 fixes, SHOULD 1: the outages open now or ended since yesterday (the
+   * website's days), from both sides, for the one-sided rule (sides.ts aloneDown): an outage the
+   * other side closed after a failing check from before midnight still counts. Newest start first,
+   * so a list cut at the limit may leave out an old open outage (the page then counts them as not
+   * known).
+   */
+  recentIncidents(idSite: number, timezoneOf = 0): Promise<Incident[]> {
+    return AjaxHelper.fetch<Incident[]>({
+      method: `${MODULE}.getIncidents`,
+      idSite,
+      period: 'range',
+      date: 'last2',
+      state: 'all',
+      limit: RECENT_LIMIT,
+      timezoneOf,
+      source: 'all',
     }, { createErrorNotification: false });
   },
   /**

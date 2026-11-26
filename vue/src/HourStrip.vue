@@ -10,12 +10,14 @@
   stop per strip: the arrow keys, Home and End move between the cells up to now, and the focused
   or hovered cell shows its tooltip (time in the website's timezone, uptime, measured share).
   Screen readers read each cell's text from the list, "not yet" for the cells after now. The
-  small strip of the widgets has a small axis too (L11).
+  small strip of the widgets has a small axis too (L11). P1 (Peter, 2026-11-26, "1a"): with results
+  from outside the page draws a group's strip from outside as a thin lane under it (lane), the same
+  cells, and only the last strip of the page carries the time axis (axis).
 -->
 <template>
   <div
     class="fwum-strip"
-    :class="{ 'fwum-strip--small': small }"
+    :class="{ 'fwum-strip--small': small, 'fwum-strip--lane': lane }"
   >
     <ol
       ref="list"
@@ -43,7 +45,7 @@
       aria-hidden="true"
     >{{ texts[active] }}</div>
     <div
-      v-if="cells.length > 1"
+      v-if="axis && cells.length > 1"
       class="fwum-strip__axis"
       aria-hidden="true"
     >
@@ -76,6 +78,10 @@ export default defineComponent({
     /** the checked addresses a cell sums up: the denominator of the measured share */
     targets: { type: Number, default: 1 },
     small: { type: Boolean, default: false },
+    /** P1: the thin lane from outside under a group's strip, the same cells */
+    lane: { type: Boolean, default: false },
+    /** P1: draw the time axis (with results from outside only the page's last strip does) */
+    axis: { type: Boolean, default: true },
     /** the screen's clock (ms), so that the running cell's length follows it; 0: Date.now() */
     now: { type: Number, default: 0 },
   },

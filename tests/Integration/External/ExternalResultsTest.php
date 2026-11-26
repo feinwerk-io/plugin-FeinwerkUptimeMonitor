@@ -305,6 +305,31 @@ class ExternalResultsTest extends IntegrationTestCase
         $this->assertSame(['2026-03-17 10:45:00'], array_column(self::outages($web), 'ended_at'), 'the end the source reports');
     }
 
+    /**
+     * Review of the 5.2.0 fixes, NIT 4, accepted as documented in IncidentStore::upsert(): an address switched off and on
+     * again here while its outage from outside goes on keeps that outage ended until the source reports its end (the
+     * source never saw the address leave). Reopening there would let a pull that was under way while the source
+     * stopped checking an address (endOutages()) open its outage for good, since no later pull carries it.
+     */
+    public function test_writeIncidents_switchedOffAndOnAgain_endedUntilTheSourceReportsTheEnd(): void
+    {
+        self::syncDefaults();
+        $targets = new TargetStore();
+        $web = $targets->get(1, 'web:aa')->id;
+        $open = ['idtarget' => $web, 'started_at' => '2026-03-17 10:00:00', 'ended_at' => null, 'cause' => 'timeout',
+            'detail' => null, 'down_samples' => 1];
+        $seam = new ExternalResults();
+        $seam->writeIncidents([$open]);
+        $targets->setEnabled(1, 'web:aa', false);
+        $targets->setEnabled(1, 'web:aa', true);
+
+        $seam->writeIncidents([['down_samples' => 40] + $open]);
+        $this->assertNotNull(self::outages($web)[0]['ended_at'], 'ended at the switch-off, though the source still carries it open');
+
+        $seam->writeIncidents([['ended_at' => '2026-03-17 10:45:00'] + $open]);
+        $this->assertSame(['2026-03-17 10:45:00'], array_column(self::outages($web), 'ended_at'), 'healed by the end the source reports');
+    }
+
     /** L8 review finding 3c: a source that claims to have reached its service in the future does not count. */
     public function test_isActive_refusesAReachFarInTheFuture(): void
     {

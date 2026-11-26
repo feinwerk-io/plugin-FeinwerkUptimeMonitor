@@ -172,10 +172,24 @@
     .fwum-strips__measured { white-space: nowrap; }
     // start and end apart: less.php 3 (Matomo 5) would compute "2 / -1" as -2
     .fwum-legend { grid-column-start: 2; grid-column-end: -1; margin-left: 0; }
+    // P1 (Peter's 1a): a group's lane from outside right under its strip, its label and uptime smaller and level
+    // with it; the next group set apart, so the two sides of a group read as one
+    .fwum-strips__row--lane > * { margin-top: -6px; }
+    .fwum-strips__row--lane > .fwum-strip { margin-top: -1px; }
+    .fwum-strips__row--next > * { margin-top: 6px; }
   }
+  .fwum-strips__row--lane .fwum-strips__name { padding-top: 0; line-height: 1.25; }
+  .fwum-strips__uptime.fwum-strips__uptime--lane {
+    padding-top: 0; line-height: 1.25;
+    .fwum-strips__figure { font-size: 1em; }
+  }
+  // D1 (Peter's answer to the UI review of 5.3.0): of a group's two uptimes the higher one is muted, the lower bold.
+  // QB1 (quick UI review before 5.3.0): the muted figure is a span, the bold one a strong (Morpheus makes every strong
+  // bold with !important)
+  .fwum-strips__uptime.fwum-strips__uptime--muted .fwum-strips__figure { font-weight: normal; color: var(--fwum-muted); }
   .fwum-strips__uptime {
     min-width: 6.5em; padding-top: 2px; text-align: right; line-height: 1.3;
-    strong { display: block; font-size: 1.1em; font-variant-numeric: tabular-nums; }
+    .fwum-strips__figure { display: block; font-size: 1.1em; font-weight: bold; font-variant-numeric: tabular-nums; }
   }
   .fwum-strips__measured { display: block; font-size: 0.8em; color: var(--fwum-muted); text-wrap: balance; }
   // P1: the narrow address list under its group headings, like the table's group rows (L2)
@@ -218,7 +232,25 @@
       > .fwum-strip { grid-area: strip; }
       .fwum-strips__uptime { grid-area: uptime; }
     }
-    .fwum-strips__uptime { padding-top: 0; strong { display: inline; } }
+    // P1 on phones: the lane right under the group's strip, its label and uptime under the lane
+    .fwum-strips--page .fwum-strips__row--lane {
+      grid-template-areas: "strip strip" "name uptime"; row-gap: 2px; margin-top: -2px;
+      > * { margin-top: 0; }
+    }
+    .fwum-strips--page .fwum-strips__row--next { margin-top: 10px; > * { margin-top: 0; } }
+    .fwum-strips__uptime { padding-top: 0; .fwum-strips__figure { display: inline; } }
+    // D2 (Peter, 2026-11-26, "alle wie empfohlen"): a strip and its lane from outside as a pair (vue/src/UptimePage.vue
+    // renders it on a narrow page only): both names and uptimes first, each on one line as above a single strip, then
+    // the strip with the lane right under it; the last lane carries the time axis
+    .fwum-strips--page .fwum-strips__pair { margin-bottom: 6px; }
+    .fwum-strips--page .fwum-strips__pair--next { margin-top: 10px; }
+    .fwum-strips--page .fwum-strips__head {
+      display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "name uptime"; column-gap: 12px;
+      .fwum-strips__name { grid-area: name; white-space: nowrap; overflow-wrap: normal; }
+      .fwum-strips__uptime { grid-area: uptime; }
+    }
+    .fwum-strips--page .fwum-strips__head--lane { margin-top: 2px; .fwum-strips__name { line-height: 1.25; } }
+    .fwum-strips--page .fwum-strips__pair > .fwum-strip { margin-top: 4px; }
     // L4: the measured share wraps as one balanced block next to the number, never a ragged last word
     .fwum-strips--page .fwum-strips__measured {
       display: inline-block; max-width: 100%; margin-left: 6px; vertical-align: baseline; white-space: normal;
@@ -267,14 +299,17 @@
   .fwum-strip--small .fwum-strip__cell.is-next::before { top: -2px; bottom: -2px; left: -1px; width: 1px; }
   // the widgets' small strip: a small axis says which hours or days it shows (L11)
   .fwum-strip--small .fwum-strip__axis { margin-top: 1px; font-size: 0.75em; }
+  // P1: the lane from outside, thin, the same cells and gaps as the strip above it (they line up hour by hour)
+  .fwum-strip--lane .fwum-strip__cells { height: 8px; }
+  .fwum-strip--lane .fwum-strip__cell { border-radius: 1px; }
+  .fwum-strip--lane .fwum-strip__cell.is-next::before { top: -2px; bottom: -2px; }
 
   // one table in Matomo's report-table look, the groups Matomo and This website as row groups
   .fwum-table-wrap { overflow-x: auto; max-width: 100%; }
   .fwum-table-wrap table.fwum-table.dataTable {
     margin-top: 4px;
     th:first-child, td:first-child { padding-left: 0; }
-    // the second heading row of the two sides ends before the certificate column: its padding stays
-    th:last-child:not(.fwum-vantage__column), td:last-child { padding-right: 0; }
+    th:last-child, td:last-child { padding-right: 0; }
     th.label, td.label { width: auto; white-space: normal; overflow-wrap: break-word; }
     td.fwum-targets__text { white-space: normal; min-width: 7em; }
     tr.fwum-group-row th, tr.fwum-group-row th:not(.label) {
@@ -284,30 +319,44 @@
       // like the narrow list's headings (L2), not in a band like the column headings
       background: transparent !important;
     }
+    // B1 with P2: a group without results from outside on a screen that shows them, said once in its heading
+    .fwum-group-row__note {
+      margin-left: 12px; font-weight: normal; letter-spacing: normal; text-transform: none; font-size: 12px;
+    }
     tr.fwum-group-empty td { color: @fwum-text-light; }
     tr.fwum-group-empty .fwum-icon-button { margin-left: 4px; }
     tr.is-down td.fwum-targets__text { color: var(--fwum-down); }
-    // results checked from outside: each side's cell in its own colour, under its heading
+    // P2 (Peter's 2a): with results from outside a value is one line, or two where the sides disagree: each line
+    // in its own colour (a failure red, 3a amber), the other side's muted under it
     &.fwum-table--outside {
       tr.is-down td.fwum-targets__text { color: inherit; }
-      tr td.fwum-targets__text.is-down { color: var(--fwum-down); }
-      // each side's heading over its columns, underlined as a group
-      thead th.fwum-vantage {
-        text-align: center; padding-bottom: 4px;
-        box-shadow: inset 0 -1px 0 @fwum-border;
-      }
-      thead th.fwum-vantage__column { padding-top: 2px; font-weight: normal; }
-      // B1: a group without results from outside: one muted cell for that side
-      td.fwum-outside-none { color: var(--fwum-muted); text-align: center; }
+      .fwum-line { display: block; }
+      .fwum-line.is-down { color: var(--fwum-down); }
+      .fwum-line.is-partial { color: var(--fwum-warn); }
+      .fwum-line--other { margin-top: 2px; font-size: 0.92em; color: var(--fwum-muted); }
+      // QL2 (quick UI review before 5.3.0): a side's "up" that the one-sided rule does not count, next to a red dot
+      .fwum-line--muted { color: var(--fwum-muted); }
     }
     td.fwum-targets__cert.is-warning { color: var(--fwum-warn); }
     td.fwum-targets__cert.is-critical, td.fwum-targets__cert.is-expired { color: var(--fwum-down); }
+    // D2 (Peter's answer to the UI review of 5.3.0): a row the sides disagree on and its sub-rows read as one block:
+    // no lines between them, the sides' names indented under the address (past its dot), smaller and muted
+    // (Matomo draws each row's line with !important: table.dataTable tr:not(.subDataTableContainer) td)
+    tr.fwum-row--split td, tr.fwum-subrow:not(.fwum-subrow--last) td { border-bottom-color: transparent !important; }
+    tr.fwum-row--split td { padding-bottom: 2px; }
+    tr.fwum-subrow td { padding-top: 2px; padding-bottom: 2px; }
+    tr.fwum-subrow--last td { padding-bottom: 8px; }
+    td.label.fwum-subrow__side {
+      padding-left: 15px; font-size: 0.92em; color: var(--fwum-muted); white-space: nowrap;
+    }
   }
   // outages in the same look, every column text and left-aligned
   .fwum-table-wrap table.fwum-outages__table.dataTable {
     th, td { text-align: left; padding-left: 0; padding-right: 16px; }
     th:last-child, td:last-child { padding-right: 0; }
     td.fwum-outages__start { white-space: nowrap; }
+    // D3: the side after the cause, muted (the comma for screen readers only, as in the narrow list)
+    td.fwum-outages__cause > span + .fwum-outages__side { margin-left: 6px; }
   }
   .fwum-narrow({
     // phones: Matomo's wide column padding would push the last column out of sight
@@ -354,13 +403,22 @@
     li.is-down .fwum-targets__text { color: var(--fwum-down); }
     // results checked from outside: one line per side, right-aligned, each named; the colour follows the side
     // the side's name first, the values at the right edge, the uptimes in one column (they compare line by line)
-    .fwum-targets__values--side { flex: 1 0 100%; }
+    .fwum-targets__values--side { flex: 1 0 100%; flex-wrap: wrap; }
     .fwum-targets__from {
       order: -1; margin-right: auto; font-size: 0.85em; color: var(--fwum-muted); white-space: nowrap;
     }
+    // UI review of 5.3.0, B1: a side's values are one unit beside its name; when both do not fit, the unit moves
+    // under the name as a whole, at the right edge. A value never shrinks below its own words: it wraps only at its
+    // spaces, never inside a word or a number
+    .fwum-targets__pair {
+      display: flex; align-items: baseline; justify-content: flex-end; gap: 0 8px; margin-left: auto; max-width: 100%;
+    }
+    .fwum-targets__values--side .fwum-targets__text { min-width: auto; overflow-wrap: normal; }
     .fwum-targets__values--side .fwum-targets__uptime { min-width: 4.5em; text-align: right; }
     li.is-down .fwum-targets__values--side .fwum-targets__text:not(.is-down) { color: @fwum-text-light; }
     .fwum-targets__values--side .fwum-targets__text.is-down { color: var(--fwum-down); }
+    // 3a: down only from the Matomo server while the outside reaches it
+    .fwum-targets__values--side .fwum-targets__text.is-partial { color: var(--fwum-warn); }
   }
   // B1: the outages on a narrow page, in the look of the address list: start and duration, what, cause
   .fwum-targets.fwum-outages__list {
@@ -432,8 +490,9 @@
 
 .fwum-admin {
   .fwum-table-wrap { overflow-x: auto; max-width: 100%; }
+  // UI review of 5.3.0, B2: the status wraps (a one-sided failure makes it long), so Last check keeps its room; the
+  // dot stays with the first word (.fwum-cell-label); short values never break
   .fwum-admin__status {
-    white-space: nowrap;
     .fwum-cell-label { display: inline-flex; align-items: baseline; gap: 6px; }
     .fwum-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; background: var(--fwum-muted); }
     &.is-up .fwum-dot { background: var(--fwum-up); }
@@ -441,7 +500,7 @@
     &.is-partial { color: var(--fwum-warn); font-weight: 600; .fwum-dot { background: var(--fwum-warn); } }
   }
   .fwum-icon-only { padding: 0 8px; min-width: 0; height: auto; line-height: 1; vertical-align: baseline; }
-  .fwum-admin__name { white-space: nowrap; }
+  .fwum-admin__name, .fwum-admin__when, td.fwum-admin__cert { white-space: nowrap; }
   // the certificate column (and the phones' muted line) in the uptime page's warning and critical colours
   .fwum-admin__cert.is-warning { color: var(--fwum-warn); }
   .fwum-admin__cert.is-critical, .fwum-admin__cert.is-expired { color: var(--fwum-down); }

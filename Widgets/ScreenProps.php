@@ -16,6 +16,7 @@ use Piwik\Plugin\Manager;
 use Piwik\Plugins\FeinwerkUptimeMonitor\External\ExternalResults;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Feedback\PluginFeedback;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Promo\PromoLine;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\Freshness;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Sentinel\SentinelVersion;
 use Piwik\Plugins\FeinwerkUptimeMonitor\SystemSettings;
 use Piwik\Translation\Translator;
@@ -105,10 +106,11 @@ final class ScreenProps
      * settings. Null without such a plugin: the screens as before. The first active source wins, else the first one.
      * alerts: the active source sends alerts for outages itself (the admin page's alert row names it; false on the other
      * screens, which never read it). resultsAt: when its latest results arrived (null: none yet, or it does not say;
-     * the admin page only, like alerts).
+     * the admin page only, like alerts). sidesMargin: how much newer (seconds) one side's result must be than the start
+     * of the other side's failure to count (Freshness::sidesMargin(), the same as getSitesOverview; vue/src/sides.ts).
      *
      * @param string $variant page|matomo|site|admin
-     * @return array{active: bool, name: string, reachedAt: ?string, settingsUrl: ?string, alerts: bool, resultsAt: ?string}|null
+     * @return array{active: bool, name: string, reachedAt: ?string, settingsUrl: ?string, alerts: bool, resultsAt: ?string, sidesMargin: int}|null
      */
     private static function external(int $idSite, string $variant): ?array
     {
@@ -132,6 +134,7 @@ final class ScreenProps
                 'settingsUrl' => $admin ? $source['settingsUrl'] : null,
                 'alerts' => $variant === 'admin' && $active !== null && $active['alerts'],
                 'resultsAt' => $variant === 'admin' ? ($source['resultsAt'] ?? null) : null,
+                'sidesMargin' => Freshness::sidesMargin(),
             ];
         } catch (\Throwable $e) {
             return null;

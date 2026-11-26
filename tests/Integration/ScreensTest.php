@@ -165,6 +165,26 @@ class ScreensTest extends IntegrationTestCase
         $this->assertNull($viewer['external']['settingsUrl'], 'but no link to settings they cannot open');
     }
 
+    /**
+     * Review of the 5.3.0 fixes, SHOULD 2: the screens compare the two sides with the server's margin (the check run's
+     * time budget plus one probe minute), the same value as getSitesOverview.
+     */
+    public function test_props_externalSidesMargin_followsTheRunBudget(): void
+    {
+        self::outsideSource(true);
+
+        $this->assertSame(120, ScreenProps::for(1, 'page')['external']['sidesMargin']);
+        $this->assertSame(120, ScreenProps::for(1, 'site')['external']['sidesMargin'], 'the widgets too');
+        $config = \Piwik\Config::getInstance();
+        $before = $config->FeinwerkUptimeMonitor;
+        try {
+            $config->FeinwerkUptimeMonitor = ['run_budget_seconds' => 300];
+            $this->assertSame(360, ScreenProps::for(1, 'matomo')['external']['sidesMargin']);
+        } finally {
+            $config->FeinwerkUptimeMonitor = $before;
+        }
+    }
+
     /** The admin page's alert row names an active source that sends alerts itself, never a paused one. */
     public function test_props_externalAlerts_onlyWhileActive(): void
     {

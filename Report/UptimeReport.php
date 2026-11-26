@@ -423,9 +423,13 @@ final class UptimeReport
      * websites whose container is down (containersDown). While results checked from outside count (outsideActive()),
      * each target combines both sides as the uptime page does (COMBINED, counting()); the certificate is the server's,
      * else the one from outside, and the last check the newer of both; notCheckableOutside counts the targets of
-     * notCheckable whose current result from outside is not checkable too. Four queries for all websites.
+     * notCheckable whose current result from outside is not checkable too; downFromServerOnly the targets of down that
+     * only the server finds down while the latest result from outside reaches them (Peter's 3a: amber on the screens),
+     * and downFromOutsideOnly those that only the outside finds down, both by aloneDown() (L8 review of 5.3.0, the
+     * review of its fixes; aloneDown() names the limit). Four queries for all websites, a fifth for the outages, open or
+     * recently ended, of the targets one side finds down.
      *
-     * @return list<array{idSite: int, name: string, timezone: string, targets: int, off: int, up: int, down: int, notCheckable: int, stale: int, lastCheckedAt: ?string, certificateDaysLeft: ?int, certificateLevel: ?string, containersDown: list<array{idSite: int, name: string}>, notCheckableOutside: int}>
+     * @return list<array{idSite: int, name: string, timezone: string, targets: int, off: int, up: int, down: int, notCheckable: int, stale: int, lastCheckedAt: ?string, certificateDaysLeft: ?int, certificateLevel: ?string, containersDown: list<array{idSite: int, name: string}>, notCheckableOutside: int, downFromServerOnly: int, downFromOutsideOnly: int}>
      */
     public function overview(): array
     {
@@ -445,6 +449,8 @@ final class UptimeReport
             $zones[(int) $site['idsite']] = (string) ($site['timezone'] ?? 'UTC');
         }
         $rows = [];
+        // the targets that one side finds down: [idRow, idTarget, local, external, sides]
+        $oneSided = [];
         foreach ((new TargetStore())->current() as $target) {
             if (!isset($names[$target->idSite])) {
                 continue;
@@ -454,7 +460,8 @@ final class UptimeReport
             $row = $rows[$idRow] ?? ['idSite' => $idRow, 'name' => $names[$idRow],
                 'timezone' => $zones[$idRow] ?? 'UTC', 'targets' => 0,
                 'off' => 0, 'up' => 0, 'down' => 0, 'notCheckable' => 0, 'stale' => 0, 'lastCheckedAt' => null,
-                'certificateDaysLeft' => null, 'certificateLevel' => null, 'containersDown' => [], 'notCheckableOutside' => 0];
+                'certificateDaysLeft' => null, 'certificateLevel' => null, 'containersDown' => [], 'notCheckableOutside' => 0,
+                'downFromServerOnly' => 0, 'downFromOutsideOnly' => 0];
             if (!$target->enabled) {
                 // listed so that a super user can switch it on again from the overview (a container: from its website)
                 $row['off']++;
@@ -470,10 +477,13 @@ final class UptimeReport
                 $local = Outcome::NOT_CHECKABLE;
             }
             if ($local !== null || $sides !== []) {
-                $outcome = self::combined([
-                    $local,
-                    self::outcomeOf($sides[StateStore::EXTERNAL] ?? null, $staleOutside, $now),
-                ]);
+                $external = self::outcomeOf($sides[StateStore::EXTERNAL] ?? null, $staleOutside, $now);
+                $outcome = self::combined([$local, $external]);
+                if ($outside && ($local === Outcome::DOWN) !== ($external === Outcome::DOWN)) {
+                    // one side finds it down: whether that side alone does needs the open outages (aloneDown()); without
+                    // results from outside there is no side to name and no query
+                    $oneSided[] = [$idRow, $target->id, $local, $external, $sides];
+                }
                 // stale: the checks stopped, not current, so neither up nor down
                 $row['stale'] += $outcome === self::STALE ? 1 : 0;
                 $row['up'] += $outcome === Outcome::UP ? 1 : 0;
@@ -501,6 +511,20 @@ final class UptimeReport
                 }
             }
             $rows[$idRow] = $row;
+        }
+        if ($oneSided !== []) {
+            // one query for the outages of every target that one side finds down, open or ended since the oldest failing
+            // result that can still be current (from outside: $staleOutside, at least the server's $staleAfter); review
+            // of the 5.3.0 fixes, SHOULD 1 (index open, idtarget first)
+            $outages = (new IncidentStore())->openOrEndedSince(array_column($oneSided, 1), self::utc($now - $staleOutside));
+            $margin = Freshness::sidesMargin();
+            foreach ($oneSided as [$idRow, $id, $local, $external, $sides]) {
+                $server = [$local, $sides[StateStore::LOCAL] ?? null, $outages[$id][StateStore::LOCAL] ?? null];
+                $fromOutside = [$external, $sides[StateStore::EXTERNAL] ?? null, $outages[$id][StateStore::EXTERNAL] ?? null];
+                $rows[$idRow]['downFromServerOnly'] += $external === Outcome::UP
+                    && self::aloneDown($server, $fromOutside, $margin) ? 1 : 0;
+                $rows[$idRow]['downFromOutsideOnly'] += self::aloneDown($fromOutside, $server, $margin) ? 1 : 0;
+            }
         }
         ksort($rows);
         foreach ($rows as &$row) {
@@ -608,6 +632,49 @@ final class UptimeReport
         }
 
         return $now - (int) strtotime($state['checked_at'] . ' UTC') > $staleAfter ? self::STALE : (string) $state['outcome'];
+    }
+
+    /**
+     * Whether one side alone finds a target down (Peter's 3a; L8 review of 5.3.0 and the review of its fixes, SHOULD 1
+     * and 2). The failing side finds it down and the other does not. The other side has no outage of its own open for
+     * it, nor one that ended at or after the failing side's latest failing result: the failing side has not checked the
+     * target since the other side's recovery (an outage from outside stays open until two good minutes in a row, so its
+     * latest "up" can lie inside it). When the other side reaches the target, its result is newer than the start of the
+     * failure (the failing side's open outage, else its failing result) by more than $margin: an older "up" says
+     * nothing about the failure, and the server stamps a run's results with the run's start (Freshness::sidesMargin()).
+     * An other side without a current result, or one that cannot check the target, leaves it to the failing side.
+     * vue/src/sides.ts aloneDown() is the same rule for the screens.
+     *
+     * Limit: the other side's latest result is the newest one Matomo has. Results from outside arrive when their source
+     * delivers them (up to 2 h 15 min old, ExternalResults::STALE_AFTER), so a target that goes down for everyone while
+     * the server alone already failed (the lasting 3a case) reads as down from the server only until the source
+     * delivers a newer result from outside.
+     *
+     * @param array{0: ?string, 1: ?array, 2: ?array} $failing the failing side: its outcome (outcomeOf()), its latest
+     *        state (StateStore row), its outage of the target that is open or ended last (IncidentStore::openOrEndedSince())
+     * @param array{0: ?string, 1: ?array, 2: ?array} $other the other side, the same three
+     * @param int $margin seconds (Freshness::sidesMargin())
+     */
+    private static function aloneDown(array $failing, array $other, int $margin): bool
+    {
+        [$outcome, $state, $outage] = $failing;
+        [$otherOutcome, $otherState, $otherOutage] = $other;
+        if ($outcome !== Outcome::DOWN || $state === null || $otherOutcome === Outcome::DOWN) {
+            return false;
+        }
+        $checked = (int) strtotime($state['checked_at'] . ' UTC');
+        if ($otherOutage !== null
+            && ($otherOutage['ended_at'] === null || (int) strtotime($otherOutage['ended_at'] . ' UTC') >= $checked)
+        ) {
+            return false;
+        }
+        if ($otherOutcome !== Outcome::UP || $otherState === null) {
+            return true;
+        }
+        // only an open outage of the failing side gives the start of its failure
+        $since = $outage !== null && $outage['ended_at'] === null ? (int) strtotime($outage['started_at'] . ' UTC') : $checked;
+
+        return (int) strtotime($otherState['checked_at'] . ' UTC') > $since + $margin;
     }
 
     /** @param list<?string> $outcomes the sides' outcomes (outcomeOf()) */

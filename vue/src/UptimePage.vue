@@ -11,11 +11,18 @@
   no inner title, the state first, compact figures, a small strip, and when something is down
   only the failing rows with a link to the page. All data through the plugin's API. While another
   plugin adds results checked from outside (config.external active), a group with any such result
-  shows them next to the server's (5.2.0 review B1: a group without any keeps one muted cell, a
-  screen without any is as without that plugin), the page has a strip from outside under the strip
-  of each group the outside measured, the widgets one strip and the lower uptime of both sides
-  (B4), and a dot and the answer combine both (an address is down when either side finds it down);
-  a registered source that is not active gives admins one muted line with the link to its settings.
+  shows them with the server's (5.2.0 review B1: a group without any says so once, a screen without
+  any is as without that plugin). Peter, 2026-11-26, "1a, 2a, 3a": the page has a thin lane from
+  outside under the strip of each group the outside measured and one time axis (P1); the table
+  answers once and names the side only where the sides disagree, the narrow list and the widgets
+  too (P2, sides.ts); an address down only from the Matomo server while the outside reaches it is
+  amber, "not reachable from the Matomo server" (3a; it still counts as down). The widgets have one
+  strip and the lower uptime of both sides (B4); a dot and the answer combine both. A registered
+  source that is not active gives admins one muted line with the link to its settings. Follow-ups
+  (Peter, 2026-11-26, "alle wie empfohlen"): the outage list answers once (D1, outages.ts); on
+  phones both names and uptimes above a strip and its lane (D2); in the widgets a side that cannot
+  check an address adds no line (D3); "the Matomo server" in the answer, the note and the cells
+  while results from outside show (W2).
 -->
 <template>
   <div
@@ -213,50 +220,119 @@
           class="fwum-strips"
           :class="{ 'fwum-strips--page': isPage }"
         >
-          <div
-            v-for="strip in strips"
-            :key="strip.key"
-            class="fwum-strips__row"
-            :class="{ 'fwum-strips__row--page': isPage }"
+          <template
+            v-for="block in stripBlocks"
+            :key="block.key"
           >
+            <!-- D2 (Peter, 2026-11-26, "alle wie empfohlen"): on a narrow page a group's strip
+                 and its lane from outside as a pair: both names and uptimes first, then the
+                 strip with the lane right under it; the last lane carries the time axis -->
             <div
-              v-if="isPage"
-              class="fwum-strips__name"
-              aria-hidden="true"
+              v-if="narrow && block.strips.length > 1"
+              class="fwum-strips__pair"
+              :class="{ 'fwum-strips__pair--next': block.strips[0].next }"
             >
-              <template v-if="strip.first">{{ strip.name }}</template>
-              <span
-                v-if="strip.vantage"
-                class="fwum-strips__vantage"
-              >{{ strip.vantage }}</span>
+              <div
+                v-for="strip in block.strips"
+                :key="strip.key"
+                class="fwum-strips__head"
+                :class="{ 'fwum-strips__head--lane': strip.lane }"
+              >
+                <div
+                  class="fwum-strips__name"
+                  aria-hidden="true"
+                >
+                  <template v-if="strip.first">{{ strip.name }}</template>
+                  <span
+                    v-if="strip.vantage"
+                    class="fwum-strips__vantage"
+                  >{{ strip.vantage }}</span>
+                </div>
+                <div
+                  v-if="strip.uptime"
+                  class="fwum-strips__uptime"
+                  :class="{
+                    'fwum-strips__uptime--lane': strip.lane,
+                    'fwum-strips__uptime--muted': strip.uptime.muted,
+                  }"
+                  :title="strip.uptime.sub"
+                >
+                  <span class="fwum-sr">{{ translate('FeinwerkUptimeMonitor_UiUptime') }}
+                    {{ strip.label }}:</span>
+                  <!-- QB1 (quick UI review before 5.3.0): the muted figure is no strong, which
+                       Morpheus makes bold with !important -->
+                  <span
+                    v-if="strip.uptime.muted"
+                    class="fwum-strips__figure"
+                  >{{ strip.uptime.value }}</span>
+                  <strong
+                    v-else
+                    class="fwum-strips__figure"
+                  >{{ strip.uptime.value }}</strong>
+                  <span
+                    :class="measuredVisible(strip.uptime.measured)
+                      ? 'fwum-strips__measured' : 'fwum-sr'"
+                  >{{ strip.uptime.sub }}</span>
+                </div>
+              </div>
+              <HourStrip
+                v-for="strip in block.strips"
+                :key="`${strip.key}-cells`"
+                v-bind="stripProps(strip)"
+              />
             </div>
-            <HourStrip
-              :cells="strip.timeline.cells"
-              :grain="strip.timeline.grain"
-              :days="strip.timeline.days || ''"
-              :name="strip.label"
-              :language="config.language"
-              :timezone="config.timezone || ''"
-              :targets="strip.targets"
-              :small="!isPage"
-              :now="tick"
-            />
-            <!-- D3 (Peter, 2026-11-25, "alles in 5.1.3 umsetzen"): uptime ends the strip -->
-            <div
-              v-if="strip.uptime"
-              class="fwum-strips__uptime"
-              :title="strip.uptime.sub"
-            >
-              <span class="fwum-sr">{{ translate('FeinwerkUptimeMonitor_UiUptime') }}
-                {{ strip.label }}:</span>
-              <strong>{{ strip.uptime.value }}</strong>
-              <!-- P2: one number; the measured share only where it matters -->
-              <span
-                :class="measuredVisible(strip.uptime.measured)
-                  ? 'fwum-strips__measured' : 'fwum-sr'"
-              >{{ strip.uptime.sub }}</span>
-            </div>
-          </div>
+            <!-- P1: a group's lane from outside right under its strip; the next group set apart -->
+            <template v-else>
+              <div
+                v-for="strip in block.strips"
+                :key="strip.key"
+                class="fwum-strips__row"
+                :class="{
+                  'fwum-strips__row--page': isPage, 'fwum-strips__row--lane': strip.lane,
+                  'fwum-strips__row--next': strip.next,
+                }"
+              >
+                <div
+                  v-if="isPage"
+                  class="fwum-strips__name"
+                  aria-hidden="true"
+                >
+                  <template v-if="strip.first">{{ strip.name }}</template>
+                  <span
+                    v-if="strip.vantage"
+                    class="fwum-strips__vantage"
+                  >{{ strip.vantage }}</span>
+                </div>
+                <HourStrip v-bind="stripProps(strip)" />
+                <!-- D3 (Peter, 2026-11-25, "alles in 5.1.3 umsetzen"): uptime ends the strip -->
+                <div
+                  v-if="strip.uptime"
+                  class="fwum-strips__uptime"
+                  :class="{
+                    'fwum-strips__uptime--lane': strip.lane,
+                    'fwum-strips__uptime--muted': strip.uptime.muted,
+                  }"
+                  :title="strip.uptime.sub"
+                >
+                  <span class="fwum-sr">{{ translate('FeinwerkUptimeMonitor_UiUptime') }}
+                    {{ strip.label }}:</span>
+                  <span
+                    v-if="strip.uptime.muted"
+                    class="fwum-strips__figure"
+                  >{{ strip.uptime.value }}</span>
+                  <strong
+                    v-else
+                    class="fwum-strips__figure"
+                  >{{ strip.uptime.value }}</strong>
+                  <!-- P2: one number; the measured share only where it matters -->
+                  <span
+                    :class="measuredVisible(strip.uptime.measured)
+                      ? 'fwum-strips__measured' : 'fwum-sr'"
+                  >{{ strip.uptime.sub }}</span>
+                </div>
+              </div>
+            </template>
+          </template>
           <ul
             v-if="isPage"
             class="fwum-legend"
@@ -334,7 +410,9 @@
             class="dataTable fwum-table"
             :class="{ 'fwum-table--outside': showOutside }"
           >
-            <thead v-if="!showOutside">
+            <!-- P2 (Peter's 2a): the same columns with results from outside; a cell names the side
+                 only where the sides disagree -->
+            <thead>
               <tr>
                 <th
                   scope="col"
@@ -356,66 +434,21 @@
                 >{{ translate('FeinwerkUptimeMonitor_UiCertificate') }}</th>
               </tr>
             </thead>
-            <!-- L3: a past day has one Uptime column per side, each naming its side -->
-            <thead v-else-if="past">
-              <tr>
-                <th
-                  scope="col"
-                  class="label"
-                >{{ translate('FeinwerkUptimeMonitor_UiAddress') }}</th>
-                <th scope="col">{{ translate('FeinwerkUptimeMonitor_UiUptimeFromServer') }}</th>
-                <th scope="col">{{ translate('FeinwerkUptimeMonitor_UiUptimeFromOutside') }}</th>
-                <th
-                  v-if="hasCerts"
-                  scope="col"
-                >{{ translate('FeinwerkUptimeMonitor_UiCertificate') }}</th>
-              </tr>
-            </thead>
-            <!-- results checked from outside: both sides under their headings, the same columns -->
-            <thead v-else>
-              <tr>
-                <th
-                  scope="col"
-                  class="label"
-                  rowspan="2"
-                >{{ translate('FeinwerkUptimeMonitor_UiAddress') }}</th>
-                <th
-                  v-for="side in vantages"
-                  :key="side.key"
-                  scope="colgroup"
-                  class="fwum-vantage"
-                  :colspan="vantageColumns.length"
-                >{{ side.heading }}</th>
-                <th
-                  v-if="hasCerts"
-                  scope="col"
-                  rowspan="2"
-                >{{ translate('FeinwerkUptimeMonitor_UiCertificate') }}</th>
-              </tr>
-              <tr>
-                <template
-                  v-for="side in vantages"
-                  :key="side.key"
-                >
-                  <!-- each column names its side for screen readers (no colgroup elements) -->
-                  <th
-                    v-for="column in vantageColumns"
-                    :key="column.key"
-                    scope="col"
-                    class="fwum-vantage__column"
-                  ><span class="fwum-sr">{{ side.heading }}: </span>{{ column.label }}</th>
-                </template>
-              </tr>
-            </thead>
             <tbody
               v-for="group in groups"
               :key="group.key"
             >
               <tr class="fwum-group-row">
+                <!-- B1: the screen shows results from outside, this group has none: said once -->
                 <th
                   :colspan="columnCount"
                   scope="rowgroup"
-                >{{ group.name }}</th>
+                >
+                  {{ group.name }}
+                  <span
+                    v-if="showOutside && !group.outside && group.rows.length"
+                    class="fwum-group-row__note"
+                  >{{ translate('FeinwerkUptimeMonitor_UiNotCheckedFromOutside') }}</span></th>
               </tr>
               <tr
                 v-if="!group.rows.length"
@@ -442,63 +475,116 @@
                   >{{ translate('FeinwerkUptimeMonitor_UiEditTargets') }}</a>
                 </td>
               </tr>
-              <tr
+              <template
                 v-for="row in group.rows"
                 :key="row.key"
-                :class="`is-${past ? row.dayOutcome : row.outcome}`"
               >
-                <td
-                  class="label"
-                  :title="row.title"
+                <tr
+                  :class="[`is-${past ? row.dayOutcome : row.tone}`,
+                           { 'fwum-row--split': !!splitOf(row) }]"
                 >
-                  <span class="fwum-cell-label">
-                    <span
-                      class="fwum-dot"
-                      aria-hidden="true"
-                    />
-                    <span class="fwum-targets__label"><template
-                      v-for="(part, p) in breakParts(row.label)"
-                      :key="p"
-                    >{{ part }}<wbr></template></span>
-                  </span>
-                </td>
-                <template v-if="!showOutside">
                   <td
-                    v-if="!past"
-                    class="column fwum-targets__text"
-                  >{{ keepHyphens(row.text) }}</td>
-                  <td
-                    v-if="hasUptime"
-                    class="column"
-                  >{{ row.uptime }}</td>
-                </template>
-                <template v-else>
-                  <template
-                    v-for="cell in outsideCells(row)"
-                    :key="cell.key"
+                    class="label"
+                    :title="row.title"
                   >
-                    <!-- B5: why the outside cannot check it, as the cell's tooltip -->
+                    <span class="fwum-cell-label">
+                      <span
+                        class="fwum-dot"
+                        aria-hidden="true"
+                      />
+                      <span class="fwum-targets__label"><template
+                        v-for="(part, p) in breakParts(row.label)"
+                        :key="p"
+                      >{{ part }}<wbr></template></span>
+                    </span>
+                  </td>
+                  <template v-if="!showOutside">
                     <td
                       v-if="!past"
                       class="column fwum-targets__text"
-                      :class="`is-${cell.outcome}`"
-                      :title="cell.title || undefined"
-                    >{{ keepHyphens(cell.text) }}</td>
-                    <td class="column">{{ cell.uptime }}</td>
+                    >{{ keepHyphens(row.text) }}</td>
+                    <td
+                      v-if="hasUptime"
+                      class="column"
+                    >{{ row.uptime }}</td>
                   </template>
-                  <!-- B1: a group without any result from outside: one muted cell for that side -->
+                  <!-- D2 (Peter, 2026-11-26, "Ansonsten alle wie empfohlen umsetzen"): a row the
+                       sides disagree on keeps its values for its sub-rows below -->
+                  <template v-else-if="splitOf(row)">
+                    <td
+                      v-if="!past"
+                      class="column fwum-targets__text"
+                    />
+                    <td
+                      v-if="hasUptime"
+                      class="column"
+                    />
+                  </template>
+                  <!-- P2: one line per value where the sides agree; the tooltip names both sides
+                       and why the outside cannot check it (B5) -->
+                  <template v-else>
+                    <td
+                      v-if="!past"
+                      class="column fwum-targets__text"
+                      :title="responseTitle(row)"
+                    ><span
+                      v-for="(line, l) in responseLinesOf(row)"
+                      :key="l"
+                      class="fwum-line"
+                      :class="[line.tone ? `is-${line.tone}` : '',
+                               { 'fwum-line--other': line.other }]"
+                    >{{ keepHyphens(line.text) }}</span><span
+                      v-if="asideOf(row)"
+                      class="fwum-sr"
+                    >, {{ asideOf(row) }}</span></td>
+                    <td
+                      v-if="hasUptime"
+                      class="column"
+                    ><span
+                      v-for="(line, l) in uptimeLinesOf(row)"
+                      :key="l"
+                      class="fwum-line"
+                      :class="{ 'fwum-line--other': line.other }"
+                    >{{ line.text }}</span></td>
+                  </template>
                   <td
-                    v-if="!group.outside"
-                    class="column fwum-muted fwum-outside-none"
-                    :colspan="vantageColumns.length"
-                  >{{ translate('FeinwerkUptimeMonitor_UiNotCheckedFromOutside') }}</td>
-                </template>
-                <td
-                  v-if="hasCerts"
-                  class="column fwum-targets__cert"
-                  :class="`is-${row.certLevel}`"
-                >{{ row.cert }}</td>
-              </tr>
+                    v-if="hasCerts"
+                    class="column fwum-targets__cert"
+                    :class="`is-${row.certLevel}`"
+                  >{{ row.cert }}</td>
+                </tr>
+                <!-- D2: one indented sub-row per side, the side that sets the dot first (on a
+                     past day the lower uptime): its name, its plain values; a container too large
+                     for any server names no side -->
+                <tr
+                  v-for="(side, n) in splitOf(row) || []"
+                  :key="`${row.key}-${side.key}`"
+                  class="fwum-subrow"
+                  :class="{ 'fwum-subrow--last': n === (splitOf(row) || []).length - 1 }"
+                >
+                  <!-- QL4 (quick UI review before 5.3.0): the address first, for screen readers -->
+                  <td class="label fwum-subrow__side"><span class="fwum-sr">{{
+                    row.label }}{{ side.tooLarge ? '' : ', ' }}</span>{{
+                    side.tooLarge ? '' : sideName(side) }}</td>
+                  <td
+                    v-if="!past"
+                    class="column fwum-targets__text"
+                    :title="responseTitle(row)"
+                  ><span
+                    v-if="hasWords(side)"
+                    class="fwum-line"
+                    :class="failureTone(side, row)"
+                  >{{ keepHyphens(side.text) }}</span></td>
+                  <td
+                    v-if="hasUptime"
+                    class="column"
+                  >{{ subUptime(side) }}</td>
+                  <td
+                    v-if="hasCerts"
+                    class="column"
+                  />
+                </tr>
+              </template>
             </tbody>
           </table>
         </div>
@@ -513,6 +599,8 @@
             :rows="widgetRows"
             :show-cert="!widgetGroup.cert"
             :outside="widgetGroup.outside"
+            :by-uptime="!todaySelected"
+            widget
           />
         </template>
 
@@ -626,21 +714,25 @@
 <script lang="ts">
 import { defineComponent, PropType } from 'vue';
 import { MatomoUrl, translate } from 'CoreHome';
-import { api, Period } from './api';
+import { api, Period, RECENT_LIMIT } from './api';
 import {
   AddressRow, Certificate, Incident, ScreenConfig, SeriesPoint, State as TargetState, Status,
   TargetStatus, Timeline, UptimeRow,
 } from './types';
 import {
   ago, breakParts, calendarDay, causeText, clockOrDate, dateTime, dayKey, duration, errorText,
-  hostOf, keepHyphens, keepUnits, listOf, milliseconds, percent, sharePercent, shiftDay, statusOf,
-  targetLabel,
+  hostOf, keepBrackets, keepHyphens, keepUnits, listOf, milliseconds, percent, sharePercent,
+  shiftDay, sidedStatusOf, targetLabel,
 } from './format';
 import { combineTimelines, stripTotals } from './timeline';
+import {
+  aloneDown, aside, combined, keepServer, Line, responseLines, serverOnlyDown, Side, sideTone,
+  SIDES_MARGIN_SECONDS, speaks, split, toneOf, uncounted, uptimeLines,
+} from './sides';
 import { observeNarrow } from './narrow';
 import { ownsDashboardCard, watchDashboardCard } from './cardPlace';
 import {
-  groupOf, KIND_ORDER, OutageRow, outageRows, outagesInPeriod, outageTotals,
+  groupOf, KIND_ORDER, onlyFromOutside, OutageRow, outageRows, outagesInPeriod, outageTotals,
 } from './outages';
 import Sparkline from './Sparkline.vue';
 import OutageList from './OutageList.vue';
@@ -697,6 +789,15 @@ interface Figure {
   side: string;
 }
 
+/** an uptime figure: its text and the number behind it */
+interface Uptime {
+  value: string;
+  sub: string;
+  level: string;
+  measured: number;
+  uptime: number;
+}
+
 interface Strip {
   key: string;
   name: string;
@@ -708,8 +809,17 @@ interface Strip {
   first: boolean;
   timeline: Timeline;
   targets: number;
-  /** the group's uptime at the end of its strip (page only, D3) */
-  uptime: { value: string; sub: string; measured: number } | null;
+  /**
+   * the group's uptime at the end of its strip (page only, D3); muted: the higher of a group's two
+   * uptimes (Peter's answer to the UI review of 5.3.0, D1: the lower one is bold)
+   */
+  uptime: (Uptime & { muted?: boolean }) | null;
+  /** P1: the thin lane from outside under its group's strip */
+  lane: boolean;
+  /** P1: it carries the time axis (with results from outside only the last one does) */
+  axis: boolean;
+  /** P1: the first strip of a group after the first one (set apart from the lane above) */
+  next: boolean;
 }
 
 /** one side of an address: as checked from the Matomo server or from outside */
@@ -726,15 +836,6 @@ interface Vantage {
   title: string;
 }
 
-/** the table's cells of one side (results from outside) */
-interface SideCell {
-  key: string;
-  outcome: string;
-  text: string;
-  uptime: string;
-  title?: string;
-}
-
 /** 5.2.0 review B1: what a group has from outside */
 interface GroupOutside {
   /** its addresses show the outside's results: one of them has any (also "cannot check it") */
@@ -743,22 +844,6 @@ interface GroupOutside {
   strip: boolean;
 }
 
-/** an uptime figure: its text and the number behind it */
-interface Uptime {
-  value: string;
-  sub: string;
-  level: string;
-  measured: number;
-  uptime: number;
-}
-
-/**
- * An address checked from both sides (results from outside): down when either side finds it down
- * (the outside checks exist to see what the server does not), else reachable when either reaches
- * it; not checkable only when no side can check it. A side from outside that cannot check the
- * address counts for nothing (row()), as in the API's admin overview.
- */
-const COMBINED = ['down', 'up', 'not_checkable', 'stale', 'none'];
 /**
  * B11 part 2: the server's side of an address it never checks (getStatus serverRefuses) before its
  * first check: not checkable, without a check time (it never counts as a recent check)
@@ -831,8 +916,17 @@ export default defineComponent({
       /** the strips from outside (page, while results from outside come in) */
       matomoOutsideTimeline: null as Timeline | null,
       siteOutsideTimeline: null as Timeline | null,
-      /** outages still open now, for "since when" in the answer line */
+      /**
+       * outages still open now, for "since when" in the answer line and 3a (sides.ts aloneDown);
+       * while results from outside come in also those ended since yesterday (review of the 5.3.0
+       * fixes, SHOULD 1)
+       */
       openIncidents: [] as Incident[],
+      /**
+       * the open outages could not be loaded, or their list was cut at the API's limit: nothing
+       * reads as one-sided (L8 review of 5.3.0)
+       */
+      openFailed: false,
       /** the period's outages as loaded, newest first (the list shows the first ones) */
       incidents: [] as Incident[],
       /** the API limit per request; "Show more" raises it */
@@ -907,19 +1001,6 @@ export default defineComponent({
     outsidePaused(): boolean {
       return this.isPage && !this.config.embedded && !!this.config.external
         && !this.config.external.active;
-    },
-    /** the table's two sides under their headings (results from outside) */
-    vantages(): Array<{ key: string; heading: string }> {
-      return [
-        { key: 'server', heading: translate('FeinwerkUptimeMonitor_UiCheckedFromServer') },
-        { key: 'outside', heading: translate('FeinwerkUptimeMonitor_UiCheckedFromOutside') },
-      ];
-    },
-    /** each side's columns: a past day has no Response column (D1) */
-    vantageColumns(): Array<{ key: string; label: string }> {
-      const uptime = { key: 'uptime', label: translate('FeinwerkUptimeMonitor_UiUptime') };
-      return this.past ? [uptime]
-        : [{ key: 'response', label: translate('FeinwerkUptimeMonitor_UiResponse') }, uptime];
     },
     showMatomo(): boolean {
       return this.config.variant !== 'site' && !this.config.isAnonymous;
@@ -1031,24 +1112,36 @@ export default defineComponent({
           detail: '',
         }];
       }
-      return [...groups]
+      const lines = [...groups]
         .sort((a, b) => SEVERITY.indexOf(a.state.outcome) - SEVERITY.indexOf(b.state.outcome))
         .map((g) => {
           const down = g.rows.filter((r) => r.outcome === 'down');
           // F1 (final review): a line that names a down address is red, also when the rest of its
-          // group answers; a count ("2 of 4 addresses") and the widgets' count stay amber
-          const named = this.isPage && down.length === 1;
-          const state = named
-            ? translate('FeinwerkUptimeMonitor_UiAddressDown', down[0].label) : g.state.text;
+          // group answers; a count ("2 of 4 addresses") and the widgets' count stay amber. 3a: down
+          // only from the Matomo server while the outside reaches it: amber, and it says so
+          const one = this.isPage && down.length === 1;
+          const serverOnly = one && down[0].serverOnlyDown;
+          const state = one
+            ? translate(serverOnly ? 'FeinwerkUptimeMonitor_UiAddressDownFromServer'
+              : 'FeinwerkUptimeMonitor_UiAddressDown', down[0].label) : g.state.text;
+          let { outcome } = g.state;
+          if (one) {
+            outcome = serverOnly ? 'partial' : 'down';
+          }
           return {
             key: g.key,
-            outcome: named ? 'down' : g.state.outcome,
+            outcome,
             text: this.isPage
               ? translate('FeinwerkUptimeMonitor_UiAnswerGroup', g.name, state)
               : g.state.text,
             detail: this.downDetail(g.rows),
           };
         });
+      // L8 review of 5.3.0, NIT 2: while results from outside show, the worst line first by its own
+      // colour (a red line naming an address before an amber 3a line), the groups' order on a tie;
+      // without them the order of 5.2.0
+      return this.showOutside
+        ? lines.sort((a, b) => SEVERITY.indexOf(a.outcome) - SEVERITY.indexOf(b.outcome)) : lines;
     },
     /**
      * B3 (Peter): on a past day or a longer period the answer states that period first, "Nov 24:
@@ -1073,6 +1166,12 @@ export default defineComponent({
         } else if (count > 1) {
           text = translate('FeinwerkUptimeMonitor_UiPastOutagesMany', label,
             String(count), duration(seconds, language));
+        }
+        // P3: the part of that time only the outside saw (a cut list has no sum)
+        const only = this.showOutside && !this.incidentsMore ? onlyFromOutside(outages) : 0;
+        if (only > 0) {
+          text = `${text} ${translate('FeinwerkUptimeMonitor_UiPastOnlyOutside',
+            duration(only, language))}`;
         }
         // which addresses, up to three by name (as the admin fold), with the cause when only one
         const keys = outages.map((i) => i.targetKey || '')
@@ -1193,8 +1292,8 @@ export default defineComponent({
       const rows = groups.flatMap((g) => g.rows);
       const down = rows.filter((r) => r.outcome === 'down');
       if (down.length === 1) {
-        return translate('FeinwerkUptimeMonitor_UiAddressDown',
-          this.labels[down[0].key] || down[0].label);
+        return translate(down[0].serverOnlyDown ? 'FeinwerkUptimeMonitor_UiAddressDownFromServer'
+          : 'FeinwerkUptimeMonitor_UiAddressDown', this.labels[down[0].key] || down[0].label);
       }
       if (!rows.length) {
         const worst = [...groups]
@@ -1206,13 +1305,15 @@ export default defineComponent({
     /**
      * F1: the Now line's colour by today's rule: red when it names the one down address or a group
      * does not answer at all ("This website: Not reachable" today); amber when every group with an
-     * outage is partly reachable
+     * outage is partly reachable, or the one it names is down only from the Matomo server (3a)
      */
     nowOutcome(): string {
-      const rows = this.groups.flatMap((g) => g.rows);
-      if (rows.filter((r) => r.outcome === 'down').length === 1
-        || this.groups.some((g) => g.state.outcome === 'down')) {
+      const down = this.groups.flatMap((g) => g.rows).filter((r) => r.outcome === 'down');
+      if (this.groups.some((g) => g.state.outcome === 'down')) {
         return 'down';
+      }
+      if (down.length === 1) {
+        return down[0].serverOnlyDown ? 'partial' : 'down';
       }
       return 'partial';
     },
@@ -1390,34 +1491,56 @@ export default defineComponent({
               targets: Math.max(1, this.measurableCount(rows, 'local')
                 + (both ? this.measurableCount(rows, 'external') : 0)),
               uptime: null,
+              lane: false,
+              axis: true,
+              next: false,
             });
           }
           return;
         }
-        // the page with results from outside: the server's strip named so, a strip from outside
-        // under it only where the outside measured the group (B1), naming its share (B2)
-        const sides: Array<[string, Timeline | null, 'local' | 'external', string]> = [
-          [key, local, 'local', this.showOutside ? translate('FeinwerkUptimeMonitor_UiFromServer') : ''],
+        // the page with results from outside (P1): the group's strip, named once, and a thin lane
+        // from outside right under it only where the outside measured the group (B1), naming its
+        // share (B2); screen readers hear the side of each
+        // W7 (UI review): the lane says its share in short words ("from outside (1 of 2)"), its
+        // name for screen readers in full
+        type StripSide = [string, Timeline | null, 'local' | 'external', string, string, boolean];
+        const sides: StripSide[] = [
+          [key, local, 'local', this.showOutside ? translate('FeinwerkUptimeMonitor_UiFromServer') : '',
+            '', false],
         ];
         if (this.showOutside && outside.strip) {
-          sides.push([`${key}-outside`, external, 'external', this.outsideVantage(rows)]);
+          sides.push([`${key}-outside`, external, 'external', this.outsideVantage(rows),
+            this.outsideVantage(rows, true), true]);
         }
         let first = true;
-        sides.forEach(([id, timeline, source, vantage]) => {
+        const start = out.length;
+        sides.forEach(([id, timeline, source, vantage, shown, lane]) => {
           if (timeline && timeline.cells.length) {
             out.push({
               key: id,
               name,
               label: vantage ? `${name}, ${vantage}` : name,
-              vantage,
+              vantage: lane ? shown : '',
               first,
               timeline,
               targets: this.measurable(rows, source),
               uptime: this.uptimeOf(rows, uptimeRows, timeline, source),
+              lane,
+              axis: true,
+              next: false,
             });
             first = false;
           }
         });
+        // D1 (Peter, 2026-11-26, "Ansonsten alle wie empfohlen umsetzen"): of a group's two
+        // uptimes the lower one is bold, whichever row it is on, as in the widgets and the table;
+        // the other muted; the server's bold on a tie
+        const [server, lane] = out.slice(start).map((strip) => strip.uptime);
+        if (server && lane) {
+          const laneLower = lane.value !== server.value && lane.uptime < server.uptime;
+          server.muted = laneLower;
+          lane.muted = !laneLower;
+        }
       };
       if (this.showMatomo) {
         add('matomo', translate('FeinwerkUptimeMonitor_UiMatomo'),
@@ -1429,6 +1552,25 @@ export default defineComponent({
           [this.siteTimeline, this.siteOutsideTimeline], this.siteRows, this.siteUptimeRows,
           this.siteOutside);
       }
+      if (this.isPage && this.showOutside) {
+        // P1: one time axis under the last strip; each group after the first set apart
+        out.forEach((strip, i) => {
+          Object.assign(strip, { axis: i === out.length - 1, next: i > 0 && strip.first });
+        });
+      }
+      return out;
+    },
+    /** D2: the strips by group, a group's strip and its lane from outside together */
+    stripBlocks(): Array<{ key: string; strips: Strip[] }> {
+      const out: Array<{ key: string; strips: Strip[] }> = [];
+      this.strips.forEach((strip) => {
+        const last = out[out.length - 1];
+        if (last && !strip.first) {
+          last.strips.push(strip);
+        } else {
+          out.push({ key: strip.key, strips: [strip] });
+        }
+      });
       return out;
     },
     hasCerts(): boolean {
@@ -1439,10 +1581,8 @@ export default defineComponent({
       return this.groups.some((g) => g.rows.some((r) => r.uptime !== ''
         || (!!r.outside && r.outside.uptime !== '')));
     },
+    /** P2: the same columns with and without results from outside */
     columnCount(): number {
-      if (this.showOutside) {
-        return 1 + 2 * this.vantageColumns.length + (this.hasCerts ? 1 : 0);
-      }
       return 1 + (this.past ? 0 : 1) + (this.hasUptime ? 1 : 0) + (this.hasCerts ? 1 : 0);
     },
     /** the widget's one group */
@@ -1472,18 +1612,18 @@ export default defineComponent({
       if (this.config.variant !== 'site' || this.config.isAnonymous) {
         return '';
       }
-      const isDown = (state?: TargetState) => !!state && state.outcome === 'down' && !state.stale;
-      const down = this.containers
-        .filter((t) => t.enabled && (isDown(t.states.local)
-          || (this.outside && isDown(t.states.external))))
-        .map((t) => targetLabel(t));
-      if (!down.length) {
+      // the containers as Matomo's group lists them: their state from both sides (row())
+      const keys = this.containers.filter((t) => t.enabled).map((t) => t.targetKey);
+      const failing = this.matomoRows.filter((r) => keys.includes(r.key) && r.outcome === 'down');
+      if (!failing.length) {
         return '';
       }
-      const names = listOf(down, this.config.language);
-      return down.length === 1
-        ? translate('FeinwerkUptimeMonitor_UiContainerDownOne', names)
-        : translate('FeinwerkUptimeMonitor_UiContainerDownMany', names);
+      const names = listOf(failing.map((r) => r.label), this.config.language);
+      // 3a: every one of them only from the Matomo server, while the outside reaches it (one rule
+      // with the rows, sides.ts serverOnlyDown)
+      const side = this.outside && failing.every((r) => r.serverOnlyDown) ? 'FromServer' : '';
+      return translate(`FeinwerkUptimeMonitor_UiContainerDown${failing.length === 1 ? 'One' : 'Many'}${
+        side}`, names);
     },
     widgetDown(): boolean {
       return !!this.widgetGroup && this.widgetGroup.rows.some((r) => r.outcome === 'down');
@@ -1544,12 +1684,13 @@ export default defineComponent({
     },
     /**
      * D2 (final review): only too large containers, which no server could check: without "from
-     * this server"
+     * this server"; while results from outside show, "from the Matomo server" (follow-up W2)
      */
     notCheckableText(): string {
       const anywhere = !this.notCheckableUnreached;
       // B5: no side can check them: both named, as in the answer line
-      let keys = ['UiNotCheckableOne', 'UiNotCheckableMany'];
+      const side = this.showOutside ? 'FromServer' : '';
+      let keys = [`UiNotCheckableOne${side}`, `UiNotCheckableMany${side}`];
       if (anywhere) {
         keys = ['UiCannotCheckOne', 'UiCannotCheckMany'];
       } else if (this.notCheckableEither) {
@@ -1646,8 +1787,25 @@ export default defineComponent({
       const { period } = this;
       const requests: Promise<unknown>[] = [];
       const open: Promise<Incident[]>[] = [];
+      // L8 review of 5.3.0: without the outages open now nothing reads as one-sided (fail closed)
+      let openFailed = false;
+      const noneOpen = () => {
+        openFailed = true;
+        return [] as Incident[];
+      };
       // outages from outside only while their source delivers (B10): else the page as before
       const source = this.incidentSource;
+      // review of the 5.3.0 fixes, SHOULD 1: with results from outside also the outages ended since
+      // yesterday (the one-sided rule); a list cut at the limit is not known either. Without a
+      // source the request for the outages open now, as before
+      const current = (id: number, timezoneOf: number) => (this.outside
+        ? api.recentIncidents(id, timezoneOf).then((list) => {
+          if (list.length >= RECENT_LIMIT) {
+            openFailed = true;
+          }
+          return list;
+        })
+        : api.openIncidents(id, timezoneOf, source)).catch(noneOpen);
       if (this.showMatomo) {
         requests.push(api.status(0).then((s) => { this.matomo = s; }));
         requests.push(api.uptime(0, period, idSite).then((r) => { this.matomoUptimeRows = r; }));
@@ -1660,19 +1818,19 @@ export default defineComponent({
           requests.push(api.timeline(idSite, period, 'matomo', 'external').catch(() => null)
             .then((t) => { this.matomoOutsideTimeline = t; }));
         }
-        open.push(api.openIncidents(0, idSite, source).catch(() => [] as Incident[]));
+        open.push(current(0, idSite));
       }
       // the website's targets also for the Matomo widget: its containers belong to Matomo's group
       if (this.showSite) {
         requests.push(api.status(idSite).then((s) => { this.site = s; }));
         requests.push(api.uptime(idSite, period).then((r) => { this.siteUptimeRows = r; }));
-        open.push(api.openIncidents(idSite, 0, source).catch(() => [] as Incident[]));
+        open.push(current(idSite, 0));
       } else if (this.showMatomo && idSite > 0) {
         // the Matomo widget: the website's containers are an addition, a failure leaves the rest
         requests.push(api.status(idSite).then((s) => { this.site = s; }).catch(() => undefined));
         requests.push(api.uptime(idSite, period).then((r) => { this.siteUptimeRows = r; })
           .catch(() => undefined));
-        open.push(api.openIncidents(idSite, 0, source).catch(() => [] as Incident[]));
+        open.push(current(idSite, 0));
       }
       if (this.showSite) {
         requests.push(api.timeline(idSite, period, 'website').catch(() => null)
@@ -1684,6 +1842,7 @@ export default defineComponent({
       }
       requests.push(Promise.all(open).then((lists) => {
         this.openIncidents = ([] as Incident[]).concat(...lists);
+        this.openFailed = openFailed;
       }));
       if (this.isPage) {
         requests.push(this.loadIncidents());
@@ -1796,21 +1955,66 @@ export default defineComponent({
     },
     /**
      * One address of a group; sides: the group shows results from outside (B1), so the address has
-     * its outside side, and the server's cell says "Not checkable" in two words under its heading
+     * its outside side. On a screen with results from outside the server's words are short ("Not
+     * checkable") and the cells name the side where needed (P2, sides.ts)
      */
     row(target: TargetStatus, uptimeRows: UptimeRow[], sides = false): Row {
       const of = (source: string) => uptimeRows.find((r) => r.targetKey === target.targetKey
         && r.source === source);
       // an address this server never checks: not checkable before its first check too (no time)
       const local = target.states.local || (target.serverRefuses ? REFUSED : undefined);
-      const server = this.vantage(local, of('local'), sides);
+      const twoSided = this.showOutside;
+      const server = this.vantage(local, of('local'), twoSided);
       const outside = sides ? this.vantage(target.states.external, of('external'), true, true) : null;
       // an address the outside cannot check (a private address, a port it does not check) adds
       // nothing to the dot, the answer and the freshness; its cell still says so
       const counted = outside && outside.outcome !== 'not_checkable' ? outside : null;
-      const outcome = counted
-        ? COMBINED.find((o) => o === server.outcome || o === counted.outcome) || server.outcome
-        : server.outcome;
+      const outcome = combined(server.outcome, outside ? outside.outcome : null);
+      // L8 review of 5.3.0: each side's outage open for the address and since when (sides.ts
+      // aloneDown); not known when they could not be loaded
+      const outages = (external: boolean) => this.openIncidents
+        .filter((i) => i.type === 'outage' && i.targetKey === target.targetKey
+          && (i.source === 'external') === external);
+      const opened = (external: boolean) => outages(external).filter((i) => i.open)
+        .map((i) => i.start)
+        .sort();
+      // review of the 5.3.0 fixes: the end of each side's latest ended outage (SHOULD 1) and the
+      // server's margin (SHOULD 2)
+      const ended = (external: boolean) => outages(external)
+        .map((i) => (i.open ? '' : i.end || ''))
+        .sort()
+        .pop() || '';
+      const margin = this.config.external && typeof this.config.external.sidesMargin === 'number'
+        ? this.config.external.sidesMargin : SIDES_MARGIN_SECONDS;
+      const known = !this.openFailed;
+      const serverOpen = opened(false);
+      const serverSide: Side = {
+        key: 'server',
+        outcome: server.outcome,
+        text: server.text,
+        uptime: server.uptime,
+        percent: of('local')?.uptimePercent ?? null,
+        tooLarge: server.tooLarge,
+        checkedAt: server.checkedAt,
+        downSince: serverOpen.length ? serverOpen[0] : '',
+        outageOpen: known ? serverOpen.length > 0 : undefined,
+        outageEnd: ended(false),
+        margin,
+      };
+      const outsideOpen = opened(true);
+      const outsideSide: Side | null = outside ? {
+        key: 'outside',
+        outcome: outside.outcome,
+        text: outside.text,
+        uptime: outside.uptime,
+        percent: of('external')?.uptimePercent ?? null,
+        title: outside.title,
+        checkedAt: outside.checkedAt,
+        downSince: outsideOpen.length ? outsideOpen[0] : '',
+        outageOpen: known ? outsideOpen.length > 0 : undefined,
+        outageEnd: ended(true),
+        margin,
+      } : null;
       // L8 review 8: a past day's dot follows that day's results from outside whenever there are
       // any, also when the outside cannot check the address now
       const day = outside && outside.dayOutcome !== 'none' ? outside : null;
@@ -1824,7 +2028,11 @@ export default defineComponent({
         key: target.targetKey,
         label: targetLabel(target),
         outcome,
-        text: server.text,
+        // 3a: down only from the Matomo server while the outside reaches it: amber, still down
+        tone: toneOf(serverSide, outsideSide),
+        serverOnlyDown: serverOnlyDown(serverSide, outsideSide),
+        // one line's words; with results from outside the first line of the cell (P2)
+        text: twoSided ? responseLines(serverSide, outsideSide)[0].text : server.text,
         title: target.url || targetLabel(target),
         uptime: server.uptime,
         cert: target.certificate ? this.certText(target.certificate) : '',
@@ -1837,13 +2045,9 @@ export default defineComponent({
         dayOutcome,
         tooLarge: server.tooLarge,
         serverOutcome: server.outcome,
-        cause: this.causeOf(server, counted),
-        outside: outside ? {
-          outcome: outside.outcome,
-          text: outside.text,
-          uptime: outside.uptime,
-          title: outside.title,
-        } : null,
+        cause: this.causeOf(serverSide, counted ? outsideSide : null),
+        server: serverSide,
+        outside: outsideSide,
       };
     },
     /**
@@ -1876,7 +2080,8 @@ export default defineComponent({
         let words = translate(short ? 'FeinwerkUptimeMonitor_UiNotCheckableShort'
           : 'FeinwerkUptimeMonitor_UiNotCheckable');
         if (state.note === 'too_large') {
-          words = keepUnits(translate('FeinwerkUptimeMonitor_UiTooLargeToCheck'));
+          // UI review of 5.3.0, L3: "(over 4 MB)" stays whole
+          words = keepBrackets(keepUnits(translate('FeinwerkUptimeMonitor_UiTooLargeToCheck')));
         }
         text = words;
         if (fromOutside) {
@@ -1928,11 +2133,17 @@ export default defineComponent({
           && r.uptimePercent !== null && r.coveragePercent > 0);
       return { cells, strip };
     },
-    /** B2: "from outside", or "from outside, 1 of 4 addresses" when it covers less than the server
+    /**
+     * B2: "from outside", or "from outside, 1 of 4 addresses" when it covers less than the server;
+     * short: the lane's label, "from outside (1 of 4)", its brackets kept together (W7)
      */
-    outsideVantage(rows: Row[]): string {
+    outsideVantage(rows: Row[], short = false): string {
       const outside = this.measurableCount(rows, 'external');
       if (rows.length > 1 && outside < this.measurableCount(rows, 'local')) {
+        if (short) {
+          return keepBrackets(translate('FeinwerkUptimeMonitor_UiFromOutsideShare', String(outside),
+            String(rows.length)));
+        }
         return translate('FeinwerkUptimeMonitor_UiFromOutsidePart', String(outside),
           String(rows.length));
       }
@@ -1940,35 +2151,94 @@ export default defineComponent({
     },
     /**
      * What failed, for the answer line: the server's words; with results from outside, where it
-     * failed when only one side finds the address down ("HTTP 502, from outside")
+     * failed when one side alone finds the address down ("HTTP 502, from outside"; L8 review of
+     * 5.3.0: by sides.ts aloneDown, so no side is named while the other has not checked it since
+     * the failure began or still sees an outage of its own)
      */
-    causeOf(server: Vantage, outside: Vantage | null): string {
-      if (!outside || (server.outcome === 'down') === (outside.outcome === 'down')) {
+    causeOf(server: Side, outside: Side | null): string {
+      if (!outside || server.outcome === 'down') {
+        return outside && aloneDown(server, outside)
+          ? `${server.text}, ${translate('FeinwerkUptimeMonitor_UiFromServer')}` : server.text;
+      }
+      if (outside.outcome !== 'down') {
         return server.text;
       }
-      return server.outcome === 'down'
-        ? `${server.text}, ${translate('FeinwerkUptimeMonitor_UiFromServer')}`
-        : `${outside.text}, ${translate('FeinwerkUptimeMonitor_UiFromOutside')}`;
+      return aloneDown(outside, server)
+        ? `${outside.text}, ${translate('FeinwerkUptimeMonitor_UiFromOutside')}` : outside.text;
     },
-    /** the table's cells of both sides (results from outside); the server's only without them */
-    outsideCells(row: Row): SideCell[] {
-      const server = {
-        key: 'server',
-        outcome: row.serverOutcome || row.outcome,
-        text: row.text,
-        uptime: row.uptime || (this.past ? translate('FeinwerkUptimeMonitor_UiNotMeasured') : ''),
-      };
-      if (!row.outside) {
-        return [server];
+    /**
+     * D2 (Peter, 2026-11-26, "Ansonsten alle wie empfohlen umsetzen"): the sides of a table row
+     * they disagree on, in order, for its sub-rows (sides.ts split, the narrow list's rule); null
+     * where one line says it all
+     */
+    splitOf(row: Row): Side[] | null {
+      return this.showOutside && row.outside ? split(row.server, row.outside, !!this.past) : null;
+    },
+    /** D2: a sub-row's name, "Matomo server" or "Outside" (the server's name whole, W8) */
+    sideName(side: Side): string {
+      return keepServer(translate(side.key === 'server' ? 'FeinwerkUptimeMonitor_UiSourceServer'
+        : 'FeinwerkUptimeMonitor_UiSourceOutside'));
+    },
+    /** D2: a sub-row's uptime; "Not measured" on a past day where nothing was */
+    subUptime(side: Side): string {
+      return side.uptime || (this.past ? translate('FeinwerkUptimeMonitor_UiNotMeasured') : '');
+    },
+    /** D2 with NIT 3: the outside's words only while it has a current answer */
+    hasWords(side: Side): boolean {
+      return side.key === 'server' || speaks(side);
+    },
+    /**
+     * D2: a sub-row's response in red for a failure, amber for 3a; muted for a side's "up" that
+     * the one-sided rule does not count (quick UI review before 5.3.0, QL2); '' otherwise
+     */
+    failureTone(side: Side, row: Row): string {
+      const other = side.key === 'server' ? row.outside : row.server;
+      const tone = sideTone(side, other);
+      if (tone === 'down' || tone === 'partial') {
+        return `is-${tone}`;
       }
-      return [server, {
-        key: 'outside',
-        outcome: row.outside.outcome,
-        text: row.outside.text,
-        uptime: row.outside.uptime
-          || (this.past ? translate('FeinwerkUptimeMonitor_UiNotMeasured') : ''),
-        title: row.outside.title,
-      }];
+      return uncounted(side, other) ? 'fwum-line--muted' : '';
+    },
+    /** P2: the Response cell's lines (sides.ts) */
+    responseLinesOf(row: Row): Line[] {
+      return responseLines(row.server, row.outside);
+    },
+    /** W5: an agreeing row's value from outside, for screen readers (sides.ts aside) */
+    asideOf(row: Row): string {
+      return aside(row.server, row.outside);
+    },
+    /** one strip's HourStrip (a row, or a pair's strip on a narrow page: D2) */
+    stripProps(strip: Strip): Record<string, unknown> {
+      return {
+        cells: strip.timeline.cells,
+        grain: strip.timeline.grain,
+        days: strip.timeline.days || '',
+        name: strip.label,
+        language: this.config.language,
+        timezone: this.config.timezone || '',
+        targets: strip.targets,
+        small: !this.isPage,
+        lane: strip.lane,
+        axis: strip.axis,
+        now: this.tick,
+      };
+    },
+    /** P2: the Uptime cell's lines (sides.ts) */
+    uptimeLinesOf(row: Row): Line[] {
+      return uptimeLines(row.server, row.outside, !!this.past);
+    },
+    /**
+     * P2: what each side says, as the Response cell's tooltip (the detail one line leaves out); the
+     * outside's reason when it cannot check the address (B5)
+     */
+    responseTitle(row: Row): string | undefined {
+      if (!row.outside) {
+        return undefined;
+      }
+      const outside = row.outside.outcome === 'not_checkable' && row.outside.title
+        ? row.outside.title
+        : translate('FeinwerkUptimeMonitor_UiCheckedFromOutsideValue', row.outside.text);
+      return `${translate('FeinwerkUptimeMonitor_UiCheckedFromServerValue', row.server.text)}\n${outside}`;
     },
     /**
      * D3: the certificate figure under its days: the host when the figure stands for all the
@@ -1987,7 +2257,7 @@ export default defineComponent({
     },
     /**
      * A group's answer: not reachable only when nothing answered; a partial failure is counted
-     * (format.ts statusOf, the same rule as the admin overview).
+     * (format.ts sidedStatusOf, the same rule as the admin overview).
      */
     groupState(rows: Row[], allOff: boolean): State {
       if (!rows.length) {
@@ -1996,14 +2266,17 @@ export default defineComponent({
           : { outcome: 'none', text: translate('FeinwerkUptimeMonitor_UiNotMeasuredYet') };
       }
       const count = (outcome: string) => rows.filter((r) => r.outcome === outcome).length;
-      const state = statusOf({
+      // 3a: every address that is down only from the Matomo server, while the outside reaches it:
+      // amber, "not reachable from the Matomo server"; the answer line's cause names the side else
+      // W2: while results from outside show, "Not checkable from the Matomo server", as the cells
+      const state = sidedStatusOf({
         total: rows.length,
         off: 0,
         up: count('up'),
         down: count('down'),
         stale: count('stale'),
         notCheckable: count('not_checkable'),
-      });
+      }, rows.filter((r) => r.serverOnlyDown).length, 0, this.showOutside);
       // neither side can check any of them: both named in one sentence (not when the outside has
       // no result yet or an old one)
       if (state.outcome === 'not_checkable' && this.showOutside
@@ -2032,7 +2305,10 @@ export default defineComponent({
           : dateTime(starts[0], this.config.language, this.config.timezone || '');
         parts.push(translate('FeinwerkUptimeMonitor_UiSince', since));
       }
-      const cause = down.length ? (down[0].cause ?? down[0].text) : '';
+      // 3a: when every one of them fails only from the Matomo server, the line before names the
+      // side
+      const cause = down.every((r) => r.serverOnlyDown) ? down[0].server.text
+        : (down[0].cause ?? down[0].text);
       if (cause) {
         parts.push(`(${cause})`);
       }
@@ -2113,13 +2389,20 @@ export default defineComponent({
     /**
      * measurable() without its floor of 1: from outside, the addresses with a result it can check
      * now, and on a past day those with an uptime that day (today an address the outside stopped
-     * checking has hours earlier today, but no longer counts: L8 review 1)
+     * checking has hours earlier today, but no longer counts: L8 review 1). Today without any such
+     * result (the outside stopped checking all of them), those with an uptime today: never "0 of 2
+     * addresses" next to a measured lane (review of the 5.2.0 fixes, NIT 2)
      */
     measurableCount(rows: Row[], source: 'local' | 'external'): number {
       if (source === 'external') {
-        return rows.filter((r) => !!r.outside && ((r.outside.outcome !== 'none'
-          && r.outside.outcome !== 'not_checkable') || (!!this.past && r.outside.uptime !== '')))
-          .length;
+        const current = (r: Row) => !!r.outside && r.outside.outcome !== 'none'
+          && r.outside.outcome !== 'not_checkable';
+        const measured = (r: Row) => !!r.outside && r.outside.uptime !== '';
+        if (this.past) {
+          return rows.filter((r) => current(r) || measured(r)).length;
+        }
+        const now = rows.filter(current).length;
+        return now > 0 ? now : rows.filter(measured).length;
       }
       return rows.filter((r) => (r.serverOutcome || r.outcome) !== 'not_checkable').length;
     },

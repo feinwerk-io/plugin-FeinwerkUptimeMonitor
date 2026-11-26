@@ -51,7 +51,12 @@ class API extends \Piwik\Plugin\API
      * Current state of every check target of a website, or of Matomo itself with idSite 0: the latest result per
      * source (checked from the Matomo server, and from outside while another plugin delivers such results, see
      * getExternalSources), the certificate expiry and, for idSite 0, the processing time of real tracking requests in
-     * the last hour.
+     * the last hour. The sides are given apart; Visitors > Uptime combines them as getSitesOverview counts them: down
+     * when either side finds a target down, reachable when one side reaches it and none finds it down, not checkable
+     * only when no side can check it (a result from outside that cannot check it counts for nothing). A target down
+     * only from the Matomo server while the latest result from outside reaches it (see downFromServerOnly of
+     * getSitesOverview for the rule and its limit) stays down and shows in amber as not reachable from the Matomo
+     * server.
      *
      * @param int $idSite website ID, or 0 for the Matomo instance (any user with view access to a website)
      * @return array {targets: list of {targetKey: string, kind: ui|tracker|js|web|container|proxy, url: string|null
@@ -198,11 +203,17 @@ class API extends \Piwik\Plugin\API
      * Outages of a website's check targets (idSite 0: of Matomo's own targets, and the gaps in which Matomo itself
      * ran no checks) that overlap a Matomo period, newest first. Use durationInPeriodSeconds, not durationSeconds, to
      * add up the downtime of a period: an outage from 23:30 to 00:30 counts 30 minutes on each day. Outages of several
-     * targets may overlap; each target counts its own.
+     * targets may overlap; each target counts its own. With source=all (the default) an outage seen from both sides
+     * comes as one row per source (local, external), so do not sum the rows: Visitors > Uptime counts the outages of
+     * one group (Matomo's own addresses with the website's Tag Manager containers, or the website's addresses and
+     * tracking proxy) that overlap or touch as one outage, whatever side saw them, and the downtime as the union of
+     * their parts (startInPeriod plus durationInPeriodSeconds). Example: the website's address down from the Matomo
+     * server 08:00 to 09:00 and from outside 08:30 to 09:30 is one outage of 1 h 30 min, not 2 h.
      *
      * @param int $idSite website ID, or 0 for the Matomo instance
      * @param string $period day|week|month|year|range
-     * @param string $date a date or for range "YYYY-MM-DD,YYYY-MM-DD"
+     * @param string $date a date (YYYY-MM-DD, today, yesterday) or for range "YYYY-MM-DD,YYYY-MM-DD" or lastN (today and
+     *                     the N - 1 days before it, e.g. last2)
      * @param string $state all|open|closed, default all
      * @param int $limit 1 to 1000, default 100
      * @param string $source all|local|external, default all
@@ -459,7 +470,22 @@ class API extends \Piwik\Plugin\API
      *               {idSite: int, name: string} (in Matomo's row: the websites whose Tag Manager container is not
      *               reachable; empty in the other rows), notCheckableOutside: int (how many of notCheckable cannot be
      *               checked from outside either, by the current result of an active source of getExternalSources; 0
-     *               without one: then they cannot be checked from the Matomo server)}
+     *               without one: then they cannot be checked from the Matomo server), downFromServerOnly: int (how many of
+     *               down only the Matomo server finds down while the outside reaches them, by the latest result from
+     *               outside (up to 2 h 15 min old): that result is up, it was checked more than the margin after the
+     *               server's failure began (the start of the server's open outage, else its failing check; margin: the
+     *               check run's time budget plus one minute, 120 seconds by default), and no outage seen from outside is
+     *               open for the target or ended at or after the server's latest failing check; the screens show them
+     *               as not reachable from the Matomo server, in amber; 0 without an active source. Limit: a target the
+     *               server alone already failed to reach that then goes down for everyone counts here until the source
+     *               delivers a newer result from outside), downFromOutsideOnly: int (how many of down only the outside
+     *               finds down, by the same rule mirrored: the Matomo server does not find them down, has no outage of
+     *               its own open for them or ended at or after the outside's latest failing result, and reaches them
+     *               with a result checked more than the margin after the outside's failure began, cannot check them or
+     *               has no current result; 0 without an active source). downFromServerOnly + downFromOutsideOnly <=
+     *               down; the rest are down from both sides, or down from one side while the other has not checked them
+     *               since the failure began or since its own outage ended, still sees an outage of its own, or (for
+     *               downFromServerOnly) has no current result}
      */
     public function getSitesOverview()
     {

@@ -7,6 +7,7 @@
 
 import type { PromoVariables } from './PromoLine.vue';
 import type { PromoCardVariables } from './PromoCard.vue';
+import type { Side } from './sides';
 
 export type Outcome = 'up' | 'down' | 'not_checkable';
 
@@ -96,20 +97,26 @@ export interface Timeline {
   firstMeasured?: string | null;
 }
 
-/** An address as checked from outside (another plugin's results, source external). */
-export interface OutsideCell {
-  outcome: string;
-  text: string;
-  uptime: string;
-  /** why the outside cannot check it (the cell's tooltip; 5.2.0 review B5); '' otherwise */
-  title?: string;
-}
-
 /** One address as the uptime page and the widgets list it (current state, period uptime). */
 export interface AddressRow {
   key: string;
   label: string;
+  /**
+   * the address's state (with results from outside: from both sides, down when either finds it
+   * down)
+   */
   outcome: string;
+  /**
+   * its colour: the state, amber (partial) when only the Matomo server finds it down and the
+   * outside reaches it (3a)
+   */
+  tone: string;
+  /** Peter's 3a: down only from the Matomo server while the outside reaches it now */
+  serverOnlyDown: boolean;
+  /**
+   * its response in a few words, as one line shows it (with results from outside, P2: the first
+   * line)
+   */
   text: string;
   title: string;
   uptime: string;
@@ -128,8 +135,12 @@ export interface AddressRow {
   serverOutcome?: string;
   /** what failed, for the answer line; with results from outside, where (when one side fails) */
   cause?: string;
+  /**
+   * the Matomo server's side: its outcome, words (short while results from outside show) and uptime
+   */
+  server: Side;
   /** checked from outside: only while a source of such results is active (ScreenConfig.external) */
-  outside?: OutsideCell | null;
+  outside?: Side | null;
 }
 
 /** The plugin that adds results checked from outside (ScreenProps::external). */
@@ -144,6 +155,11 @@ export interface ExternalSource {
   alerts?: boolean;
   /** when its latest results arrived (null: none yet); reachedAt also moves with a push */
   resultsAt?: string | null;
+  /**
+   * how much newer (seconds) one side's result must be than the start of the other side's failure
+   * to count (Freshness::sidesMargin(); sides.ts SIDES_MARGIN_SECONDS without it)
+   */
+  sidesMargin?: number;
 }
 
 export interface Incident {
@@ -202,6 +218,10 @@ export interface SiteOverview {
   containersDown?: Array<{ idSite: number; name: string }>;
   /** how many of notCheckable cannot be checked from outside either (5.2.0 review B3) */
   notCheckableOutside?: number;
+  /** how many of down only the Matomo server finds down while the outside reaches them (3a) */
+  downFromServerOnly?: number;
+  /** how many of down only the outside finds down */
+  downFromOutsideOnly?: number;
 }
 
 export interface ScreenConfig {

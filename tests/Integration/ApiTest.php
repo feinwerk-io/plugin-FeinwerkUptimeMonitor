@@ -263,6 +263,22 @@ class ApiTest extends IntegrationTestCase
         $this->assertBadRequest('getIncidents', ['idSite' => 1, 'period' => 'day', 'date' => '2026-03-14', 'state' => 'gone'], "'state'");
     }
 
+    /**
+     * Review of the 5.3.0 fixes, SHOULD 1: the uptime page asks for the outages open now or ended since yesterday with
+     * period range, date last2 (Matomo's lastN): an outage that ended ten minutes before today's midnight is in that
+     * list and not in today's.
+     */
+    public function test_getIncidents_rangeLast2_holdsAnOutageThatEndedBeforeMidnight(): void
+    {
+        $midnight = (int) strtotime(gmdate('Y-m-d') . ' 00:00:00 UTC');
+        (new IncidentStore())->apply([new CheckResult($this->web, Outcome::DOWN, Outcome::TIMEOUT, null, null, [], null, gmdate('Y-m-d H:i:s', $midnight - 1800))]);
+        (new IncidentStore())->apply([new CheckResult($this->web, Outcome::UP, null, null, 200, [], null, gmdate('Y-m-d H:i:s', $midnight - 600))]);
+
+        $recent = self::api('getIncidents', ['idSite' => 1, 'period' => 'range', 'date' => 'last2', 'state' => 'all', 'limit' => 1000]);
+        $this->assertSame([UptimeReport::iso($midnight - 600)], array_column($recent, 'end'));
+        $this->assertSame([], self::api('getIncidents', ['idSite' => 1, 'period' => 'day', 'date' => 'today', 'state' => 'all']));
+    }
+
     /** F1 of the 5.1.5 review: each outage names its part inside the period, so day totals never count across midnight. */
     public function test_getIncidents_partInThePeriod_anOutageAcrossMidnight(): void
     {
@@ -423,19 +439,22 @@ class ApiTest extends IntegrationTestCase
         $ui = $targets->get(0, 'ui')->id;
         $tracker = $targets->get(0, 'tracker')->id;
         $now = gmdate('Y-m-d H:i:s');
-        $in = static fn(int $days): string => gmdate('Y-m-d', time() + $days * 86400);
+        // the dates once, before the call: evaluated again after it, they could fall on the next UTC day (review NIT 1)
+        $in40 = gmdate('Y-m-d', time() + 40 * 86400);
+        $in2 = gmdate('Y-m-d', time() + 2 * 86400);
+        $in10 = gmdate('Y-m-d', time() + 10 * 86400);
         (new StateStore())->upsertMany([
-            new CheckResult($ui, Outcome::UP, null, null, 200, [], $in(40), $now),
-            new CheckResult($tracker, Outcome::UP, null, null, 200, [], $in(2), $now),
-            new CheckResult($this->web, Outcome::UP, null, null, 200, [], $in(10), $now),
+            new CheckResult($ui, Outcome::UP, null, null, 200, [], $in40, $now),
+            new CheckResult($tracker, Outcome::UP, null, null, 200, [], $in2, $now),
+            new CheckResult($this->web, Outcome::UP, null, null, 200, [], $in10, $now),
         ], StateStore::LOCAL);
         $before = time();
         $rows = array_column(self::api('getSitesOverview'), null, 'idSite');
         $after = time();
         $this->assertSame('critical', $rows[0]['certificateLevel'], 'the soonest of Matomo');
-        $this->assertContains($rows[0]['certificateDaysLeft'], self::daysLeft($in(2), $before, $after));
+        $this->assertContains($rows[0]['certificateDaysLeft'], self::daysLeft($in2, $before, $after));
         $this->assertSame('warning', $rows[1]['certificateLevel']);
-        $this->assertContains($rows[1]['certificateDaysLeft'], self::daysLeft($in(10), $before, $after));
+        $this->assertContains($rows[1]['certificateDaysLeft'], self::daysLeft($in10, $before, $after));
     }
 
     public function test_getSitesOverview_oldResultsAreNotReachableNorDown(): void
@@ -506,6 +525,257 @@ class ApiTest extends IntegrationTestCase
         $this->assertSame(UptimeReport::iso((int) strtotime($now . ' UTC')), $rows[1]['lastCheckedAt'], 'the newer of both sides');
         $this->assertSame([1, 2], [$rows[0]['up'], $rows[0]['down']], 'down from outside is down: the tracker and the container');
         $this->assertSame([['idSite' => 1, 'name' => 'Shop']], $rows[0]['containersDown']);
+    }
+
+    /**
+     * Peter's 3a (2026-11-26) and the admin overview naming the side of a one-sided failure: of the addresses counted
+     * down, how many only the Matomo server finds down while a current result from outside reaches them
+     * (downFromServerOnly: the screens show them in amber, "Not reachable from the Matomo server"), and how many only
+     * the outside finds down (downFromOutsideOnly). Down stays down: the counts only say where it failed.
+     */
+    public function test_getSitesOverview_withOutside_namesTheSideOfAOneSidedFailure(): void
+    {
+        $targets = new TargetStore();
+        $targets->syncDefaults([
+            ['idSite' => 0, 'key' => 'ui', 'kind' => Kind::UI, 'url' => 'https://matomo.example.com/index.php', 'extra' => []],
+            ['idSite' => 0, 'key' => 'tracker', 'kind' => Kind::TRACKER, 'url' => 'https://matomo.example.com/matomo.php', 'extra' => []],
+            ['idSite' => 1, 'key' => DefaultTargets::webKey(self::$base . '/page-proxy'), 'kind' => Kind::WEB, 'url' => self::$base . '/page-proxy', 'extra' => []],
+            ['idSite' => 1, 'key' => 'ctr:abc123', 'kind' => Kind::CONTAINER, 'url' => 'https://matomo.example.com/js/container_abc123.js', 'extra' => ['idContainer' => 'abc123']],
+        ]);
+        $ui = $targets->get(0, 'ui')->id;
+        $tracker = $targets->get(0, 'tracker')->id;
+        $container = $targets->get(1, 'ctr:abc123')->id;
+        $now = gmdate('Y-m-d H:i:s');
+        // L8 review of 5.3.0: the side that reaches an address answers after the other side's failing check, by more
+        // than the margin of Freshness::sidesMargin() (review of the 5.3.0 fixes, SHOULD 2)
+        $earlier = gmdate('Y-m-d H:i:s', time() - 300);
+        (new StateStore())->upsertMany([
+            new CheckResult($ui, Outcome::UP, null, null, 200, [], null, $now),
+            new CheckResult($tracker, Outcome::UP, null, null, 200, [], null, $now),
+            new CheckResult($container, Outcome::DOWN, Outcome::HTTP_STATUS, null, 403, [], null, $earlier),
+            new CheckResult($this->web, Outcome::DOWN, Outcome::TIMEOUT, null, null, [], null, $earlier),
+        ], StateStore::LOCAL);
+        self::outsideState($container, Outcome::UP, null, $now);
+        self::outsideState($tracker, Outcome::DOWN, null, $earlier);
+        self::outsideState($ui, Outcome::UP, null, $now);
+
+        // without a source that delivers: nothing from outside, so no side to name
+        self::outsideSource(false);
+        $rows = array_column(self::api('getSitesOverview'), null, 'idSite');
+        $this->assertSame([1, 0, 0], [$rows[0]['down'], $rows[0]['downFromServerOnly'], $rows[0]['downFromOutsideOnly']]);
+        $this->assertSame([1, 0, 0], [$rows[1]['down'], $rows[1]['downFromServerOnly'], $rows[1]['downFromOutsideOnly']]);
+
+        self::outsideSource();
+        $rows = array_column(self::api('getSitesOverview'), null, 'idSite');
+        $this->assertSame([2, 1, 1], [$rows[0]['down'], $rows[0]['downFromServerOnly'], $rows[0]['downFromOutsideOnly']],
+            'the container only from the server (reachable from outside), the tracker only from outside');
+        $this->assertSame([1, 0, 0], [$rows[1]['down'], $rows[1]['downFromServerOnly'], $rows[1]['downFromOutsideOnly']],
+            'no result from outside: down, without a side');
+
+        // the outside's result is old, or the outside cannot check the address: it reaches nothing now
+        self::outsideState($container, Outcome::UP, null, gmdate('Y-m-d H:i:s', time() - ExternalResults::STALE_AFTER - 600));
+        self::outsideState($this->web, Outcome::NOT_CHECKABLE);
+        $rows = array_column(self::api('getSitesOverview'), null, 'idSite');
+        $this->assertSame([2, 0, 1], [$rows[0]['down'], $rows[0]['downFromServerOnly'], $rows[0]['downFromOutsideOnly']]);
+        $this->assertSame([1, 0, 0], [$rows[1]['down'], $rows[1]['downFromServerOnly'], $rows[1]['downFromOutsideOnly']]);
+
+        // both sides find it down: no side to name
+        self::outsideState($container, Outcome::DOWN);
+        $rows = array_column(self::api('getSitesOverview'), null, 'idSite');
+        $this->assertSame([2, 0, 1], [$rows[0]['down'], $rows[0]['downFromServerOnly'], $rows[0]['downFromOutsideOnly']]);
+    }
+
+    /**
+     * L8 review of 5.3.0, blocker: 3a never shows a real outage as amber. A target counts as down only from the Matomo
+     * server when the outside reached it after the server's failure began (the start of its open outage, else its
+     * failing check) and no outage seen from outside is open for it: the outside's latest "up" may be older than the
+     * failure (scenario A) or one good minute inside an outage it still sees (scenario B). The mirror for
+     * downFromOutsideOnly: the server's "up" after the outside's failure began, and no outage of the server open.
+     */
+    public function test_getSitesOverview_withOutside_oneSidedOnlyWhenTheOtherSideReachedItSinceTheFailure(): void
+    {
+        self::outsideSource();
+        $targets = new TargetStore();
+        $targets->syncDefaults([
+            ['idSite' => 0, 'key' => 'ui', 'kind' => Kind::UI, 'url' => 'https://matomo.example.com/index.php', 'extra' => []],
+            ['idSite' => 0, 'key' => 'tracker', 'kind' => Kind::TRACKER, 'url' => 'https://matomo.example.com/matomo.php', 'extra' => []],
+            ['idSite' => 1, 'key' => DefaultTargets::webKey(self::$base . '/page-proxy'), 'kind' => Kind::WEB, 'url' => self::$base . '/page-proxy', 'extra' => []],
+            ['idSite' => 1, 'key' => 'ctr:abc123', 'kind' => Kind::CONTAINER, 'url' => 'https://matomo.example.com/js/container_abc123.js', 'extra' => ['idContainer' => 'abc123']],
+        ]);
+        $ui = $targets->get(0, 'ui')->id;
+        $tracker = $targets->get(0, 'tracker')->id;
+        $container = $targets->get(1, 'ctr:abc123')->id;
+        $ago = static fn(int $minutes): string => gmdate('Y-m-d H:i:s', time() - $minutes * 60);
+        // the server cannot read the container since 40 minutes ago (its outage is open), its latest check 5 minutes ago
+        (new IncidentStore())->apply([new CheckResult($container, Outcome::DOWN, Outcome::HTTP_STATUS, null, 403, [], null, $ago(40))], StateStore::LOCAL);
+        (new StateStore())->upsertMany([
+            new CheckResult($ui, Outcome::UP, null, null, 200, [], null, $ago(5)),
+            new CheckResult($tracker, Outcome::UP, null, null, 200, [], null, $ago(25)),
+            new CheckResult($container, Outcome::DOWN, Outcome::HTTP_STATUS, null, 403, [], null, $ago(5)),
+            new CheckResult($this->web, Outcome::DOWN, Outcome::TIMEOUT, null, null, [], null, $ago(5)),
+        ], StateStore::LOCAL);
+        self::outsideState($ui, Outcome::UP, null, $ago(5));
+        self::outsideState($tracker, Outcome::UP, null, $ago(5));
+        $counts = static function (): array {
+            $rows = array_column(self::api('getSitesOverview'), null, 'idSite');
+
+            return array_map(static fn(array $row): array => [$row['down'], $row['downFromServerOnly'], $row['downFromOutsideOnly']],
+                [$rows[0], $rows[1]]);
+        };
+
+        // A: the outside's "up" was probed before the server's failure began (the container 45 minutes ago, before its
+        // outage opened; the website 10 minutes ago, before its failing check without an outage row): down, no side
+        self::outsideState($container, Outcome::UP, null, $ago(45));
+        self::outsideState($this->web, Outcome::UP, null, $ago(10));
+        $this->assertSame([[1, 0, 0], [1, 0, 0]], $counts(), 'A: an "up" from before the failure reaches nothing now');
+
+        // probed after the failure began: only from the Matomo server (amber on the screens)
+        self::outsideState($container, Outcome::UP, null, $ago(35));
+        self::outsideState($this->web, Outcome::UP, null, $ago(1));
+        $this->assertSame([[1, 1, 0], [1, 1, 0]], $counts(), 'an "up" after the failure began');
+
+        // B: an outage seen from outside is open for the container, its latest minute read up: down, no side
+        (new ExternalResults())->writeIncidents([['idtarget' => $container, 'started_at' => $ago(30), 'ended_at' => null,
+            'cause' => Outcome::HTTP_STATUS, 'detail' => 'HTTP 502', 'down_samples' => 3]]);
+        $this->assertSame([[1, 0, 0], [1, 1, 0]], $counts(), 'B: an "up" inside an open outage from outside');
+
+        // the mirror: the tracker down from outside since 20 minutes ago, the server's "up" from 25 minutes ago: no side
+        (new ExternalResults())->writeIncidents([['idtarget' => $tracker, 'started_at' => $ago(20), 'ended_at' => null,
+            'cause' => Outcome::HTTP_STATUS, 'detail' => 'HTTP 502', 'down_samples' => 3]]);
+        self::outsideState($tracker, Outcome::DOWN, null, $ago(2));
+        $this->assertSame([[2, 0, 0], [1, 1, 0]], $counts(), 'the server has not checked it since the outside\'s failure began');
+
+        // the server reached it since: only from outside
+        (new StateStore())->upsertMany([new CheckResult($tracker, Outcome::UP, null, null, 200, [], null, $ago(1))], StateStore::LOCAL);
+        $this->assertSame([[2, 0, 1], [1, 1, 0]], $counts(), 'the server\'s "up" after the outside\'s failure began');
+    }
+
+    /** Matomo's interface and tracker and website 1's container, for the one-sided cases below; [ui, tracker, container] */
+    private function oneSidedTargets(): array
+    {
+        $targets = new TargetStore();
+        $targets->syncDefaults([
+            ['idSite' => 0, 'key' => 'ui', 'kind' => Kind::UI, 'url' => 'https://matomo.example.com/index.php', 'extra' => []],
+            ['idSite' => 0, 'key' => 'tracker', 'kind' => Kind::TRACKER, 'url' => 'https://matomo.example.com/matomo.php', 'extra' => []],
+            ['idSite' => 1, 'key' => DefaultTargets::webKey(self::$base . '/page-proxy'), 'kind' => Kind::WEB, 'url' => self::$base . '/page-proxy', 'extra' => []],
+            ['idSite' => 1, 'key' => 'ctr:abc123', 'kind' => Kind::CONTAINER, 'url' => 'https://matomo.example.com/js/container_abc123.js', 'extra' => ['idContainer' => 'abc123']],
+        ]);
+
+        return [$targets->get(0, 'ui')->id, $targets->get(0, 'tracker')->id, $targets->get(1, 'ctr:abc123')->id];
+    }
+
+    /** Matomo's row of getSitesOverview: [down, downFromServerOnly, downFromOutsideOnly] */
+    private static function matomoSides(): array
+    {
+        $row = array_column(self::api('getSitesOverview'), null, 'idSite')[0];
+
+        return [$row['down'], $row['downFromServerOnly'], $row['downFromOutsideOnly']];
+    }
+
+    /**
+     * Review of the 5.3.0 fixes, SHOULD 1: an outage both sides saw that the outside has closed while the Matomo server
+     * has not checked the address since (no system cron: hourly). The outside's outage counts as open while it ended at
+     * or after the server's latest failing check: down, no side. Once the server fails again after that end, it is down
+     * only from the Matomo server (3a).
+     */
+    public function test_getSitesOverview_withOutside_anOutageTheOutsideClosedAfterTheServersLatestFailingCheck(): void
+    {
+        self::outsideSource();
+        [$ui, $tracker, $container] = $this->oneSidedTargets();
+        $base = time();
+        $ago = static fn(int $minutes): string => gmdate('Y-m-d H:i:s', $base - $minutes * 60);
+        (new StateStore())->upsertMany([new CheckResult($ui, Outcome::UP, null, null, 200, [], null, $ago(1)),
+            new CheckResult($tracker, Outcome::UP, null, null, 200, [], null, $ago(1))], StateStore::LOCAL);
+        // the server cannot read the container since 40 minutes ago (its outage is open), its latest check 30 minutes ago
+        (new IncidentStore())->apply([new CheckResult($container, Outcome::DOWN, Outcome::HTTP_STATUS, null, 403, [], null, $ago(40))], StateStore::LOCAL);
+        $serverFails = static function (string $at) use ($container): void {
+            (new StateStore())->upsertMany([new CheckResult($container, Outcome::DOWN, Outcome::HTTP_STATUS, null, 403, [], null, $at)], StateStore::LOCAL);
+        };
+        $serverFails($ago(30));
+        // the outside saw the outage too, from 38 to 20 minutes ago, and reaches the container since
+        (new ExternalResults())->writeIncidents([['idtarget' => $container, 'started_at' => $ago(38), 'ended_at' => $ago(20),
+            'cause' => Outcome::HTTP_STATUS, 'detail' => 'HTTP 502', 'down_samples' => 18]]);
+        self::outsideState($container, Outcome::UP, null, $ago(15));
+
+        $this->assertSame([1, 0, 0], self::matomoSides(), 'the server has not checked it since the outside\'s outage ended');
+
+        $serverFails($ago(20));
+        $this->assertSame([1, 0, 0], self::matomoSides(), 'a failing check at the end itself: still no side');
+
+        $serverFails($ago(10));
+        $this->assertSame([1, 1, 0], self::matomoSides(), 'the server failed again after the end: only from the Matomo server');
+    }
+
+    /**
+     * SHOULD 1, the mirror: the server closed its outage while the outside's latest pulled result still reads down: no
+     * side until a result from outside after the server's recovery still reads down. Also when the server's end lies
+     * further back than its own results stay current (a one minute cron: 4 minutes), as long as the outside's failing
+     * result is current (2 h 15 min).
+     */
+    public function test_getSitesOverview_withOutside_anOutageTheServerClosedAfterTheOutsidesLatestFailingCheck(): void
+    {
+        self::outsideSource();
+        [$ui, $tracker] = $this->oneSidedTargets();
+        $base = time();
+        $ago = static fn(int $minutes): string => gmdate('Y-m-d H:i:s', $base - $minutes * 60);
+        (new StateStore())->upsertMany([new CheckResult($ui, Outcome::UP, null, null, 200, [], null, $ago(1))], StateStore::LOCAL);
+        // the server's outage of the tracker from 40 to 20 minutes ago; the outside's is open since 38 minutes ago
+        (new IncidentStore())->apply([new CheckResult($tracker, Outcome::DOWN, Outcome::TIMEOUT, null, null, [], null, $ago(40))], StateStore::LOCAL);
+        $up = new CheckResult($tracker, Outcome::UP, null, null, 200, [], null, $ago(20));
+        (new IncidentStore())->apply([$up], StateStore::LOCAL);
+        (new StateStore())->upsertMany([$up], StateStore::LOCAL);
+        (new ExternalResults())->writeIncidents([['idtarget' => $tracker, 'started_at' => $ago(38), 'ended_at' => null,
+            'cause' => Outcome::HTTP_STATUS, 'detail' => 'HTTP 502', 'down_samples' => 13]]);
+        self::outsideState($tracker, Outcome::DOWN, null, $ago(25));
+
+        $this->assertSame([1, 0, 0], self::matomoSides(), 'the outside has not checked it since the server\'s outage ended');
+
+        self::outsideState($tracker, Outcome::DOWN, null, $ago(5));
+        $this->assertSame([1, 0, 1], self::matomoSides(), 'the outside still fails after the server\'s recovery: only from outside');
+
+        // a one minute cron: the server's results stay current for 4 minutes; its end 20 minutes ago still counts
+        foreach ([180, 120, 60] as $seconds) {
+            (new IntervalTracker())->recordCommandRun($base - $seconds);
+        }
+        self::outsideState($tracker, Outcome::DOWN, null, $ago(25));
+        $this->assertSame([1, 0, 0], self::matomoSides(), 'the server\'s end after the outside\'s failing check, older than 4 minutes');
+    }
+
+    /**
+     * Review of the 5.3.0 fixes, SHOULD 2: the server stamps all results of a run with the run's start, its probes run
+     * up to the run budget later; the outside stamps its own probe time. The other side's result counts only when it is
+     * newer than the start of the failure by the run budget plus one probe minute (Freshness::sidesMargin(), 120 s by
+     * default), so an "up" from outside a few seconds after the server's stamp says nothing about the failure.
+     */
+    public function test_getSitesOverview_withOutside_theOtherSidesResultCountsOnlyBeyondTheMargin(): void
+    {
+        self::outsideSource();
+        [$ui, $tracker, $container] = $this->oneSidedTargets();
+        $base = time();
+        $ago = static fn(int $seconds): string => gmdate('Y-m-d H:i:s', $base - $seconds);
+        (new StateStore())->upsertMany([new CheckResult($ui, Outcome::UP, null, null, 200, [], null, $ago(60))], StateStore::LOCAL);
+        // the server: the container down since 10 minutes ago (its outage open), its latest check a minute ago
+        (new IncidentStore())->apply([new CheckResult($container, Outcome::DOWN, Outcome::HTTP_STATUS, null, 403, [], null, $ago(600))], StateStore::LOCAL);
+        (new StateStore())->upsertMany([new CheckResult($container, Outcome::DOWN, Outcome::HTTP_STATUS, null, 403, [], null, $ago(60))], StateStore::LOCAL);
+        // the mirror: the tracker down from outside since 10 minutes ago (its outage open), its latest result a minute ago
+        (new ExternalResults())->writeIncidents([['idtarget' => $tracker, 'started_at' => $ago(600), 'ended_at' => null,
+            'cause' => Outcome::HTTP_STATUS, 'detail' => 'HTTP 502', 'down_samples' => 9]]);
+        self::outsideState($tracker, Outcome::DOWN, null, $ago(60));
+        $sides = static function (int $after) use ($ago, $tracker, $container): array {
+            self::outsideState($container, Outcome::UP, null, $ago(600 - $after));
+            (new StateStore())->upsertMany([new CheckResult($tracker, Outcome::UP, null, null, 200, [], null, $ago(600 - $after))], StateStore::LOCAL);
+
+            return self::matomoSides();
+        };
+
+        $this->assertSame([2, 0, 0], $sides(30), '30 s after the start of the failure: no side');
+        $this->assertSame([2, 0, 0], $sides(120), 'exactly the margin: no side');
+        $this->assertSame([2, 1, 1], $sides(180), '3 minutes after: one side each');
+
+        // a longer run budget widens the margin with it
+        \Piwik\Config::getInstance()->FeinwerkUptimeMonitor = ['allowLoopbackForWebsites' => 1, 'run_budget_seconds' => 300];
+        $this->assertSame([2, 0, 0], $sides(180), 'run budget 300 s: 3 minutes are within the margin of 6 minutes');
+        $this->assertSame([2, 1, 1], $sides(420), '7 minutes after');
     }
 
     /** F2: a side whose result is old counts only when the other has none that is current, as on the uptime page. */

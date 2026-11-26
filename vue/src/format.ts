@@ -93,6 +93,14 @@ export function keepUnits(text: string): string {
   return text.replace(/(\d) (?=\S)/g, '$1\u00a0');
 }
 
+/**
+ * A bracket stays whole: its spaces no-break ("(over 4 MB)", "(1 of 2)"; UI review of 5.3.0, L3
+ * and follow-up W7)
+ */
+export function keepBrackets(text: string): string {
+  return text.replace(/\([^)]*\)/g, (part) => part.replace(/ /g, '\u00a0'));
+}
+
 export function milliseconds(value: number | null, language: string): string {
   return value === null ? '' : `${new Intl.NumberFormat(locale(language)).format(value)}\u00a0ms`;
 }
@@ -332,6 +340,54 @@ export function statusOf(c: StatusCounts): { outcome: string; text: string } {
     return { outcome: 'not_checkable', text: translate('FeinwerkUptimeMonitor_UiNotCheckable') };
   }
   return { outcome: 'none', text: translate('FeinwerkUptimeMonitor_UiNotMeasuredYet') };
+}
+
+/**
+ * statusOf naming the side of a one-sided failure (Peter, 2026-11-26, 3a): when every address
+ * counted down fails only from the Matomo server while the outside reaches it, amber and "not
+ * reachable from the Matomo server" (visitors still reach it; it stays down); when every one fails
+ * only from outside, "... from outside" in statusOf's colour. Else, and without results from
+ * outside (both counts 0), statusOf. side: FromServer or FromOutside when it names one (the
+ * admin page's container line names the same side). Follow-up W2 (Peter, 2026-11-26): while
+ * results from outside show (twoSided), "Not checkable from the Matomo server", the server's name
+ * of the cells and status rows, instead of "from this server".
+ *
+ * @param fromServerOnly how many of the down ones only the Matomo server finds down (the latest
+ *        result from outside reaches them, sides.ts aloneDown)
+ * @param fromOutsideOnly how many of the down ones only the outside finds down
+ * @param twoSided the screen shows results from outside
+ */
+export function sidedStatusOf(
+  c: StatusCounts,
+  fromServerOnly = 0,
+  fromOutsideOnly = 0,
+  twoSided = false,
+): { outcome: string; text: string; side?: string } {
+  const state = statusOf(c);
+  if (twoSided && state.outcome === 'not_checkable') {
+    return {
+      outcome: state.outcome,
+      text: translate('FeinwerkUptimeMonitor_UiNotCheckableFromServer'),
+    };
+  }
+  if (c.down <= 0 || (state.outcome !== 'down' && state.outcome !== 'partial')) {
+    return state;
+  }
+  let side = '';
+  if (fromServerOnly >= c.down) {
+    side = 'FromServer';
+  } else if (fromOutsideOnly >= c.down) {
+    side = 'FromOutside';
+  } else {
+    return state;
+  }
+  let text = translate(`FeinwerkUptimeMonitor_UiNotReachable${side}`);
+  if (c.up > 0) {
+    text = c.down === 1
+      ? translate(`FeinwerkUptimeMonitor_UiPartlyDownOne${side}`, String(c.total))
+      : translate(`FeinwerkUptimeMonitor_UiPartlyDownMany${side}`, String(c.down), String(c.total));
+  }
+  return { outcome: side === 'FromServer' ? 'partial' : state.outcome, text, side };
 }
 
 /** AjaxHelper's fixed English texts for a request that failed before the API answered. */
