@@ -140,6 +140,8 @@
         "UiAdminNotCheckableNamedManyFromServer": "%s no se pueden comprobar desde el servidor de Matomo y no cuentan como interrupciones.",
         "UiAdminNotCheckableNamedOne": "%s no se puede comprobar desde este servidor y no cuenta como interrupción.",
         "UiAdminNotCheckableNamedOneFromServer": "%s no se puede comprobar desde el servidor de Matomo y no cuenta como interrupción.",
+        "UiAdminPhpDisabled": "Las últimas comprobaciones no han podido ejecutarse: PHP en el servidor de Matomo no permite las solicitudes salientes que necesitan. Funciones de PHP que faltan: %s.",
+        "UiAdminPhpDisabledHint": "Para el administrador del servidor: quite estas funciones de disable_functions en php.ini.",
         "UiAdopt": "Aceptar",
         "UiAllOff": "No se comprueba ninguna dirección",
         "UiAllOffMatomo": "No se comprueba ninguna dirección del propio Matomo. Los superusuarios las activan en Administración, Diagnóstico, Uptime Monitor.",

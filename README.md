@@ -178,7 +178,9 @@ first measured hour of its addresses at any time (`firstMeasured`, null when not
 of `getSitesOverview` the level of its soonest certificate (`certificateLevel`: ok, warning, critical or expired).
 `getStatus` says for each address whether the Matomo server never checks it (`serverRefuses`, for example a private
 address while private addresses are not allowed in the settings): such an address is not checkable from the moment it
-is set.
+is set. For super users it also names the PHP functions the latest check run did not find (`disabledPhpFunctions`, for
+example `curl_exec` on a server whose php.ini lists it under `disable_functions`): until they are allowed again, the
+addresses with the note `php_disabled` cannot be checked.
 
 | Method | Example |
 |---|---|

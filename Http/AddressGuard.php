@@ -18,6 +18,11 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Outcome;
  * returned here.
  *
  * The address rules started from FeinwerkSentinel's Notify/WebhookUrl.
+ *
+ * Never calls a PHP function the host disabled (Capabilities): without inet_pton and inet_ntop it cannot compare
+ * addresses, without gethostbynamel and dns_get_record it cannot look up names (also not for requests through Matomo's
+ * proxy while private addresses are not allowed); such a decision is refused with Outcome::PHP_DISABLED (not
+ * checkable), which says why.
  */
 final class AddressGuard implements UrlGuard
 {
@@ -42,15 +47,32 @@ final class AddressGuard implements UrlGuard
 
     /** @var \Closure(string): string[] */
     private \Closure $resolver;
+    private Capabilities $capabilities;
+    /** the default lookup (needs gethostbynamel or dns_get_record), not a resolver given by the caller */
+    private bool $looksUp;
 
     /**
      * @param bool $allowPrivate super user setting "Allow private addresses"
-     * @param \Closure|null $resolver returns the A and AAAA addresses of an ASCII host name; default DNS
+     * @param \Closure|null $resolver returns the A and AAAA addresses of an ASCII host name; default DNS (resolver())
      * @param bool $loopbackForSites lets website targets reach the server's loopback too (tests only)
+     * @param Capabilities|null $capabilities the PHP functions there are; default PHP's function_exists
      */
-    public function __construct(private bool $allowPrivate, ?\Closure $resolver = null, private bool $loopbackForSites = false)
+    public function __construct(private bool $allowPrivate, ?\Closure $resolver = null, private bool $loopbackForSites = false, ?Capabilities $capabilities = null)
     {
-        $this->resolver = $resolver ?? \Closure::fromCallable([self::class, 'resolve']);
+        $this->capabilities = $capabilities ?? new Capabilities();
+        $this->looksUp = $resolver === null;
+        $this->resolver = $resolver ?? self::resolver($this->capabilities);
+    }
+
+    /**
+     * The disabled PHP functions that keep the guard from deciding: inet_pton or inet_ntop, and gethostbynamel with
+     * dns_get_record when both are missing and the guard looks names up itself. Empty while it can decide.
+     *
+     * @return string[]
+     */
+    public function missingFunctions(): array
+    {
+        return $this->capabilities->missingForGuard($this->looksUp);
     }
 
     public function check(string $url, bool $instanceTarget = false): GuardDecision
@@ -58,6 +80,9 @@ final class AddressGuard implements UrlGuard
         [$scheme, $host, $port, $refusal] = self::parse($url);
         if ($refusal !== null) {
             return self::refuse($host, $port, $scheme);
+        }
+        if (!$this->capabilities->canCompareAddresses()) {
+            return self::disabled($host, $port, $scheme);
         }
 
         if (filter_var($host, FILTER_VALIDATE_IP)) {
@@ -67,6 +92,9 @@ final class AddressGuard implements UrlGuard
         }
         if (self::isLocalName($host) && !$this->allowPrivate) {
             return self::refuse($host, $port, $scheme);
+        }
+        if ($this->looksUp && !$this->capabilities->canResolve()) {
+            return self::disabled($host, $port, $scheme);
         }
 
         $started = microtime(true);
@@ -99,6 +127,10 @@ final class AddressGuard implements UrlGuard
         if ($refusal !== null) {
             return true;
         }
+        if (!$this->capabilities->canCompareAddresses()) {
+            // nothing is checkable from this PHP: its checks say why (note php_disabled), not "never checked"
+            return false;
+        }
         if (filter_var($host, FILTER_VALIDATE_IP)) {
             return !$this->isAllowedIp($host, $instanceTarget);
         }
@@ -107,21 +139,37 @@ final class AddressGuard implements UrlGuard
     }
 
     /**
-     * For requests through Matomo's [proxy]: the proxy resolves the host, so only the scheme, credentials, the host
-     * grammar and a literal address or local name in the URL are checked here.
+     * For requests through Matomo's [proxy]: the proxy resolves the host and connects. Checked here are the scheme,
+     * credentials, the host grammar and a literal address or local name in the URL; a name is also looked up on this
+     * server, and every address it answers must pass, so a public name of a private address stays refused.
+     *
+     * Without gethostbynamel and dns_get_record a name cannot be looked up here: while private addresses are not
+     * allowed it is not checkable (Outcome::PHP_DISABLED), as on the direct way, since nothing would show that it does
+     * not lead into the internal network. With private addresses allowed the proxy alone decides then: a name of a
+     * link-local or cloud metadata address, or of the server's loopback for a website, is not caught here (accepted:
+     * the super user opened the checks to internal addresses, and such a server ran no checks before 5.3.1).
      */
     public function checkWithoutResolving(string $url, bool $instanceTarget = false): GuardDecision
     {
         [$scheme, $host, $port, $refusal] = self::parse($url);
         $blocked = $refusal !== null;
         $lookupMs = 0;
+        if (!$blocked && !$this->capabilities->canCompareAddresses()) {
+            return self::disabled($host, $port, $scheme);
+        }
         if (!$blocked) {
             $blocked = filter_var($host, FILTER_VALIDATE_IP)
                 ? !$this->isAllowedIp($host, $instanceTarget)
                 : (self::isLocalName($host) && !$this->allowPrivate);
         }
-        if (!$blocked && !filter_var($host, FILTER_VALIDATE_IP)) {
-            // the proxy resolves the host; where this server can resolve it too, its answers must pass as well
+        $name = !$blocked && !filter_var($host, FILTER_VALIDATE_IP);
+        $cannotResolve = $this->looksUp && !$this->capabilities->canResolve();
+        if ($name && $cannotResolve && !$this->allowPrivate) {
+            // fail closed: the proxy would fetch a public name of a private address unchecked
+            return self::disabled($host, $port, $scheme);
+        }
+        if ($name && !$cannotResolve) {
+            // the proxy resolves the host; this server resolves it too, and its answers must pass as well
             $started = microtime(true);
             $addresses = array_filter(array_map('strval', ($this->resolver)($host)), static fn(string $ip): bool => (bool) filter_var($ip, FILTER_VALIDATE_IP));
             $lookupMs = (int) round((microtime(true) - $started) * 1000);
@@ -192,19 +240,41 @@ final class AddressGuard implements UrlGuard
     }
 
     /**
-     * @return string[]
+     * The default lookup: IPv4 through gethostbynamel (which reads the hosts file too), else the A records of
+     * dns_get_record (the DNS server only); IPv6 from dns_get_record's AAAA records, so without dns_get_record IPv4
+     * only. Calls only the functions that are there; without both it finds nothing (check() refuses first).
+     *
+     * @param \Closure|null $byName (string $host): string[]|false, default gethostbynamel (tests)
+     * @param \Closure|null $records (string $host, int $type): array|false, default dns_get_record (tests)
+     * @return \Closure(string): string[]
      */
-    public static function resolve(string $host): array
+    public static function resolver(Capabilities $capabilities, ?\Closure $byName = null, ?\Closure $records = null): \Closure
     {
-        $addresses = gethostbynamel($host) ?: [];
-        $records = @dns_get_record($host, DNS_AAAA) ?: [];
-        foreach ($records as $record) {
-            if (!empty($record['ipv6'])) {
-                $addresses[] = $record['ipv6'];
-            }
-        }
+        $byName ??= static fn(string $host) => gethostbynamel($host);
+        $records ??= static fn(string $host, int $type) => @dns_get_record($host, $type);
 
-        return array_values(array_unique($addresses));
+        return static function (string $host) use ($capabilities, $byName, $records): array {
+            $addresses = [];
+            $withRecords = $capabilities->has('dns_get_record');
+            if ($capabilities->has('gethostbynamel')) {
+                $addresses = $byName($host) ?: [];
+            } elseif ($withRecords) {
+                foreach ($records($host, DNS_A) ?: [] as $record) {
+                    if (!empty($record['ip'])) {
+                        $addresses[] = $record['ip'];
+                    }
+                }
+            }
+            if ($withRecords) {
+                foreach ($records($host, DNS_AAAA) ?: [] as $record) {
+                    if (!empty($record['ipv6'])) {
+                        $addresses[] = $record['ipv6'];
+                    }
+                }
+            }
+
+            return array_values(array_unique(array_map('strval', $addresses)));
+        };
     }
 
     private function isAllowedIp(string $ip, bool $instanceTarget = false): bool
@@ -248,6 +318,12 @@ final class AddressGuard implements UrlGuard
         return new GuardDecision(false, null, Outcome::BLOCKED, $host, $port, $scheme, [], 0);
     }
 
+    /** the PHP functions to decide are disabled on this server: not checkable, nothing looked up */
+    private static function disabled(string $host, int $port, string $scheme): GuardDecision
+    {
+        return new GuardDecision(false, null, Outcome::PHP_DISABLED, $host, $port, $scheme, [], 0);
+    }
+
     private static function isLocalName(string $host): bool
     {
         return strpos($host, '.') === false || $host === 'localhost' || substr($host, -10) === '.localhost';
@@ -258,7 +334,7 @@ final class AddressGuard implements UrlGuard
      */
     private static function embeddedIpv4(string $ip): ?string
     {
-        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) || !function_exists('inet_pton') || !function_exists('inet_ntop')) {
             return null;
         }
         $binary = (string) inet_pton($ip);
@@ -281,6 +357,9 @@ final class AddressGuard implements UrlGuard
      */
     private static function inRanges(string $ip, array $cidrs): bool
     {
+        if (!function_exists('inet_pton')) {
+            return true; // cannot compare: counts as blocked (check() refuses earlier with php_disabled)
+        }
         $binary = @inet_pton($ip);
         if ($binary === false) {
             return true;

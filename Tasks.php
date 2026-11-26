@@ -14,6 +14,7 @@ use Piwik\ArchiveProcessor\Rules;
 use Piwik\Log;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\CheckRunner;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\IntervalTracker;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\Runtime;
 
 class Tasks extends \Piwik\Plugin\Tasks
 {
@@ -38,10 +39,8 @@ class Tasks extends \Piwik\Plugin\Tasks
             Access::doAsSuperUser(static function (): void {
                 // with browser-triggered archiving a visitor's tracking request may wait for the scheduled tasks
                 $runner = CheckRunner::create(null, Rules::isBrowserTriggerEnabled());
-                $limit = (int) ini_get('max_execution_time');
-                if ($limit !== 0 && $limit < $runner->budget() + CheckRunner::LOCK_MARGIN) {
-                    @set_time_limit($runner->budget() + CheckRunner::LOCK_MARGIN);
-                }
+                // only with the functions the host has (ini_get, set_time_limit)
+                Runtime::raiseTimeLimit(CheckRunner::capabilities(), $runner->budget() + CheckRunner::LOCK_MARGIN);
                 $runner->run('task');
             });
         } catch (\Throwable $e) {

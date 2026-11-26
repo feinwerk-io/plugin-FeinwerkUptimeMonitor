@@ -140,6 +140,8 @@
         "UiAdminNotCheckableNamedManyFromServer": "%s ne peuvent pas être vérifiés depuis le serveur Matomo et ne comptent pas comme des interruptions.",
         "UiAdminNotCheckableNamedOne": "%s ne peut pas être vérifié depuis ce serveur et ne compte pas comme une interruption.",
         "UiAdminNotCheckableNamedOneFromServer": "%s ne peut pas être vérifié depuis le serveur Matomo et ne compte pas comme une interruption.",
+        "UiAdminPhpDisabled": "Les dernières vérifications n'ont pas pu s'exécuter : PHP sur le serveur Matomo n'autorise pas les requêtes sortantes dont elles ont besoin. Fonctions PHP manquantes : %s.",
+        "UiAdminPhpDisabledHint": "Pour l'administrateur du serveur : retirez ces fonctions de disable_functions dans php.ini.",
         "UiAdopt": "Accepter",
         "UiAllOff": "Aucune adresse n'est vérifiée",
         "UiAllOffMatomo": "Aucune adresse de Matomo lui-même n'est vérifiée. Les super utilisateurs les activent sous Administration, Diagnostic, Uptime Monitor.",

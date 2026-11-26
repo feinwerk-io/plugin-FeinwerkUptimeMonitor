@@ -11,7 +11,7 @@ namespace Piwik\Plugins\FeinwerkUptimeMonitor\Http;
 
 /**
  * The guard's answer for one URL: allowed with the addresses to connect to, or refused with `reason`
- * (Outcome::BLOCKED or Outcome::DNS). `host` is normalised (lower case, ASCII); `lookupMs` is the DNS time.
+ * (Outcome::BLOCKED, Outcome::DNS, or Outcome::PHP_DISABLED when the PHP functions to decide are disabled). `host` is normalised (lower case, ASCII); `lookupMs` is the DNS time.
  */
 final class GuardDecision
 {

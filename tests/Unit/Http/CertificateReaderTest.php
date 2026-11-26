@@ -10,7 +10,9 @@
 namespace Piwik\Plugins\FeinwerkUptimeMonitor\tests\Unit\Http;
 
 use PHPUnit\Framework\TestCase;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Capabilities;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\CertificateReader;
+use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\DisabledFunctions;
 
 /**
  * @group FeinwerkUptimeMonitor
@@ -38,5 +40,15 @@ class CertificateReaderTest extends TestCase
     {
         $this->assertSame('2027-03-12', CertificateReader::fromParsedX509(['validTo_time_t' => gmmktime(12, 0, 0, 3, 12, 2027)]));
         $this->assertNull(CertificateReader::fromParsedX509([]));
+    }
+
+    /** The handshake of its own needs these functions; without one of them no date, and no call to a missing function. */
+    public function test_handshake_withoutItsFunctions_isNoDate(): void
+    {
+        foreach (['stream_context_create', 'stream_socket_client', 'stream_context_get_params', 'openssl_x509_parse'] as $function) {
+            $this->assertNull(CertificateReader::fromHandshake('localhost', '127.0.0.1', 1, 0.5, new Capabilities(DisabledFunctions::except([$function]))), $function);
+        }
+        $this->assertNull(CertificateReader::fromHandshake('localhost', '127.0.0.1', 1, 0.5, new Capabilities(DisabledFunctions::except(DisabledFunctions::SHARED_HOST))),
+            'the customer\'s host: nothing listening there');
     }
 }

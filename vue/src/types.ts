@@ -248,6 +248,11 @@ export interface ScreenConfig {
   timezone?: string;
   /** admin page: whether a system cron runs the checks */
   cron?: { active: boolean; intervalSeconds: number | null } | null;
+  /**
+   * admin page: the PHP functions the latest check run did not find (disable_functions), the
+   * reason why its results cannot be checked; empty or null while the checks run
+   */
+  disabledPhpFunctions?: string[] | null;
   /** anonymous viewers get no data about Matomo itself (API idSite 0) */
   isAnonymous?: boolean;
   /** the kit's tip line (Promo\PromoLine::current()): admins only, never embedded */

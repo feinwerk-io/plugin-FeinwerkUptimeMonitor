@@ -26,6 +26,11 @@ final class Outcome
     public const BLOCKED = 'blocked';
     public const PROTOCOL = 'protocol';
     public const PROXY = 'proxy';
+    /**
+     * PHP functions the checks need are disabled on this server (php.ini disable_functions): no request was sent. As a
+     * transport error from the prober or the guard; the result is not checkable with this note and no error.
+     */
+    public const PHP_DISABLED = 'php_disabled';
 
     // errors found in the answer
     public const HTTP_STATUS = 'http_status';
@@ -36,9 +41,10 @@ final class Outcome
     public const STALE_CONTAINER = 'stale_container';
 
     // notes on a result: protected (up, or not checkable, behind a password or bot protection), too_large (not
-    // checkable: a Tag Manager container larger than Prober::MAX_BODY_LARGE, cut before its id or revision)
+    // checkable: a Tag Manager container larger than Prober::MAX_BODY_LARGE, cut before its id or revision),
+    // php_disabled (not checkable: self::PHP_DISABLED)
     public const PROTECTED = 'protected';
     public const TOO_LARGE = 'too_large';
 
-    public const TRANSPORT_ERRORS = [self::DNS, self::CONNECT, self::TLS, self::TIMEOUT, self::BLOCKED, self::PROTOCOL, self::PROXY];
+    public const TRANSPORT_ERRORS = [self::DNS, self::CONNECT, self::TLS, self::TIMEOUT, self::BLOCKED, self::PROTOCOL, self::PROXY, self::PHP_DISABLED];
 }

@@ -140,6 +140,8 @@
         "UiAdminNotCheckableNamedManyFromServer": "%s cannot be checked from the Matomo server and do not count as outages.",
         "UiAdminNotCheckableNamedOne": "%s cannot be checked from this server and does not count as an outage.",
         "UiAdminNotCheckableNamedOneFromServer": "%s cannot be checked from the Matomo server and does not count as an outage.",
+        "UiAdminPhpDisabled": "The latest checks could not run: PHP on the Matomo server does not allow the outgoing requests they need. Missing PHP functions: %s.",
+        "UiAdminPhpDisabledHint": "For the server administrator: remove these functions from disable_functions in php.ini.",
         "UiAdopt": "Adopt",
         "UiAllOff": "No address is checked",
         "UiAllOffMatomo": "No address of Matomo itself is checked. Super users switch them on under Administration, Diagnostic, Uptime Monitor.",

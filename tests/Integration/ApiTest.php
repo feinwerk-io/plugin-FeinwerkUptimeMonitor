@@ -184,6 +184,39 @@ class ApiTest extends IntegrationTestCase
         $this->assertBadRequest('getResponseTimes', ['idSite' => 0, 'period' => 'day', 'date' => '2026-03-14', 'targetKey' => 'nope'], "'nope'");
     }
 
+    /**
+     * Matomo 6 passes a wrongly typed value (an array for a text) on to untyped API parameters: refused as that
+     * parameter's bad input (HTTP 400 called on the API object), naming it, through Matomo's request layer too, never
+     * PHP's "Array to string conversion". Nothing is changed.
+     */
+    public function test_aWronglyTypedValue_isRefusedNamingTheParameter(): void
+    {
+        $day = ['period' => 'day', 'date' => '2026-03-14'];
+        foreach ([
+            ['getStatus', ['idSite' => ['1']], "'idSite' must be a whole number from 0 to"],
+            ['getUptime', ['idSite' => 1, 'period' => ['day'], 'date' => '2026-03-14'], "'period' does not accept 'array'"],
+            ['getUptime', ['idSite' => 1, 'period' => 'day', 'date' => ['2026-03-14']], "'date' does not accept 'array'"],
+            ['getUptime', ['idSite' => 1] + $day + ['source' => ['local']], "'source' does not accept 'array'"],
+            ['getResponseTimes', ['idSite' => 1] + $day + ['targetKey' => ['tracker']], "'targetKey' does not accept 'array'"],
+            ['getIncidents', ['idSite' => 1] + $day + ['state' => 'all', 'limit' => ['5']], "'limit' must be a whole number from 1 to 1000, not 'array'"],
+            ['addTarget', ['idSite' => 1, 'kind' => 'web', 'url' => ['https://www.shop.example/']], "'url' does not accept 'array'"],
+            ['updateTarget', ['idSite' => 0, 'targetKey' => 'tracker', 'url' => ['https://matomo.example.com/matomo.php']], "'url' does not accept 'array'"],
+            ['updateTarget', ['idSite' => 0, 'targetKey' => 'tracker', 'url' => '', 'enabled' => ['0']], "'enabled' does not accept 'array'"],
+            ['updateTarget', ['idSite' => 0, 'targetKey' => ['tracker'], 'url' => '', 'enabled' => '0'], "'targetKey' does not accept 'array'"],
+            ['deleteTarget', ['idSite' => 1, 'targetKey' => ['web:x']], "'targetKey' does not accept 'array'"],
+            ['detectTargets', ['idSite' => 1, 'apply' => ['1']], "'apply' does not accept 'array'"],
+        ] as [$method, $params, $needle]) {
+            try {
+                \Piwik\API\Request::processRequest('FeinwerkUptimeMonitor.' . $method, $params, []);
+                $this->fail("$method: no error");
+            } catch (\Throwable $e) {
+                $this->assertStringContainsString($needle, $e->getMessage(), $method);
+            }
+            $this->assertBadRequest($method, array_values($params), $needle);
+        }
+        $this->assertTrue((new TargetStore())->get(0, 'tracker')->enabled, 'nothing was changed');
+    }
+
     public function test_getStatus_unknownSite_is400(): void
     {
         $this->assertBadRequest('getStatus', ['idSite' => 99], "'99'");

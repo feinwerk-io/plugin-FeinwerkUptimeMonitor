@@ -140,6 +140,8 @@
         "UiAdminNotCheckableNamedManyFromServer": "%s können vom Matomo-Server nicht geprüft werden und zählen nicht als Ausfall.",
         "UiAdminNotCheckableNamedOne": "%s kann von diesem Server nicht geprüft werden und zählt nicht als Ausfall.",
         "UiAdminNotCheckableNamedOneFromServer": "%s kann vom Matomo-Server nicht geprüft werden und zählt nicht als Ausfall.",
+        "UiAdminPhpDisabled": "Die letzten Prüfungen konnten nicht laufen: PHP auf dem Matomo-Server erlaubt die ausgehenden Anfragen nicht, die sie brauchen. Fehlende PHP-Funktionen: %s.",
+        "UiAdminPhpDisabledHint": "Für die Serveradministration: Entfernen Sie diese Funktionen in der php.ini aus disable_functions.",
         "UiAdopt": "Übernehmen",
         "UiAllOff": "Keine Adresse wird geprüft",
         "UiAllOffMatomo": "Keine Adresse von Matomo selbst wird geprüft. Hauptadministratoren schalten sie unter Administration, Diagnose, Uptime Monitor ein.",

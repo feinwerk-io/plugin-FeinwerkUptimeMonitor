@@ -109,6 +109,10 @@ final class ResponseClassifier
      */
     private function transportFailure(Target $target, string $error): array
     {
+        // the server's PHP cannot send the request: nothing was checked, the note says why
+        if ($error === Outcome::PHP_DISABLED) {
+            return [Outcome::NOT_CHECKABLE, null, Outcome::PHP_DISABLED];
+        }
         // a guard refusal or a failing proxy is a configuration matter, never an outage of the target
         if ($error === Outcome::BLOCKED || $error === Outcome::PROXY) {
             return [Outcome::NOT_CHECKABLE, $error, null];

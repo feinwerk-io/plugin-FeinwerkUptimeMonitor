@@ -71,11 +71,17 @@ class API extends \Piwik\Plugin\API
      *               outside are left out), certificate: {notAfter: Y-m-d, daysLeft: int, level:
      *               ok|warning|critical|expired}|null (the server's certificate, else the one from outside under the
      *               same condition)}, processing:
-     *               {samples: int, p50Ms: int|null, p95Ms: int|null, maxMs: int|null, from: ISO time, to: ISO time}|null};
+     *               {samples: int, p50Ms: int|null, p95Ms: int|null, maxMs: int|null, from: ISO time, to: ISO time}|null,
+     *               disabledPhpFunctions: list of string (super users only, empty for everyone else: the PHP functions
+     *               the latest check run needed and did not find, as PHP's function_exists said, e.g. ["curl_exec",
+     *               "curl_multi_exec"]; hosts disable them in php.ini under disable_functions. While not empty, the
+     *               targets with note php_disabled cannot be checked; empty once a run has them all)};
      *               State = {outcome: up|down|not_checkable, error: string|null (dns, connect, tls, timeout, blocked,
      *               protocol, proxy, http_status, content, redirect, maintenance, tracking_off, stale_container),
-     *               note: protected|too_large|null (protected: behind a password or bot protection; too_large: a Tag
-     *               Manager container larger than 4 MB, not read whole, so not checkable), httpStatus: int|null,
+     *               note: protected|too_large|php_disabled|null (protected: behind a password or bot protection;
+     *               too_large: a Tag Manager container larger than 4 MB, not read whole, so not checkable; php_disabled:
+     *               not checkable, the server's PHP disables functions the check needs, nothing was requested, see
+     *               disabledPhpFunctions; error is null then), httpStatus: int|null,
      *               responseMs: int|null, checkedAt: ISO time, stale: bool (older than two check intervals: the checks
      *               stopped; not current. From outside: older than 2 h 15 min, since such results arrive when the
      *               other plugin pulls them)}
@@ -88,6 +94,8 @@ class API extends \Piwik\Plugin\API
         return [
             'targets' => $report->status($idSite, $idSite > 0 || Piwik::hasUserSuperUserAccess()),
             'processing' => $idSite === 0 ? $report->processingLastHour() : null,
+            // the server's PHP configuration: super users only
+            'disabledPhpFunctions' => Piwik::hasUserSuperUserAccess() ? CheckRunner::disabledPhpFunctions() : [],
         ];
     }
 
@@ -188,7 +196,7 @@ class API extends \Piwik\Plugin\API
         $source = $this->oneOf('source', $source, UptimeReport::SOURCES);
         $report = new UptimeReport();
         $range = $this->range($report, $idSite, $period, $date, $timezoneOf);
-        $key = trim((string) $targetKey);
+        $key = $this->targetKey($targetKey);
         if ($idSite === 0 && in_array($key, array_merge(Kind::INSTANCE, [Kind::PROCESSING]), true)
             && (new TargetStore())->get(0, $key) === null
         ) {
@@ -330,10 +338,10 @@ class API extends \Piwik\Plugin\API
         $idSite = $this->writableSite($idSite);
         $target = $this->target($idSite, $targetKey);
         $store = new TargetStore();
-        if (trim((string) $url) !== '') {
+        if (Params::text($url) !== '') {
             $target = $store->setUrl($idSite, $target->key, $target->kind, $this->url($url, $target->kind), TargetStore::SOURCE_MANUAL, $target->extra);
         }
-        if (trim((string) $enabled) !== '') {
+        if (Params::text($enabled) !== '') {
             $target = $store->setEnabled($idSite, $target->key, $this->flag('enabled', $enabled));
         }
 
@@ -411,8 +419,9 @@ class API extends \Piwik\Plugin\API
      *
      * @param int $idSite website ID (admin access), or 0 for the Matomo instance (super user)
      * @return array {locked: bool (another check run is going; nothing done), results: list of {targetKey: string,
-     *               outcome: up|down|not_checkable, error: string|null, note: protected|too_large|null, httpStatus:
-     *               int|null, responseMs: int}}
+     *               outcome: up|down|not_checkable, error: string|null, note: protected|too_large|php_disabled|null
+     *               (as in getStatus; php_disabled: the server's PHP disables functions the check needs, named by
+     *               getStatus disabledPhpFunctions), httpStatus: int|null, responseMs: int}}
      */
     public function checkNow($idSite)
     {
@@ -592,13 +601,23 @@ class API extends \Piwik\Plugin\API
 
     private function target(int $idSite, $targetKey): Target
     {
-        $key = trim((string) $targetKey);
+        $key = $this->targetKey($targetKey);
         $target = (new TargetStore())->get($idSite, $key);
         if ($target === null || ($target->kind === Kind::PROCESSING && $idSite !== 0)) {
             throw $this->error(Piwik::translate('FeinwerkUptimeMonitor_ErrorTargetUnknown', [$key]));
         }
 
         return $target;
+    }
+
+    /** The target key as text; a wrongly typed value (an array) is that parameter's bad input, naming it. */
+    private function targetKey($value): string
+    {
+        if (!is_scalar($value) && $value !== null) {
+            throw $this->badParameter(new InvalidParameter('targetKey', Params::text($value), ['a key from getTargets']));
+        }
+
+        return Params::text($value);
     }
 
     private function range(UptimeReport $report, int $idSite, $period, $date, $timezoneOf = 0, bool $cutAtNow = true): array
@@ -610,10 +629,10 @@ class API extends \Piwik\Plugin\API
             $this->existingSite($timezoneOf);
         }
         try {
-            return $report->range($idSite, $period, trim((string) $date), $timezoneOf, $cutAtNow);
+            return $report->range($idSite, $period, Params::text($date), $timezoneOf, $cutAtNow);
         } catch (\Throwable $e) {
             throw $this->error(Piwik::translate('FeinwerkUptimeMonitor_ErrorParameterNotAllowed',
-                ['date', trim((string) $date), 'YYYY-MM-DD, today, yesterday, YYYY-MM-DD,YYYY-MM-DD']));
+                ['date', Params::text($date), 'YYYY-MM-DD, today, yesterday, YYYY-MM-DD,YYYY-MM-DD']));
         }
     }
 

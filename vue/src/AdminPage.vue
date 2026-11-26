@@ -20,7 +20,10 @@
   status names the side of a one-sided failure (Peter's 3a, 2026-11-26: only from the Matomo
   server while the outside reaches it is amber). P4 (UI review 5.2.0): the row for the checks from
   outside comes right under the cron row and says when it sends alerts itself; Sentinel's row
-  follows when Sentinel sends alerts, never "No alerts" while that plugin sends them.
+  follows when Sentinel sends alerts, never "No alerts" while that plugin sends them. 5.3.1: when
+  the server's PHP disables functions the checks need, one line above the table names them with
+  a hint for the server administrator; the fold then has no "Why?" and no "Allow private
+  addresses", which are not the reason.
 -->
 <template>
   <div
@@ -30,6 +33,24 @@
     <ContentBlock :content-title="translate('FeinwerkUptimeMonitor_MenuTitle')">
       <p>{{ translate(outside ? 'FeinwerkUptimeMonitor_UiAdminIntroOutside'
         : 'FeinwerkUptimeMonitor_UiAdminIntro') }}</p>
+      <!-- 5.3.1: the server's PHP disables functions the checks need: the reason, once -->
+      <ul
+        v-if="phpDisabled.length"
+        class="fwum-checks fwum-admin__php"
+      >
+        <li class="is-warn">
+          <span
+            class="icon-warning"
+            aria-hidden="true"
+          />
+          <div>
+            <p>{{ translate('FeinwerkUptimeMonitor_UiAdminPhpDisabled',
+                            phpDisabled.join(', ')) }}</p>
+            <p class="fwum-muted">{{
+              translate('FeinwerkUptimeMonitor_UiAdminPhpDisabledHint') }}</p>
+          </div>
+        </li>
+      </ul>
       <div
         v-if="loading && !rows.length"
         class="fwum-loading"
@@ -187,19 +208,24 @@
               @click="showFolded = !showFolded"
             >{{ translate(showFolded ? 'FeinwerkUptimeMonitor_UiHide'
               : 'FeinwerkUptimeMonitor_UiShow') }}</button>
-            <button
-              type="button"
-              class="fwum-link-button"
-              :aria-expanded="whyOpen ? 'true' : 'false'"
-              :aria-controls="`${uid}-why`"
-              @click="whyOpen = !whyOpen"
-            >{{ translate('FeinwerkUptimeMonitor_UiWhy') }}</button>
-            <a
-              v-if="!config.allowPrivate"
-              :href="settingsUrl"
-            >{{ translate('FeinwerkUptimeMonitor_UiAllowPrivate') }}</a>
+            <!-- with PHP functions disabled the reason is the line above the table, not a firewall
+                 or a private address -->
+            <template v-if="!phpDisabled.length">
+              <button
+                type="button"
+                class="fwum-link-button"
+                :aria-expanded="whyOpen ? 'true' : 'false'"
+                :aria-controls="`${uid}-why`"
+                @click="whyOpen = !whyOpen"
+              >{{ translate('FeinwerkUptimeMonitor_UiWhy') }}</button>
+              <a
+                v-if="!config.allowPrivate"
+                :href="settingsUrl"
+              >{{ translate('FeinwerkUptimeMonitor_UiAllowPrivate') }}</a>
+            </template>
           </p>
           <p
+            v-if="!phpDisabled.length"
             v-show="whyOpen"
             :id="`${uid}-why`"
             class="fwum-note fwum-nc__why"
@@ -401,6 +427,10 @@ export default defineComponent({
         return translate(`FeinwerkUptimeMonitor_${keys[count === 1 ? 0 : 1]}`, names);
       }
       return translate(`FeinwerkUptimeMonitor_${keys[2]}`, String(count));
+    },
+    /** the PHP functions the latest check run did not find (the server's php.ini disables them) */
+    phpDisabled(): string[] {
+      return this.config.disabledPhpFunctions || [];
     },
     /** another plugin delivers results checked from outside: the overview combines both sides */
     outside(): boolean {

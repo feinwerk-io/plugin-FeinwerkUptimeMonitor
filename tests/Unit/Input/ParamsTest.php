@@ -18,6 +18,44 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Input\Params;
  */
 class ParamsTest extends TestCase
 {
+    /**
+     * Matomo 6 passes a wrongly typed value (an array for a text) on to untyped API parameters: it must be refused as
+     * that parameter's bad input (HTTP 400), never end in PHP's "Array to string conversion".
+     */
+    public function test_aWronglyTypedValue_isRefusedNamingTheParameter(): void
+    {
+        set_error_handler(static function (int $no, string $text): bool {
+            throw new \ErrorException($text, 0, $no);
+        });
+        try {
+            foreach ([
+                'oneOf' => fn() => Params::oneOf('source', ['local'], ['all', 'local', 'external']),
+                'wholeNumber' => fn() => Params::wholeNumber('idSite', ['1'], 0, 10),
+                'flag' => fn() => Params::flag('apply', ['1']),
+                'url' => fn() => Params::url('url', ['https://www.shop.example/']),
+                'bareUrl' => fn() => Params::bareUrl('url', ['https://www.shop.example/matomo.php']),
+            ] as $method => $call) {
+                try {
+                    $call();
+                    $this->fail("$method: no exception");
+                } catch (InvalidParameter $e) {
+                    $this->assertSame('array', $e->value, $method);
+                }
+            }
+        } finally {
+            restore_error_handler();
+        }
+    }
+
+    public function test_text_trimsScalars_namesTheTypeOfAnythingElse(): void
+    {
+        $this->assertSame('web:1a2b3c4d', Params::text(' web:1a2b3c4d '));
+        $this->assertSame('5', Params::text(5));
+        $this->assertSame('', Params::text(null));
+        $this->assertSame('array', Params::text(['x']));
+        $this->assertSame('stdClass', Params::text(new \stdClass()));
+    }
+
     public function test_oneOf_trimsAndNamesTheAllowedValues(): void
     {
         $this->assertSame('local', Params::oneOf('source', ' local ', ['all', 'local', 'external']));

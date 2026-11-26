@@ -11,7 +11,9 @@ namespace Piwik\Plugins\FeinwerkUptimeMonitor;
 
 use Piwik\Common;
 use Piwik\Config;
+use Piwik\Container\StaticContainer;
 use Piwik\Option;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Capabilities;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\Schema;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Tracker\TimingSampler;
 use Piwik\Tracker;
@@ -51,9 +53,19 @@ class FeinwerkUptimeMonitor extends \Piwik\Plugin
 
     /**
      * Samples the processing time of real tracking requests (spec 6.6). Cheap on a miss: one config lookup in memory
-     * and one random number.
+     * and one random number. Never throws: Matomo posts Tracker.end outside its own try, so an error here would break
+     * the tracking response.
      */
     public function onTrackerEnd(): void
+    {
+        try {
+            $this->sampleTrackerEnd();
+        } catch (\Throwable $e) {
+            // never break a tracking request
+        }
+    }
+
+    private function sampleTrackerEnd(): void
     {
         $section = Config::getInstance()->FeinwerkUptimeMonitor;
         $rate = is_array($section) && isset($section['tracker_timing_sample']) ? (int) $section['tracker_timing_sample'] : 100;
@@ -73,7 +85,8 @@ class FeinwerkUptimeMonitor extends \Piwik\Plugin
                 'INSERT INTO ' . Common::prefixTable(Schema::SAMPLE) . ' (sampled_at, ms, is_bulk) VALUES (?, ?, ?)',
                 [$at, $ms, $isBulk ? 1 : 0]
             );
-        }))->onTrackerEnd($_SERVER, $_GET, $_POST, static fn(): string => (string) file_get_contents('php://input'));
+        }, null, StaticContainer::get(Capabilities::class)))
+            ->onTrackerEnd($_SERVER, $_GET, $_POST, static fn(): string => (string) file_get_contents('php://input'));
     }
 
     /**

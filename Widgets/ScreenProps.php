@@ -16,6 +16,7 @@ use Piwik\Plugin\Manager;
 use Piwik\Plugins\FeinwerkUptimeMonitor\External\ExternalResults;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Feedback\PluginFeedback;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Promo\PromoLine;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\CheckRunner;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\Freshness;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Sentinel\SentinelVersion;
 use Piwik\Plugins\FeinwerkUptimeMonitor\SystemSettings;
@@ -45,6 +46,8 @@ final class ScreenProps
             'timezone' => self::timezone($idSite),
             // the admin page's status rows (Peter's 3a): whether a system cron runs the checks, and how often
             'cron' => $variant === 'admin' ? self::cron() : null,
+            // the admin page: the PHP functions the latest check run missed, the reason for its "not checkable"
+            'disabledPhpFunctions' => $variant === 'admin' ? self::disabledPhpFunctions() : null,
             'variant' => $variant,
             // the page as a dashboard widget or an embed: Matomo's widget frame has no padding of its own
             'inWidget' => $variant === 'page' && ($onDashboard || $embedded),
@@ -138,6 +141,16 @@ final class ScreenProps
             ];
         } catch (\Throwable $e) {
             return null;
+        }
+    }
+
+    /** @return string[] CheckRunner::disabledPhpFunctions(), empty when it cannot be read */
+    private static function disabledPhpFunctions(): array
+    {
+        try {
+            return CheckRunner::disabledPhpFunctions();
+        } catch (\Throwable $e) {
+            return [];
         }
     }
 

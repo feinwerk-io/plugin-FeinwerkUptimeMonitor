@@ -12,6 +12,8 @@ namespace Piwik\Plugins\FeinwerkUptimeMonitor\tests\Unit\Http;
 use PHPUnit\Framework\TestCase;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Outcome;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\AddressGuard;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Capabilities;
+use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\DisabledFunctions;
 
 /**
  * @group FeinwerkUptimeMonitor
@@ -178,5 +180,118 @@ class AddressGuardTest extends TestCase
         $decision = self::guard(false)->check('https://nowhere.example.com/');
         $this->assertFalse($decision->allowed);
         $this->assertSame(Outcome::DNS, $decision->reason);
+    }
+
+    private static function without(array $disabled): Capabilities
+    {
+        return new Capabilities(DisabledFunctions::except($disabled));
+    }
+
+    /**
+     * The default lookup with stand-ins for gethostbynamel ($byName) and dns_get_record ($records) that log their calls.
+     *
+     * @return array{0: \Closure, 1: \ArrayObject}
+     */
+    private static function lookup(Capabilities $capabilities): array
+    {
+        $calls = new \ArrayObject();
+        $resolver = AddressGuard::resolver(
+            $capabilities,
+            static function (string $host) use ($calls): array {
+                $calls[] = "byName $host";
+                return ['93.184.215.14'];
+            },
+            static function (string $host, int $type) use ($calls): array {
+                $calls[] = ($type === DNS_A ? 'A' : 'AAAA') . " $host";
+                return $type === DNS_A ? [['ip' => '93.184.215.15']] : [['ipv6' => '2606:2800:21f:cb07:6820:80da:af6b:8b2c']];
+            }
+        );
+
+        return [$resolver, $calls];
+    }
+
+    public function test_lookup_everythingThere_ipv4ByNameAndIpv6FromTheRecords(): void
+    {
+        [$resolver, $calls] = self::lookup(self::without([]));
+        $this->assertSame(['93.184.215.14', '2606:2800:21f:cb07:6820:80da:af6b:8b2c'], $resolver('www.example.org'));
+        $this->assertSame(['byName www.example.org', 'AAAA www.example.org'], $calls->getArrayCopy());
+    }
+
+    /** dns_get_record asks the DNS server only: a name only in the hosts file is not found this way. */
+    public function test_lookup_withoutGethostbynamel_takesTheARecords(): void
+    {
+        [$resolver, $calls] = self::lookup(self::without(['gethostbynamel']));
+        $this->assertSame(['93.184.215.15', '2606:2800:21f:cb07:6820:80da:af6b:8b2c'], $resolver('www.example.org'));
+        $this->assertSame(['A www.example.org', 'AAAA www.example.org'], $calls->getArrayCopy());
+    }
+
+    public function test_lookup_withoutDnsGetRecord_ipv4Only(): void
+    {
+        [$resolver, $calls] = self::lookup(self::without(['dns_get_record']));
+        $this->assertSame(['93.184.215.14'], $resolver('www.example.org'));
+        $this->assertSame(['byName www.example.org'], $calls->getArrayCopy());
+    }
+
+    public function test_withoutBothLookups_aNameIsNotCheckable_anAddressStillIs(): void
+    {
+        $guard = new AddressGuard(false, null, false, self::without(['gethostbynamel', 'dns_get_record']));
+        $decision = $guard->check('https://www.example.org/');
+        $this->assertSame([false, Outcome::PHP_DISABLED, 0], [$decision->allowed, $decision->reason, $decision->lookupMs]);
+        $this->assertTrue($guard->check('https://93.184.215.14/')->allowed, 'an address needs no lookup');
+        $this->assertSame(Outcome::PHP_DISABLED, $guard->checkWithoutResolving('https://www.example.org/')->reason, 'through a proxy neither');
+        $this->assertSame(Outcome::BLOCKED, $guard->check('http://10.0.0.3/')->reason, 'the address rules still hold');
+        $this->assertSame(['gethostbynamel', 'dns_get_record'], $guard->missingFunctions());
+        $this->assertSame([], (new AddressGuard(false, static fn(string $h): array => [], false, self::without(['gethostbynamel', 'dns_get_record'])))->missingFunctions(),
+            'a resolver of its own needs neither');
+    }
+
+    /**
+     * Review 5.3.1 #1: through Matomo's [proxy] a public name whose DNS points to a private address (intranet.shop.example
+     * to 10.0.0.5) was allowed unchecked when this PHP could not look it up: the proxy fetched the internal page. While
+     * private addresses are not allowed, such a name is not checkable (php_disabled), as on the direct way; what needs no
+     * lookup is decided as before. With private addresses allowed the proxy alone decides (nothing to cross-check).
+     */
+    public function test_withoutBothLookups_throughTheProxy_aNameIsNotCheckable_unlessPrivateAddressesAreAllowed(): void
+    {
+        $noLookups = self::without(['gethostbynamel', 'dns_get_record']);
+        $guard = new AddressGuard(false, null, false, $noLookups);
+        $decision = $guard->checkWithoutResolving('https://intranet.shop.example/');
+        $this->assertSame([false, Outcome::PHP_DISABLED, 0], [$decision->allowed, $decision->reason, $decision->lookupMs], 'fail closed');
+        $this->assertSame('intranet.shop.example', $decision->host);
+        $this->assertTrue($guard->checkWithoutResolving('https://93.184.215.14/')->allowed, 'a public address needs no lookup');
+        $this->assertSame(Outcome::BLOCKED, $guard->checkWithoutResolving('http://10.0.0.5/')->reason, 'a private address stays refused');
+        $this->assertSame(Outcome::BLOCKED, $guard->checkWithoutResolving('http://intranet/')->reason, 'a local name stays refused');
+        $this->assertSame(Outcome::BLOCKED, $guard->checkWithoutResolving('ftp://intranet.shop.example/')->reason, 'what is no http(s) address stays refused');
+        $this->assertFalse($guard->refusesWithoutLookup('https://intranet.shop.example/'), 'the check says why, not "never checked"');
+
+        $this->assertTrue((new AddressGuard(false, static fn(string $h): array => ['93.184.215.14'], false, $noLookups))
+            ->checkWithoutResolving('https://www.shop.example/')->allowed, 'a resolver of its own still decides');
+        $this->assertSame(Outcome::BLOCKED, (new AddressGuard(false, static fn(string $h): array => ['10.0.0.5'], false, $noLookups))
+            ->checkWithoutResolving('https://intranet.shop.example/')->reason);
+
+        $private = new AddressGuard(true, null, false, $noLookups);
+        $this->assertSame([true, null], [$private->checkWithoutResolving('https://intranet.shop.example/')->allowed, $private->checkWithoutResolving('https://intranet.shop.example/')->reason],
+            'private addresses allowed: the proxy decides');
+        $this->assertSame(Outcome::PHP_DISABLED, $private->check('https://intranet.shop.example/')->reason, 'the direct way still needs a lookup');
+    }
+
+    public function test_withoutInetFunctions_nothingIsCheckable_neverAnError(): void
+    {
+        foreach (['inet_pton', 'inet_ntop'] as $function) {
+            $guard = new AddressGuard(true, static fn(string $h): array => ['93.184.215.14'], false, self::without([$function]));
+            foreach (['https://www.example.org/', 'https://93.184.215.14/', 'https://[2606:2800:21f:cb07:6820:80da:af6b:8b2c]/'] as $url) {
+                $this->assertSame([false, Outcome::PHP_DISABLED], [$guard->check($url)->allowed, $guard->check($url)->reason], "$function $url");
+                $this->assertSame(Outcome::PHP_DISABLED, $guard->checkWithoutResolving($url)->reason, "$function $url");
+                $this->assertFalse($guard->refusesWithoutLookup($url), 'the check says why, not "never checked"');
+            }
+            $this->assertSame([$function], $guard->missingFunctions());
+            $this->assertSame(Outcome::BLOCKED, $guard->check('ftp://www.example.org/')->reason, 'what is no http(s) address stays refused');
+        }
+    }
+
+    public function test_everythingThere_nothingMissing(): void
+    {
+        $this->assertSame([], (new AddressGuard(false))->missingFunctions());
+        $this->assertSame([], (new AddressGuard(false, null, false, self::without(DisabledFunctions::SHARED_HOST)))->missingFunctions());
     }
 }

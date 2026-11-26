@@ -259,6 +259,9 @@ function pageSetup(en, nowIso) {
             outsideRowRaw: (() => { const li = root.querySelector('.fwum-checks > li.fwum-checks__outside');
                 return li ? li.textContent.replace(/\s+/g, ' ').trim() : null; })(),
             why: (() => { const w = root.querySelector('.fwum-nc__why'); return w ? w.textContent.trim() : null; })(),
+            // 5.3.1: the reason when the server's PHP disables functions the checks need, and the fold's buttons and links
+            php: Array.from(root.querySelectorAll('.fwum-admin__php p')).map(clean),
+            foldControls: Array.from(root.querySelectorAll('.fwum-nc > p button, .fwum-nc > p a')).map(clean),
         };
     };
     window.fwumSummary = function (root) {
@@ -1646,6 +1649,20 @@ async function adminPage(browser) {
     check('P4 an active source that does not alert: its row first, then No alerts', s.order, ['cron', 'outside', 'alerts']);
     s = await admin(browser, { overview, config: { sentinel: 'active' } });
     check('alert row: Sentinel alone as before', [s.order, s.alertClass, s.alertLines.length, s.alertLines[0].indexOf(SENTINEL) === 0], [['cron', 'alerts'], 'is-ok', 2, true]);
+
+    // 5.3.1 hotfix: the server's PHP disables functions the checks need (getStatus disabledPhpFunctions): the reason
+    // once, above the table, naming them, with the hint for the server administrator; the fold of the websites keeps
+    // its names but no "Why?" about firewalls and no "Allow private addresses", which would not help
+    const blocked = [site(0, 'Matomo', { targets: 3, notCheckable: 3 }), site(1, 'Shop', { notCheckable: 1 }), site(2, 'Blog', { notCheckable: 1 })];
+    s = await admin(browser, { overview: blocked, config: { disabledPhpFunctions: ['curl_exec', 'curl_multi_exec'] } });
+    check('php: the reason once, naming the functions, with the hint', s.php, [
+        'The latest checks could not run: PHP on the Matomo server does not allow the outgoing requests they need. Missing PHP functions: curl_exec, curl_multi_exec.',
+        'For the server administrator: remove these functions from disable_functions in php.ini.']);
+    check('php: Matomo\'s row not checkable, the websites folded by name', [s.rows, s.fold.indexOf('Shop and Blog cannot be checked from this server and do not count as outages.')],
+        [[['Matomo', 'Not checkable from this server']], 0]);
+    check('php: the fold without Why? and without Allow private addresses', [s.foldControls, s.why], [['Show'], null]);
+    s = await admin(browser, { overview: blocked, config: { disabledPhpFunctions: [] } });
+    check('php: nothing missing: no reason, the fold as before', [s.php, s.foldControls], [[], ['Show', 'Why?', 'Allow private addresses']]);
 
     // 3a and the side of a one-sided failure (getSitesOverview downFromServerOnly, downFromOutsideOnly)
     const sided = [site(0, 'Matomo', { targets: 4, up: 3, down: 1, downFromServerOnly: 1, containersDown: [{ idSite: 1, name: 'Shop' }] }),

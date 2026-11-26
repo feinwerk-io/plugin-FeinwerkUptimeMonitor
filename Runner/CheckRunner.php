@@ -10,6 +10,7 @@
 namespace Piwik\Plugins\FeinwerkUptimeMonitor\Runner;
 
 use Piwik\Config;
+use Piwik\Container\StaticContainer;
 use Piwik\Option;
 use Piwik\Plugin\Manager;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\CheckResult;
@@ -19,6 +20,7 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Check\ProbeResponse;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\ResponseClassifier;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Target;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\AddressGuard;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Capabilities;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\CertificateReader;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Prober;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\CheckStore;
@@ -41,6 +43,8 @@ final class CheckRunner
 {
     public const DEFAULT_BUDGET = 60;
     public const LOCK_MARGIN = 120;
+    /** a run refreshes its lock at most this often (seconds of the run's clock), not before every batch */
+    public const LOCK_REFRESH_EVERY = 10;
     public const RETRY_DELAY = 5;
     /** quick runs (browser-triggered tasks) still retry once, after a short pause */
     public const QUICK_RETRY_DELAY = 1;
@@ -50,6 +54,11 @@ final class CheckRunner
     public const GAP_THRESHOLD = 7200;
     public const OPTION_DAILY = 'fw_uptimemonitor_daily_at';
     public const OPTION_SYNCED = 'fw_uptimemonitor_synced_at';
+    /**
+     * the PHP functions a run missed (comma separated) when results carried the note php_disabled; kept until a run
+     * finds them all again
+     */
+    public const OPTION_PHP_DISABLED = 'fw_uptimemonitor_php_disabled';
     /** budget when Matomo's scheduled tasks may run inside a visitor's tracking request (browser-triggered archiving) */
     public const QUICK_BUDGET = 15;
     private const CERT_FALLBACKS_PER_RUN = 3;
@@ -75,7 +84,8 @@ final class CheckRunner
         private \Closure $sleep,
         private int $budget = self::DEFAULT_BUDGET,
         private ?AddressGuard $guard = null,
-        private int $retryDelay = self::RETRY_DELAY
+        private int $retryDelay = self::RETRY_DELAY,
+        private ?Capabilities $capabilities = null
     ) {
     }
 
@@ -92,6 +102,7 @@ final class CheckRunner
         $section = Config::getInstance()->FeinwerkUptimeMonitor;
         $guard = self::guard($settings);
         $targets = new TargetStore();
+        $capabilities = self::capabilities();
 
         return new self(
             $targets,
@@ -107,13 +118,15 @@ final class CheckRunner
             new IntervalTracker(),
             new RunLock(),
             static fn(): float => microtime(true),
-            static function (int $seconds): void {
-                sleep($seconds);
+            // sleep, else usleep, else no pause: a disabled sleep would throw before the results are stored
+            static function (int $seconds) use ($capabilities): void {
+                Runtime::pause($capabilities, $seconds);
             },
             $quick ? self::QUICK_BUDGET
                 : ($budget ?? max(10, (int) (is_array($section) ? ($section['run_budget_seconds'] ?? self::DEFAULT_BUDGET) : self::DEFAULT_BUDGET))),
             $guard,
-            $quick ? self::QUICK_RETRY_DELAY : self::RETRY_DELAY
+            $quick ? self::QUICK_RETRY_DELAY : self::RETRY_DELAY,
+            $capabilities
         );
     }
 
@@ -128,7 +141,7 @@ final class CheckRunner
         $allowPrivate = (bool) $settings->allowPrivate->getValue();
         $loopback = $allowPrivate && is_array($section) && !empty($section['allowLoopbackForWebsites']);
 
-        return new AddressGuard($allowPrivate, null, $loopback);
+        return new AddressGuard($allowPrivate, null, $loopback, self::capabilities());
     }
 
     /**
@@ -142,7 +155,16 @@ final class CheckRunner
         $general = Config::getInstance()->General;
         $caInfo = is_array($general) && !empty($general['custom_cacert_pem']) ? (string) $general['custom_cacert_pem'] : null;
 
-        return new Prober($guard, is_array($proxy) ? $proxy : [], self::userAgent(), 5000, 10000, 8, $caInfo);
+        return new Prober($guard, is_array($proxy) ? $proxy : [], self::userAgent(), 5000, 10000, 8, $caInfo, self::capabilities());
+    }
+
+    /**
+     * The PHP functions there are, from Matomo's container (PHP's function_exists; tests put a host with disabled
+     * functions there).
+     */
+    public static function capabilities(): Capabilities
+    {
+        return StaticContainer::get(Capabilities::class);
     }
 
     /**
@@ -164,6 +186,20 @@ final class CheckRunner
     public function budget(): int
     {
         return $this->budget;
+    }
+
+    /**
+     * The PHP functions the latest check run needed and did not find (function_exists said false: disabled in
+     * php.ini's disable_functions, or not installed), e.g. ['curl_exec', 'curl_multi_exec']: the reason for its
+     * results with the note php_disabled. Empty once a run had them all, and before the first run.
+     *
+     * @return string[]
+     */
+    public static function disabledPhpFunctions(): array
+    {
+        $names = explode(',', (string) Option::get(self::OPTION_PHP_DISABLED));
+
+        return array_values(array_filter($names, static fn(string $name): bool => (bool) preg_match('/^[a-z0-9_]{1,64}$/', $name)));
     }
 
     /**
@@ -225,10 +261,19 @@ final class CheckRunner
                 $pages[$target->idSite] = ['url' => $response->finalUrl, 'found' => $this->detection->read($response->body, $response->finalUrl)];
             }
         };
-        // a slow batch (DNS, timeouts) must not let the lock expire while the run goes on
-        $keepLock = function (): void {
-            if ($this->lock !== null) {
+        // a slow batch (DNS, timeouts) must not let the lock expire while the run goes on. One UPDATE at most every
+        // LOCK_REFRESH_EVERY seconds (on the sequential way a batch is one address), each with the whole lock time: a
+        // refresh comes at most that much later than before each batch, far inside LOCK_MARGIN. acquire() set the lock
+        // time at the start; a clock that went back refreshes at once.
+        $refreshedAt = $start;
+        $keepLock = function () use (&$refreshedAt): void {
+            if ($this->lock === null) {
+                return;
+            }
+            $now = ($this->clock)();
+            if ($now - $refreshedAt >= self::LOCK_REFRESH_EVERY || $now < $refreshedAt) {
                 $this->lock->refresh($this->budget + self::LOCK_MARGIN);
+                $refreshedAt = $now;
             }
         };
         $this->prober->probeAll($due, $deadline, $consume, $keepLock);
@@ -241,6 +286,7 @@ final class CheckRunner
         $results = $this->withCertificateFallback($results, $byId, $deadline);
 
         $list = array_values($results);
+        $this->rememberDisabledFunctions($list);
         $this->checks->insertMany($list);
         $this->states->upsertMany($list, StateStore::LOCAL);
         $this->targets->markChecked($list);
@@ -262,6 +308,24 @@ final class CheckRunner
         }
 
         return new RunReport(count($results), count($due) - count($results), false, $list);
+    }
+
+    /**
+     * The reason for results that could not be checked because this PHP disables functions, named once (admin page,
+     * getStatus): set by a run with a result with the note php_disabled, cleared only by a run that misses none of the
+     * functions (Prober::missingFunctions()). A run without such results proves nothing: a "check now" of one website,
+     * or only the due addresses, may need no lookup while another website's address still cannot be checked.
+     *
+     * @param CheckResult[] $results
+     */
+    private function rememberDisabledFunctions(array $results): void
+    {
+        $disabled = array_filter($results, static fn(CheckResult $r): bool => $r->note === Outcome::PHP_DISABLED);
+        if ($disabled !== []) {
+            Option::set(self::OPTION_PHP_DISABLED, implode(',', $this->prober->missingFunctions()));
+        } elseif ($this->prober->missingFunctions() === [] && Option::get(self::OPTION_PHP_DISABLED) !== false) {
+            Option::delete(self::OPTION_PHP_DISABLED);
+        }
     }
 
     /**
@@ -292,7 +356,8 @@ final class CheckRunner
             if (!$decision->allowed || $decision->ip === null) {
                 continue;
             }
-            $date = CertificateReader::fromHandshake($decision->host, $decision->ip, $decision->port, min(5.0, max(1.0, $deadline - ($this->clock)())));
+            $date = CertificateReader::fromHandshake($decision->host, $decision->ip, $decision->port,
+                min(5.0, max(1.0, $deadline - ($this->clock)())), $this->capabilities);
             if ($date !== null) {
                 $results[$id] = new CheckResult($result->idTarget, $result->outcome, $result->error, $result->note,
                     $result->status, $result->timings, $date, $result->checkedAt);

@@ -5434,119 +5434,133 @@ const INCIDENT_LIMIT_MAX = 1000;
 UptimePagevue_type_script_lang_ts.render = render
 
 /* harmony default export */ var UptimePage = (UptimePagevue_type_script_lang_ts);
-// CONCATENATED MODULE: ./node_modules/@vue/cli-plugin-babel/node_modules/cache-loader/dist/cjs.js??ref--13-0!./node_modules/@vue/cli-plugin-babel/node_modules/thread-loader/dist/cjs.js!./node_modules/babel-loader/lib!./node_modules/@vue/cli-service/node_modules/vue-loader-v16/dist/templateLoader.js??ref--6!./node_modules/@vue/cli-service/node_modules/cache-loader/dist/cjs.js??ref--1-0!./node_modules/@vue/cli-service/node_modules/vue-loader-v16/dist??ref--1-1!./plugins/FeinwerkUptimeMonitor/vue/src/AdminPage.vue?vue&type=template&id=f40cbb62
+// CONCATENATED MODULE: ./node_modules/@vue/cli-plugin-babel/node_modules/cache-loader/dist/cjs.js??ref--13-0!./node_modules/@vue/cli-plugin-babel/node_modules/thread-loader/dist/cjs.js!./node_modules/babel-loader/lib!./node_modules/@vue/cli-service/node_modules/vue-loader-v16/dist/templateLoader.js??ref--6!./node_modules/@vue/cli-service/node_modules/cache-loader/dist/cjs.js??ref--1-0!./node_modules/@vue/cli-service/node_modules/vue-loader-v16/dist??ref--1-1!./plugins/FeinwerkUptimeMonitor/vue/src/AdminPage.vue?vue&type=template&id=eee995c6
 
-const AdminPagevue_type_template_id_f40cbb62_hoisted_1 = ["lang"];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_2 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_1 = ["lang"];
+const AdminPagevue_type_template_id_eee995c6_hoisted_2 = {
   key: 0,
+  class: "fwum-checks fwum-admin__php"
+};
+const AdminPagevue_type_template_id_eee995c6_hoisted_3 = {
+  class: "is-warn"
+};
+const AdminPagevue_type_template_id_eee995c6_hoisted_4 = /*#__PURE__*/Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("span", {
+  class: "icon-warning",
+  "aria-hidden": "true"
+}, null, -1);
+const AdminPagevue_type_template_id_eee995c6_hoisted_5 = {
+  class: "fwum-muted"
+};
+const AdminPagevue_type_template_id_eee995c6_hoisted_6 = {
+  key: 1,
   class: "fwum-loading",
   "aria-busy": "true"
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_3 = /*#__PURE__*/Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("span", {
+const AdminPagevue_type_template_id_eee995c6_hoisted_7 = /*#__PURE__*/Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("span", {
   class: "loadingPiwik"
 }, [/*#__PURE__*/Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("img", {
   src: "plugins/Morpheus/images/loading-blue.gif",
   alt: ""
 })], -1);
-const AdminPagevue_type_template_id_f40cbb62_hoisted_4 = [AdminPagevue_type_template_id_f40cbb62_hoisted_3];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_5 = {
-  key: 1,
+const AdminPagevue_type_template_id_eee995c6_hoisted_8 = [AdminPagevue_type_template_id_eee995c6_hoisted_7];
+const AdminPagevue_type_template_id_eee995c6_hoisted_9 = {
+  key: 2,
   class: "fwum-error",
   role: "alert"
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_6 = {
-  key: 2,
+const AdminPagevue_type_template_id_eee995c6_hoisted_10 = {
+  key: 3,
   class: "fwum-table-wrap"
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_7 = ["id"];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_8 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_11 = ["id"];
+const AdminPagevue_type_template_id_eee995c6_hoisted_12 = {
   class: "fwum-admin__name"
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_9 = ["href"];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_10 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_13 = ["href"];
+const AdminPagevue_type_template_id_eee995c6_hoisted_14 = {
   key: 1
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_11 = ["title", "aria-label", "onClick"];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_12 = /*#__PURE__*/Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("span", {
+const AdminPagevue_type_template_id_eee995c6_hoisted_15 = ["title", "aria-label", "onClick"];
+const AdminPagevue_type_template_id_eee995c6_hoisted_16 = /*#__PURE__*/Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("span", {
   class: "icon-edit",
   "aria-hidden": "true"
 }, null, -1);
-const AdminPagevue_type_template_id_f40cbb62_hoisted_13 = [AdminPagevue_type_template_id_f40cbb62_hoisted_12];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_14 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_17 = [AdminPagevue_type_template_id_eee995c6_hoisted_16];
+const AdminPagevue_type_template_id_eee995c6_hoisted_18 = {
   key: 0,
   class: "fwum-admin__meta fwum-muted"
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_15 = ["title"];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_16 = ["id"];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_17 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_19 = ["title"];
+const AdminPagevue_type_template_id_eee995c6_hoisted_20 = ["id"];
+const AdminPagevue_type_template_id_eee995c6_hoisted_21 = {
   scope: "col"
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_18 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_22 = {
   scope: "col"
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_19 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_23 = {
   key: 0,
   scope: "col"
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_20 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_24 = {
   scope: "col"
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_21 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_25 = {
   class: "fwum-admin__name"
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_22 = ["href"];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_23 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_26 = ["href"];
+const AdminPagevue_type_template_id_eee995c6_hoisted_27 = {
   key: 1
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_24 = ["title", "aria-label", "onClick"];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_25 = /*#__PURE__*/Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("span", {
+const AdminPagevue_type_template_id_eee995c6_hoisted_28 = ["title", "aria-label", "onClick"];
+const AdminPagevue_type_template_id_eee995c6_hoisted_29 = /*#__PURE__*/Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("span", {
   class: "icon-edit",
   "aria-hidden": "true"
 }, null, -1);
-const AdminPagevue_type_template_id_f40cbb62_hoisted_26 = [AdminPagevue_type_template_id_f40cbb62_hoisted_25];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_27 = ["title"];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_28 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_30 = [AdminPagevue_type_template_id_eee995c6_hoisted_29];
+const AdminPagevue_type_template_id_eee995c6_hoisted_31 = ["title"];
+const AdminPagevue_type_template_id_eee995c6_hoisted_32 = {
   key: 2,
   class: "fwum-nc"
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_29 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_33 = {
   class: "fwum-note"
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_30 = ["aria-expanded", "aria-controls"];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_31 = ["aria-expanded", "aria-controls"];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_32 = ["href"];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_33 = ["id"];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_34 = {
-  key: 3,
+const AdminPagevue_type_template_id_eee995c6_hoisted_34 = ["aria-expanded", "aria-controls"];
+const AdminPagevue_type_template_id_eee995c6_hoisted_35 = ["aria-expanded", "aria-controls"];
+const AdminPagevue_type_template_id_eee995c6_hoisted_36 = ["href"];
+const AdminPagevue_type_template_id_eee995c6_hoisted_37 = ["id"];
+const AdminPagevue_type_template_id_eee995c6_hoisted_38 = {
+  key: 4,
   class: "fwum-muted"
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_35 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_39 = {
   class: "fwum-checks"
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_36 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_40 = {
   key: 0
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_37 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_41 = {
   class: "fwum-cron"
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_38 = ["href"];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_39 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_42 = ["href"];
+const AdminPagevue_type_template_id_eee995c6_hoisted_43 = {
   key: 0
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_40 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_44 = {
   class: "fwum-muted"
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_41 = ["href"];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_42 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_45 = ["href"];
+const AdminPagevue_type_template_id_eee995c6_hoisted_46 = {
   key: 1
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_43 = ["href"];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_44 = {
+const AdminPagevue_type_template_id_eee995c6_hoisted_47 = ["href"];
+const AdminPagevue_type_template_id_eee995c6_hoisted_48 = {
   key: 2
 };
-const AdminPagevue_type_template_id_f40cbb62_hoisted_45 = ["href"];
-const AdminPagevue_type_template_id_f40cbb62_hoisted_46 = ["href"];
-function AdminPagevue_type_template_id_f40cbb62_render(_ctx, _cache, $props, $setup, $data, $options) {
+const AdminPagevue_type_template_id_eee995c6_hoisted_49 = ["href"];
+const AdminPagevue_type_template_id_eee995c6_hoisted_50 = ["href"];
+function AdminPagevue_type_template_id_eee995c6_render(_ctx, _cache, $props, $setup, $data, $options) {
   const _component_AdminStatus = Object(external_commonjs_vue_commonjs2_vue_root_Vue_["resolveComponent"])("AdminStatus");
   const _component_ContentBlock = Object(external_commonjs_vue_commonjs2_vue_root_Vue_["resolveComponent"])("ContentBlock");
   const _component_TargetPanel = Object(external_commonjs_vue_commonjs2_vue_root_Vue_["resolveComponent"])("TargetPanel");
@@ -5556,11 +5570,11 @@ function AdminPagevue_type_template_id_f40cbb62_render(_ctx, _cache, $props, $se
   }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createVNode"])(_component_ContentBlock, {
     "content-title": _ctx.translate('FeinwerkUptimeMonitor_MenuTitle')
   }, {
-    default: Object(external_commonjs_vue_commonjs2_vue_root_Vue_["withCtx"])(() => [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", null, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate(_ctx.outside ? 'FeinwerkUptimeMonitor_UiAdminIntroOutside' : 'FeinwerkUptimeMonitor_UiAdminIntro')), 1), _ctx.loading && !_ctx.rows.length ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("div", AdminPagevue_type_template_id_f40cbb62_hoisted_2, AdminPagevue_type_template_id_f40cbb62_hoisted_4)) : _ctx.failed ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("div", AdminPagevue_type_template_id_f40cbb62_hoisted_5, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", null, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiLoadFailed')), 1), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("button", {
+    default: Object(external_commonjs_vue_commonjs2_vue_root_Vue_["withCtx"])(() => [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", null, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate(_ctx.outside ? 'FeinwerkUptimeMonitor_UiAdminIntroOutside' : 'FeinwerkUptimeMonitor_UiAdminIntro')), 1), _ctx.phpDisabled.length ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("ul", AdminPagevue_type_template_id_eee995c6_hoisted_2, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("li", AdminPagevue_type_template_id_eee995c6_hoisted_3, [AdminPagevue_type_template_id_eee995c6_hoisted_4, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("div", null, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", null, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiAdminPhpDisabled', _ctx.phpDisabled.join(', '))), 1), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", AdminPagevue_type_template_id_eee995c6_hoisted_5, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiAdminPhpDisabledHint')), 1)])])])) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true), _ctx.loading && !_ctx.rows.length ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("div", AdminPagevue_type_template_id_eee995c6_hoisted_6, AdminPagevue_type_template_id_eee995c6_hoisted_8)) : _ctx.failed ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("div", AdminPagevue_type_template_id_eee995c6_hoisted_9, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", null, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiLoadFailed')), 1), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("button", {
       type: "button",
       class: "btn-flat",
       onClick: _cache[0] || (_cache[0] = (...args) => _ctx.load && _ctx.load(...args))
-    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiRetry')), 1)])) : _ctx.rows.length ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("div", AdminPagevue_type_template_id_f40cbb62_hoisted_6, [_ctx.narrow ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("ul", {
+    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiRetry')), 1)])) : _ctx.rows.length ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("div", AdminPagevue_type_template_id_eee995c6_hoisted_10, [_ctx.narrow ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("ul", {
       key: 0,
       id: `${_ctx.uid}-table`,
       class: "fwum-admin__list",
@@ -5568,45 +5582,45 @@ function AdminPagevue_type_template_id_f40cbb62_render(_ctx, _cache, $props, $se
     }, [(Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(true), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])(external_commonjs_vue_commonjs2_vue_root_Vue_["Fragment"], null, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["renderList"])(_ctx.visibleRows, row => {
       return Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("li", {
         key: row.idSite
-      }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("span", AdminPagevue_type_template_id_f40cbb62_hoisted_8, [row.idSite > 0 ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("a", {
+      }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("span", AdminPagevue_type_template_id_eee995c6_hoisted_12, [row.idSite > 0 ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("a", {
         key: 0,
         href: _ctx.pageUrl(row.idSite)
-      }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(row.name), 9, AdminPagevue_type_template_id_f40cbb62_hoisted_9)) : (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("span", AdminPagevue_type_template_id_f40cbb62_hoisted_10, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(row.name), 1)), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("button", {
+      }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(row.name), 9, AdminPagevue_type_template_id_eee995c6_hoisted_13)) : (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("span", AdminPagevue_type_template_id_eee995c6_hoisted_14, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(row.name), 1)), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("button", {
         type: "button",
         class: "btn-flat fwum-icon-only",
         title: _ctx.translate('FeinwerkUptimeMonitor_UiEditTargetsOf', row.name),
         "aria-label": _ctx.translate('FeinwerkUptimeMonitor_UiEditTargetsOf', row.name),
         onClick: $event => _ctx.openPanel(row)
-      }, AdminPagevue_type_template_id_f40cbb62_hoisted_13, 8, AdminPagevue_type_template_id_f40cbb62_hoisted_11)]), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("span", {
+      }, AdminPagevue_type_template_id_eee995c6_hoisted_17, 8, AdminPagevue_type_template_id_eee995c6_hoisted_15)]), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("span", {
         class: Object(external_commonjs_vue_commonjs2_vue_root_Vue_["normalizeClass"])(["fwum-admin__status", `is-${_ctx.status(row).outcome}`])
       }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createVNode"])(_component_AdminStatus, {
         row: row,
         status: _ctx.status(row),
         language: _ctx.config.language
-      }, null, 8, ["row", "status", "language"])], 2), row.certificateDaysLeft !== null || row.lastCheckedAt ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("span", AdminPagevue_type_template_id_f40cbb62_hoisted_14, [row.certificateDaysLeft !== null ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("span", {
+      }, null, 8, ["row", "status", "language"])], 2), row.certificateDaysLeft !== null || row.lastCheckedAt ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("span", AdminPagevue_type_template_id_eee995c6_hoisted_18, [row.certificateDaysLeft !== null ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("span", {
         key: 0,
         class: Object(external_commonjs_vue_commonjs2_vue_root_Vue_["normalizeClass"])(["fwum-admin__cert", _ctx.certClass(row)])
       }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiCertificateValue', _ctx.certText(row.certificateDaysLeft))), 3)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true), row.lastCheckedAt ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("span", {
         key: 1,
         title: _ctx.when(row.lastCheckedAt, row.timezone)
-      }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiChecked', _ctx.since(row.lastCheckedAt))), 9, AdminPagevue_type_template_id_f40cbb62_hoisted_15)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)])) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)]);
-    }), 128))], 8, AdminPagevue_type_template_id_f40cbb62_hoisted_7)) : (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("table", {
+      }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiChecked', _ctx.since(row.lastCheckedAt))), 9, AdminPagevue_type_template_id_eee995c6_hoisted_19)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)])) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)]);
+    }), 128))], 8, AdminPagevue_type_template_id_eee995c6_hoisted_11)) : (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("table", {
       key: 1,
       id: `${_ctx.uid}-table`,
       class: "entityTable dataTable fwum-admin__table"
-    }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("thead", null, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("tr", null, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("th", AdminPagevue_type_template_id_f40cbb62_hoisted_17, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiSiteName')), 1), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("th", AdminPagevue_type_template_id_f40cbb62_hoisted_18, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiStatus')), 1), _ctx.hasCerts ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("th", AdminPagevue_type_template_id_f40cbb62_hoisted_19, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiCertificate')), 1)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("th", AdminPagevue_type_template_id_f40cbb62_hoisted_20, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiLastCheck')), 1)])]), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("tbody", null, [(Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(true), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])(external_commonjs_vue_commonjs2_vue_root_Vue_["Fragment"], null, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["renderList"])(_ctx.visibleRows, row => {
+    }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("thead", null, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("tr", null, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("th", AdminPagevue_type_template_id_eee995c6_hoisted_21, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiSiteName')), 1), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("th", AdminPagevue_type_template_id_eee995c6_hoisted_22, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiStatus')), 1), _ctx.hasCerts ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("th", AdminPagevue_type_template_id_eee995c6_hoisted_23, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiCertificate')), 1)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("th", AdminPagevue_type_template_id_eee995c6_hoisted_24, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiLastCheck')), 1)])]), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("tbody", null, [(Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(true), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])(external_commonjs_vue_commonjs2_vue_root_Vue_["Fragment"], null, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["renderList"])(_ctx.visibleRows, row => {
       return Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("tr", {
         key: row.idSite
-      }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("td", AdminPagevue_type_template_id_f40cbb62_hoisted_21, [row.idSite > 0 ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("a", {
+      }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("td", AdminPagevue_type_template_id_eee995c6_hoisted_25, [row.idSite > 0 ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("a", {
         key: 0,
         href: _ctx.pageUrl(row.idSite)
-      }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(row.name), 9, AdminPagevue_type_template_id_f40cbb62_hoisted_22)) : (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("span", AdminPagevue_type_template_id_f40cbb62_hoisted_23, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(row.name), 1)), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("button", {
+      }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(row.name), 9, AdminPagevue_type_template_id_eee995c6_hoisted_26)) : (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("span", AdminPagevue_type_template_id_eee995c6_hoisted_27, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(row.name), 1)), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("button", {
         type: "button",
         class: "btn-flat fwum-icon-only",
         title: _ctx.translate('FeinwerkUptimeMonitor_UiEditTargetsOf', row.name),
         "aria-label": _ctx.translate('FeinwerkUptimeMonitor_UiEditTargetsOf', row.name),
         onClick: $event => _ctx.openPanel(row)
-      }, AdminPagevue_type_template_id_f40cbb62_hoisted_26, 8, AdminPagevue_type_template_id_f40cbb62_hoisted_24)]), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("td", {
+      }, AdminPagevue_type_template_id_eee995c6_hoisted_30, 8, AdminPagevue_type_template_id_eee995c6_hoisted_28)]), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("td", {
         class: Object(external_commonjs_vue_commonjs2_vue_root_Vue_["normalizeClass"])(["fwum-admin__status", `is-${_ctx.status(row).outcome}`])
       }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createVNode"])(_component_AdminStatus, {
         row: row,
@@ -5618,38 +5632,41 @@ function AdminPagevue_type_template_id_f40cbb62_render(_ctx, _cache, $props, $se
       }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.certText(row.certificateDaysLeft)), 3)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("td", {
         class: "fwum-admin__when",
         title: row.lastCheckedAt ? _ctx.when(row.lastCheckedAt, row.timezone) : ''
-      }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(row.lastCheckedAt ? _ctx.since(row.lastCheckedAt) : ''), 9, AdminPagevue_type_template_id_f40cbb62_hoisted_27)]);
-    }), 128))])], 8, AdminPagevue_type_template_id_f40cbb62_hoisted_16)), _ctx.foldedRows.length ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("div", AdminPagevue_type_template_id_f40cbb62_hoisted_28, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", AdminPagevue_type_template_id_f40cbb62_hoisted_29, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createTextVNode"])(Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.foldedText) + " ", 1), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("button", {
+      }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(row.lastCheckedAt ? _ctx.since(row.lastCheckedAt) : ''), 9, AdminPagevue_type_template_id_eee995c6_hoisted_31)]);
+    }), 128))])], 8, AdminPagevue_type_template_id_eee995c6_hoisted_20)), _ctx.foldedRows.length ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("div", AdminPagevue_type_template_id_eee995c6_hoisted_32, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", AdminPagevue_type_template_id_eee995c6_hoisted_33, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createTextVNode"])(Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.foldedText) + " ", 1), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("button", {
       type: "button",
       class: "fwum-link-button",
       "aria-expanded": _ctx.showFolded ? 'true' : 'false',
       "aria-controls": `${_ctx.uid}-table`,
       onClick: _cache[1] || (_cache[1] = $event => _ctx.showFolded = !_ctx.showFolded)
-    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate(_ctx.showFolded ? 'FeinwerkUptimeMonitor_UiHide' : 'FeinwerkUptimeMonitor_UiShow')), 9, AdminPagevue_type_template_id_f40cbb62_hoisted_30), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("button", {
+    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate(_ctx.showFolded ? 'FeinwerkUptimeMonitor_UiHide' : 'FeinwerkUptimeMonitor_UiShow')), 9, AdminPagevue_type_template_id_eee995c6_hoisted_34), !_ctx.phpDisabled.length ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])(external_commonjs_vue_commonjs2_vue_root_Vue_["Fragment"], {
+      key: 0
+    }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("button", {
       type: "button",
       class: "fwum-link-button",
       "aria-expanded": _ctx.whyOpen ? 'true' : 'false',
       "aria-controls": `${_ctx.uid}-why`,
       onClick: _cache[2] || (_cache[2] = $event => _ctx.whyOpen = !_ctx.whyOpen)
-    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiWhy')), 9, AdminPagevue_type_template_id_f40cbb62_hoisted_31), !_ctx.config.allowPrivate ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("a", {
+    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiWhy')), 9, AdminPagevue_type_template_id_eee995c6_hoisted_35), !_ctx.config.allowPrivate ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("a", {
       key: 0,
       href: _ctx.settingsUrl
-    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiAllowPrivate')), 9, AdminPagevue_type_template_id_f40cbb62_hoisted_32)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)]), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["withDirectives"])(Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", {
+    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiAllowPrivate')), 9, AdminPagevue_type_template_id_eee995c6_hoisted_36)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)], 64)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)]), !_ctx.phpDisabled.length ? Object(external_commonjs_vue_commonjs2_vue_root_Vue_["withDirectives"])((Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("p", {
+      key: 0,
       id: `${_ctx.uid}-why`,
       class: "fwum-note fwum-nc__why"
-    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.foldedWhy), 9, AdminPagevue_type_template_id_f40cbb62_hoisted_33), [[external_commonjs_vue_commonjs2_vue_root_Vue_["vShow"], _ctx.whyOpen]])])) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)])) : !_ctx.loading ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("p", AdminPagevue_type_template_id_f40cbb62_hoisted_34, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiFirstCheck')), 1)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)]),
+    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.foldedWhy), 9, AdminPagevue_type_template_id_eee995c6_hoisted_37)), [[external_commonjs_vue_commonjs2_vue_root_Vue_["vShow"], _ctx.whyOpen]]) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)])) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)])) : !_ctx.loading ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("p", AdminPagevue_type_template_id_eee995c6_hoisted_38, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiFirstCheck')), 1)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)]),
     _: 1
   }, 8, ["content-title"]), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createVNode"])(_component_ContentBlock, {
     "content-title": _ctx.translate('FeinwerkUptimeMonitor_UiChecksAndAlerts')
   }, {
-    default: Object(external_commonjs_vue_commonjs2_vue_root_Vue_["withCtx"])(() => [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("ul", AdminPagevue_type_template_id_f40cbb62_hoisted_35, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("li", {
+    default: Object(external_commonjs_vue_commonjs2_vue_root_Vue_["withCtx"])(() => [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("ul", AdminPagevue_type_template_id_eee995c6_hoisted_39, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("li", {
       class: Object(external_commonjs_vue_commonjs2_vue_root_Vue_["normalizeClass"])(["fwum-checks__cron", _ctx.cronOk ? 'is-ok' : 'is-warn'])
     }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("span", {
       class: Object(external_commonjs_vue_commonjs2_vue_root_Vue_["normalizeClass"])(_ctx.cronOk ? 'icon-ok' : 'icon-warning'),
       "aria-hidden": "true"
-    }, null, 2), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("div", null, [_ctx.cronOk ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("p", AdminPagevue_type_template_id_f40cbb62_hoisted_36, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.cronText), 1)) : (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])(external_commonjs_vue_commonjs2_vue_root_Vue_["Fragment"], {
+    }, null, 2), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("div", null, [_ctx.cronOk ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("p", AdminPagevue_type_template_id_eee995c6_hoisted_40, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.cronText), 1)) : (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])(external_commonjs_vue_commonjs2_vue_root_Vue_["Fragment"], {
       key: 1
-    }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", null, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiCronHelp')), 1), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("div", AdminPagevue_type_template_id_f40cbb62_hoisted_37, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("code", null, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.config.cronLine), 1), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("button", {
+    }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", null, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiCronHelp')), 1), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("div", AdminPagevue_type_template_id_eee995c6_hoisted_41, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("code", null, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.config.cronLine), 1), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("button", {
       type: "button",
       class: "btn-flat",
       onClick: _cache[3] || (_cache[3] = (...args) => _ctx.copy && _ctx.copy(...args))
@@ -5662,37 +5679,37 @@ function AdminPagevue_type_template_id_f40cbb62_render(_ctx, _cache, $props, $se
     }, null, 2), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("div", null, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", null, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createTextVNode"])(Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.outsideRowText) + " ", 1), _ctx.config.external.settingsUrl ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("a", {
       key: 0,
       href: _ctx.config.external.settingsUrl
-    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiOutsideSettings')), 9, AdminPagevue_type_template_id_f40cbb62_hoisted_38)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)])])], 2)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true), !_ctx.outsideAlerts || _ctx.config.sentinel === 'active' ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("li", {
+    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiOutsideSettings')), 9, AdminPagevue_type_template_id_eee995c6_hoisted_42)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)])])], 2)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true), !_ctx.outsideAlerts || _ctx.config.sentinel === 'active' ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("li", {
       key: 1,
       class: Object(external_commonjs_vue_commonjs2_vue_root_Vue_["normalizeClass"])(["fwum-checks__alerts", _ctx.alertsOk ? 'is-ok' : 'is-warn'])
     }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("span", {
       class: Object(external_commonjs_vue_commonjs2_vue_root_Vue_["normalizeClass"])(_ctx.alertsOk ? 'icon-ok' : 'icon-warning'),
       "aria-hidden": "true"
-    }, null, 2), _ctx.alertsOk ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("div", AdminPagevue_type_template_id_f40cbb62_hoisted_39, [_ctx.config.sentinel === 'active' ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])(external_commonjs_vue_commonjs2_vue_root_Vue_["Fragment"], {
+    }, null, 2), _ctx.alertsOk ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("div", AdminPagevue_type_template_id_eee995c6_hoisted_43, [_ctx.config.sentinel === 'active' ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])(external_commonjs_vue_commonjs2_vue_root_Vue_["Fragment"], {
       key: 0
-    }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", null, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiSentinelActive')), 1), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", AdminPagevue_type_template_id_f40cbb62_hoisted_40, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createTextVNode"])(Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.sentinelFacts.before), 1), _ctx.config.sentinelSettings && _ctx.sentinelFacts.link ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("a", {
+    }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", null, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiSentinelActive')), 1), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", AdminPagevue_type_template_id_eee995c6_hoisted_44, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createTextVNode"])(Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.sentinelFacts.before), 1), _ctx.config.sentinelSettings && _ctx.sentinelFacts.link ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("a", {
       key: 0,
       href: _ctx.config.sentinelSettings
-    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.sentinelFacts.link), 9, AdminPagevue_type_template_id_f40cbb62_hoisted_41)) : (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])(external_commonjs_vue_commonjs2_vue_root_Vue_["Fragment"], {
+    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.sentinelFacts.link), 9, AdminPagevue_type_template_id_eee995c6_hoisted_45)) : (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])(external_commonjs_vue_commonjs2_vue_root_Vue_["Fragment"], {
       key: 1
-    }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createTextVNode"])(Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.sentinelFacts.link), 1)], 64)), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createTextVNode"])(Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.sentinelFacts.after), 1)])], 64)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)])) : _ctx.config.sentinel === 'old' ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("div", AdminPagevue_type_template_id_f40cbb62_hoisted_42, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", null, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createTextVNode"])(Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiSentinelOld', _ctx.config.sentinelVersion || '')) + " ", 1), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("a", {
+    }, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createTextVNode"])(Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.sentinelFacts.link), 1)], 64)), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createTextVNode"])(Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.sentinelFacts.after), 1)])], 64)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)])) : _ctx.config.sentinel === 'old' ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("div", AdminPagevue_type_template_id_eee995c6_hoisted_46, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", null, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createTextVNode"])(Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiSentinelOld', _ctx.config.sentinelVersion || '')) + " ", 1), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("a", {
       href: _ctx.pluginsUrl
-    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiSentinelPluginsLink')), 9, AdminPagevue_type_template_id_f40cbb62_hoisted_43)])])) : (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("div", AdminPagevue_type_template_id_f40cbb62_hoisted_44, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", null, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createTextVNode"])(Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate(_ctx.sentinelKey)) + " ", 1), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("a", {
+    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiSentinelPluginsLink')), 9, AdminPagevue_type_template_id_eee995c6_hoisted_47)])])) : (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementBlock"])("div", AdminPagevue_type_template_id_eee995c6_hoisted_48, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", null, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createTextVNode"])(Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate(_ctx.sentinelKey)) + " ", 1), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("a", {
       href: _ctx.sentinelUrl,
       target: "_blank",
       rel: "noopener"
-    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiSentinelLink')), 9, AdminPagevue_type_template_id_f40cbb62_hoisted_45)])]))], 2)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)]), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", null, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("a", {
+    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiSentinelLink')), 9, AdminPagevue_type_template_id_eee995c6_hoisted_49)])]))], 2)) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)]), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("p", null, [Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createElementVNode"])("a", {
       href: _ctx.settingsUrl
-    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiSettings')), 9, AdminPagevue_type_template_id_f40cbb62_hoisted_46)])]),
+    }, Object(external_commonjs_vue_commonjs2_vue_root_Vue_["toDisplayString"])(_ctx.translate('FeinwerkUptimeMonitor_UiSettings')), 9, AdminPagevue_type_template_id_eee995c6_hoisted_50)])]),
     _: 1
   }, 8, ["content-title"]), _ctx.panelSite !== null ? (Object(external_commonjs_vue_commonjs2_vue_root_Vue_["openBlock"])(), Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createBlock"])(_component_TargetPanel, {
     key: 0,
     "id-site": _ctx.panelSite,
     "site-name": _ctx.panelName,
     onClose: _ctx.onPanelClose
-  }, null, 8, ["id-site", "site-name", "onClose"])) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)], 8, AdminPagevue_type_template_id_f40cbb62_hoisted_1);
+  }, null, 8, ["id-site", "site-name", "onClose"])) : Object(external_commonjs_vue_commonjs2_vue_root_Vue_["createCommentVNode"])("", true)], 8, AdminPagevue_type_template_id_eee995c6_hoisted_1);
 }
-// CONCATENATED MODULE: ./plugins/FeinwerkUptimeMonitor/vue/src/AdminPage.vue?vue&type=template&id=f40cbb62
+// CONCATENATED MODULE: ./plugins/FeinwerkUptimeMonitor/vue/src/AdminPage.vue?vue&type=template&id=eee995c6
 
 // CONCATENATED MODULE: ./plugins/FeinwerkUptimeMonitor/vue/src/links.ts
 /*!
@@ -5893,6 +5910,10 @@ AdminStatusvue_type_script_lang_ts.render = AdminStatusvue_type_template_id_2959
         return Object(external_CoreHome_["translate"])(`FeinwerkUptimeMonitor_${keys[count === 1 ? 0 : 1]}`, names);
       }
       return Object(external_CoreHome_["translate"])(`FeinwerkUptimeMonitor_${keys[2]}`, String(count));
+    },
+    /** the PHP functions the latest check run did not find (the server's php.ini disables them) */
+    phpDisabled() {
+      return this.config.disabledPhpFunctions || [];
     },
     /** another plugin delivers results checked from outside: the overview combines both sides */
     outside() {
@@ -6105,7 +6126,7 @@ AdminStatusvue_type_script_lang_ts.render = AdminStatusvue_type_template_id_2959
 
 
 
-AdminPagevue_type_script_lang_ts.render = AdminPagevue_type_template_id_f40cbb62_render
+AdminPagevue_type_script_lang_ts.render = AdminPagevue_type_template_id_eee995c6_render
 
 /* harmony default export */ var AdminPage = (AdminPagevue_type_script_lang_ts);
 // CONCATENATED MODULE: ./plugins/FeinwerkUptimeMonitor/vue/src/index.ts

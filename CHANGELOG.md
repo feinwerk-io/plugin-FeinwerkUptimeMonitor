@@ -1,5 +1,14 @@
 # Changelog
 
+## 5.3.1
+
+- Checks now also run on servers whose PHP has curl_multi_exec disabled; where outgoing requests are not allowed at
+  all, the admin page says which PHP functions are missing instead of showing an error.
+- Where PHP has sleep, set_time_limit or random_int disabled, the checks keep their results and tracking requests are
+  never affected.
+- API: a wrongly typed value, such as a list where a text is expected, is answered with HTTP 400 naming the parameter
+  instead of an error.
+
 ## 5.3.0
 
 - Administration > Diagnostic > Uptime Monitor: a long status wraps onto a second line, so the column Last check stays

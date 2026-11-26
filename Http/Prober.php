@@ -22,6 +22,11 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Target;
  *
  * Targets go in batches: the guard resolves a batch's hosts before any of its transfers starts, so a slow DNS server
  * never eats into the time of other checks. A batch only starts before the deadline; what is left is not measured.
+ *
+ * Side by side through curl_multi where PHP has all its functions; where a host disabled one (often curl_multi_exec,
+ * through php.ini disable_functions) the same transfers run one after the other through curl_exec, one target per
+ * batch, so each starts only before the deadline. Without either, no request is sent and every check ends as
+ * Outcome::PHP_DISABLED (not checkable), never as an error (Capabilities).
  */
 final class Prober
 {
@@ -44,6 +49,7 @@ final class Prober
     /**
      * @param array $proxy Matomo's [proxy] settings: host, port, username, password, exclude (empty: no proxy)
      * @param string|null $caInfo CA bundle file (Matomo's own), null: the system's
+     * @param Capabilities|null $capabilities the PHP functions there are; default PHP's function_exists
      */
     public function __construct(
         private UrlGuard $guard,
@@ -52,8 +58,32 @@ final class Prober
         private int $connectTimeoutMs = 5000,
         private int $totalTimeoutMs = 10000,
         private int $parallel = 8,
-        private ?string $caInfo = null
+        private ?string $caInfo = null,
+        private ?Capabilities $capabilities = null
     ) {
+        $this->capabilities ??= new Capabilities();
+    }
+
+    /**
+     * How the requests go out: Capabilities::MULTI (side by side), SEQUENTIAL (one after the other) or null (none: every
+     * check is not checkable, note php_disabled).
+     */
+    public function transport(): ?string
+    {
+        return $this->capabilities->transport();
+    }
+
+    /**
+     * The disabled PHP functions that keep the checks from running: those of the transport when there is none, and
+     * those the guard needs to decide (AddressGuard::missingFunctions()). Empty while the checks can run.
+     *
+     * @return string[]
+     */
+    public function missingFunctions(): array
+    {
+        $guard = $this->guard instanceof AddressGuard ? $this->guard->missingFunctions() : [];
+
+        return array_values(array_unique(array_merge($this->capabilities->missingForTransport(), $guard)));
     }
 
     /**
@@ -80,13 +110,24 @@ final class Prober
         foreach ($targets as $target) {
             $queue[] = ['target' => $target, 'url' => $target->url, 'hops' => 0, 'spent' => 0, 'cert' => null, 'dns' => null];
         }
+        $transport = $this->transport();
+        // one after the other: one target per batch, so that each one starts only before the deadline
+        $batch = $transport === Capabilities::SEQUENTIAL ? 1 : max(1, $this->parallel * 2);
         while ($queue !== [] && microtime(true) < $deadline) {
             if ($beforeBatch !== null) {
                 $beforeBatch(); // e.g. keep the run's lock alive
             }
-            $pending = array_splice($queue, 0, max(1, $this->parallel * 2));
+            $pending = array_splice($queue, 0, $batch);
+            if ($transport === null) {
+                // no request can go out from this PHP: not checkable, without a lookup
+                foreach ($pending as $state) {
+                    $finish($state, self::failure($state, Outcome::PHP_DISABLED));
+                }
+                continue;
+            }
             while ($pending !== []) {
-                $pending = $this->transfer($this->resolve($pending, $finish, $deadline), $finish);
+                $ready = $this->resolve($pending, $finish, $deadline);
+                $pending = $transport === Capabilities::MULTI ? $this->transfer($ready, $finish) : $this->transferEach($ready, $finish);
             }
         }
 
@@ -199,31 +240,69 @@ final class Prober
                 unset($active[spl_object_id($handle)]);
                 curl_multi_remove_handle($multi, $handle);
 
-                $state = $entry['state'];
-                $response = $this->response($handle, (int) $info['result'], $entry['sink'], $state);
-                $redirect = curl_getinfo($handle, CURLINFO_REDIRECT_URL);
-
-                if ($response->error === null && $response->status >= 300 && $response->status < 400
-                    && is_string($redirect) && $redirect !== ''
-                    && in_array($state['target']->kind, self::FOLLOWS_REDIRECTS, true)
-                    && $state['hops'] < self::MAX_REDIRECTS
-                ) {
-                    $next[] = [
-                        'target' => $state['target'],
-                        'url' => $redirect,
-                        'hops' => $state['hops'] + 1,
-                        'spent' => $response->timings['total'],
-                        'cert' => $response->certNotAfter,
-                        'dns' => $state['dns'],
-                    ];
-                    continue;
+                $hop = $this->finished($handle, (int) $info['result'], $entry['sink'], $entry['state'], $finish);
+                if ($hop !== null) {
+                    $next[] = $hop;
                 }
-                $finish($state, $response);
             }
         }
         curl_multi_close($multi);
 
         return $next;
+    }
+
+    /**
+     * The same transfers one after the other through curl_exec (a host without curl_multi_exec): the same handles,
+     * options, pinning, body cap and timings; finishes them or returns their next redirect hops.
+     *
+     * @return list<array> redirect hops to resolve and transfer next
+     */
+    private function transferEach(array $states, \Closure $finish): array
+    {
+        $next = [];
+        foreach ($states as $state) {
+            $sink = new \stdClass();
+            $sink->body = '';
+            $sink->capped = false;
+            $handle = $this->handle($state, $sink);
+            curl_exec($handle);
+            $hop = $this->finished($handle, curl_errno($handle), $sink, $state, $finish);
+            if ($hop !== null) {
+                $next[] = $hop;
+            }
+        }
+
+        return $next;
+    }
+
+    /**
+     * A transfer is done: finishes the state, or returns its next redirect hop (websites and the Matomo interface, up
+     * to MAX_REDIRECTS).
+     *
+     * @param \CurlHandle $handle
+     */
+    private function finished($handle, int $result, \stdClass $sink, array $state, \Closure $finish): ?array
+    {
+        $response = $this->response($handle, $result, $sink, $state);
+        $redirect = curl_getinfo($handle, CURLINFO_REDIRECT_URL);
+
+        if ($response->error === null && $response->status >= 300 && $response->status < 400
+            && is_string($redirect) && $redirect !== ''
+            && in_array($state['target']->kind, self::FOLLOWS_REDIRECTS, true)
+            && $state['hops'] < self::MAX_REDIRECTS
+        ) {
+            return [
+                'target' => $state['target'],
+                'url' => $redirect,
+                'hops' => $state['hops'] + 1,
+                'spent' => $response->timings['total'],
+                'cert' => $response->certNotAfter,
+                'dns' => $state['dns'],
+            ];
+        }
+        $finish($state, $response);
+
+        return null;
     }
 
     /**
@@ -277,7 +356,9 @@ final class Prober
             // Pin the connection independently of how curl normalises the URL's host: every request connects to a
             // unique placeholder name, which resolves only to the approved addresses. Host header, SNI and the
             // certificate check keep the URL's host.
-            $pin = 'fwum-pin-' . (++self::$pins) . '-' . getmypid() . '.invalid';
+            // getmypid is on some hosts' list of disabled functions
+            $pid = $this->capabilities->has('getmypid') ? getmypid() : mt_rand();
+            $pin = 'fwum-pin-' . (++self::$pins) . '-' . $pid . '.invalid';
             $addresses = array_map(
                 static fn(string $ip): string => filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? '[' . $ip . ']' : $ip,
                 $decision->ips

@@ -17,6 +17,7 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Outcome;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\ResponseClassifier;
 use Piwik\Plugins\FeinwerkUptimeMonitor\FeinwerkUptimeMonitor;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\AddressGuard;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Capabilities;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Prober;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\CheckRunner;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\DetectionJob;
@@ -32,6 +33,7 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Store\TargetStore;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Targets\ContainerSource;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Targets\DefaultTargets;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Tasks;
+use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\DisabledFunctions;
 use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\HttpFixtureServer;
 use Piwik\Tests\Framework\Fixture;
 use Piwik\Tests\Framework\TestCase\IntegrationTestCase;
@@ -69,7 +71,12 @@ class CheckRunnerTest extends IntegrationTestCase
         $this->slept = [];
     }
 
-    private function runner(array $sitePaths, int $budget = 60, int $parallel = 8, ?RunLock $lock = null, int $retryDelay = CheckRunner::RETRY_DELAY, ?ContainerSource $containers = null): CheckRunner
+    /**
+     * @param \Closure|null $clock the run's clock, default microtime(true)
+     * @param Capabilities|null $capabilities the prober's PHP functions, default all of this PHP's
+     */
+    private function runner(array $sitePaths, int $budget = 60, int $parallel = 8, ?RunLock $lock = null, int $retryDelay = CheckRunner::RETRY_DELAY,
+        ?ContainerSource $containers = null, ?\Closure $clock = null, ?Capabilities $capabilities = null): CheckRunner
     {
         foreach ($sitePaths as $i => $path) {
             Fixture::createWebsite('2026-01-01 00:00:00', 0, 'Site ' . $i, self::$base . $path);
@@ -83,14 +90,14 @@ class CheckRunnerTest extends IntegrationTestCase
             new StateStore(),
             new IncidentStore(),
             new RollupStore(),
-            new Prober($guard, [], 'FeinwerkUptimeBot/test', 1000, 3000, $parallel),
+            new Prober($guard, [], 'FeinwerkUptimeBot/test', 1000, 3000, $parallel, null, $capabilities),
             new ResponseClassifier(),
             new DefaultTargets('', '', $containers ?? new ContainerSource(static fn(): bool => false), static fn(): string => self::$base . '/'),
             new DetectionJob($targets),
             new Retention(),
             new IntervalTracker(),
             $lock,
-            static fn(): float => microtime(true),
+            $clock ?? static fn(): float => microtime(true),
             function (int $seconds): void {
                 $this->slept[] = $seconds;
             },
@@ -212,6 +219,38 @@ class CheckRunnerTest extends IntegrationTestCase
         } finally {
             $held->release();
         }
+    }
+
+    /**
+     * Review 5.3.1 #3: the run keeps its lock alive before each batch, and on the sequential way a batch is one address:
+     * the lock's UPDATE ran before every address. It now runs at most every LOCK_REFRESH_EVERY seconds of the run's clock,
+     * always with the run's whole lock time.
+     */
+    public function test_lockRefresh_atMostEveryTenSeconds_notBeforeEveryAddress(): void
+    {
+        $lock = new class extends RunLock {
+            /** @var int[] */
+            public array $refreshes = [];
+
+            public function refresh(int $ttlSeconds): void
+            {
+                $this->refreshes[] = $ttlSeconds;
+                parent::refresh($ttlSeconds);
+            }
+        };
+        // the run's clock moves 4 seconds on each reading, from now on (the prober's deadline compares with real time):
+        // the start, then one reading before each of the six addresses (8, 12 and 24 seconds after the last refresh)
+        $readings = 0;
+        $now = microtime(true);
+        $clock = static function () use (&$readings, $now): float {
+            return $now + 4 * $readings++;
+        };
+        $sequential = new Capabilities(DisabledFunctions::except(['curl_multi_exec']));
+        $report = $this->runner(['/ok', '/ok?b', '/ok?c'], 60, 8, $lock, CheckRunner::RETRY_DELAY, null, $clock, $sequential)->run('task');
+
+        $this->assertSame(6, $report->checked, 'three Matomo addresses and three websites, one after the other');
+        $this->assertSame([60 + CheckRunner::LOCK_MARGIN, 60 + CheckRunner::LOCK_MARGIN], $lock->refreshes,
+            'after 12 and 24 seconds, not before each of the six');
     }
 
     public function test_firstRunAfterLongPause_recordsGap(): void

@@ -224,6 +224,16 @@ class ResponseClassifierTest extends TestCase
         $this->assertResult($this->classify(Kind::TRACKER, null, '', Outcome::PROXY), Outcome::NOT_CHECKABLE, Outcome::PROXY);
     }
 
+    /** PHP functions the checks need are disabled on the server: never an outage, also for an address that was up. */
+    public function test_phpFunctionsDisabled_isNotCheckable_withItsNote(): void
+    {
+        foreach ([Kind::WEB, Kind::UI, Kind::TRACKER, Kind::JS, Kind::CONTAINER, Kind::PROXY] as $kind) {
+            $this->assertResult($this->classify($kind, null, '', Outcome::PHP_DISABLED), Outcome::NOT_CHECKABLE, null, Outcome::PHP_DISABLED);
+            $this->assertResult($this->classify($kind, null, '', Outcome::PHP_DISABLED, 'https://x/', [], null), Outcome::NOT_CHECKABLE, null, Outcome::PHP_DISABLED);
+        }
+        $this->assertLessThanOrEqual(20, strlen(Outcome::PHP_DISABLED), 'fits the note column (VARCHAR(20))');
+    }
+
     public function test_ui_403FromForeignHost_isDown(): void
     {
         $this->assertResult($this->classify(Kind::UI, 403, 'challenge', null, 'https://edge.cdn.example/'), Outcome::DOWN, Outcome::CONTENT);

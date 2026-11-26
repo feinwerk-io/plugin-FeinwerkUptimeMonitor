@@ -14,9 +14,11 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Kind;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Outcome;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Target;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\AddressGuard;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Capabilities;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\GuardDecision;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Prober;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\UrlGuard;
+use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\DisabledFunctions;
 use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\HttpFixtureServer;
 
 /**
@@ -26,7 +28,10 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\HttpFixtureServer;
  */
 class ProberTest extends TestCase
 {
-    private static string $base;
+    /** Matomo's [proxy] on port 9 of this host, where nothing listens */
+    protected const UNREACHABLE_PROXY = ['host' => '127.0.0.1', 'port' => '9'];
+
+    protected static string $base;
 
     public static function setUpBeforeClass(): void
     {
@@ -38,19 +43,22 @@ class ProberTest extends TestCase
         HttpFixtureServer::stop();
     }
 
-    private static function target(int $id, string $kind, string $path): Target
+    protected static function target(int $id, string $kind, string $path): Target
     {
         return new Target($id, 0, $kind . $id, $kind, self::$base . $path, 'default');
     }
 
-    private static function prober(?UrlGuard $guard = null, int $connectMs = 2000, int $totalMs = 5000, int $parallel = 8): Prober
+    /**
+     * @param array $proxy Matomo's [proxy] settings (empty: none)
+     */
+    protected static function prober(?UrlGuard $guard = null, int $connectMs = 2000, int $totalMs = 5000, int $parallel = 8, array $proxy = []): Prober
     {
-        return new Prober($guard ?? new AddressGuard(true), [], 'FeinwerkUptimeMonitor-Test', $connectMs, $totalMs, $parallel);
+        return new Prober($guard ?? new AddressGuard(true), $proxy, 'FeinwerkUptimeMonitor-Test', $connectMs, $totalMs, $parallel);
     }
 
     public function test_ok_hasStatusBodyAndTimings(): void
     {
-        $responses = self::prober()->probeAll([self::target(1, Kind::WEB, '/ok')], microtime(true) + 30);
+        $responses = static::prober()->probeAll([self::target(1, Kind::WEB, '/ok')], microtime(true) + 30);
         $this->assertArrayHasKey(1, $responses);
         $r = $responses[1];
         $this->assertSame(200, $r->status);
@@ -65,14 +73,14 @@ class ProberTest extends TestCase
 
     public function test_slow_isTimeout(): void
     {
-        $r = self::prober(null, 2000, 1000)->probeAll([self::target(1, Kind::WEB, '/slow')], microtime(true) + 30)[1];
+        $r = static::prober(null, 2000, 1000)->probeAll([self::target(1, Kind::WEB, '/slow')], microtime(true) + 30)[1];
         $this->assertNull($r->status);
         $this->assertSame(Outcome::TIMEOUT, $r->error);
     }
 
     public function test_bigBody_isCapped(): void
     {
-        $r = self::prober()->probeAll([self::target(1, Kind::WEB, '/big')], microtime(true) + 30)[1];
+        $r = static::prober()->probeAll([self::target(1, Kind::WEB, '/big')], microtime(true) + 30)[1];
         $this->assertSame(200, $r->status);
         $this->assertNull($r->error);
         $this->assertLessThanOrEqual(Prober::MAX_BODY, strlen($r->body));
@@ -86,7 +94,7 @@ class ProberTest extends TestCase
      */
     public function test_bodyOfExactlyTheCap_isWhole_oneByteMoreIsCapped(): void
     {
-        $responses = self::prober()->probeAll([
+        $responses = static::prober()->probeAll([
             self::target(1, Kind::WEB, '/bytes?n=' . Prober::MAX_BODY),
             self::target(2, Kind::WEB, '/bytes?n=' . (Prober::MAX_BODY + 1)),
             self::target(3, Kind::CONTAINER, '/bytes?n=' . Prober::MAX_BODY_LARGE),
@@ -100,7 +108,7 @@ class ProberTest extends TestCase
 
     public function test_web_followsTwoRedirects(): void
     {
-        $r = self::prober()->probeAll([self::target(1, Kind::WEB, '/r1')], microtime(true) + 30)[1];
+        $r = static::prober()->probeAll([self::target(1, Kind::WEB, '/r1')], microtime(true) + 30)[1];
         $this->assertSame(200, $r->status);
         $this->assertSame('ok', $r->body);
         $this->assertSame(2, $r->redirects);
@@ -109,14 +117,14 @@ class ProberTest extends TestCase
 
     public function test_tracker_doesNotFollowRedirects(): void
     {
-        $r = self::prober()->probeAll([self::target(1, Kind::TRACKER, '/r1')], microtime(true) + 30)[1];
+        $r = static::prober()->probeAll([self::target(1, Kind::TRACKER, '/r1')], microtime(true) + 30)[1];
         $this->assertSame(302, $r->status);
         $this->assertSame(0, $r->redirects);
     }
 
     public function test_redirectLoop_stopsAfterThree(): void
     {
-        $r = self::prober()->probeAll([self::target(1, Kind::UI, '/loop')], microtime(true) + 30)[1];
+        $r = static::prober()->probeAll([self::target(1, Kind::UI, '/loop')], microtime(true) + 30)[1];
         $this->assertSame(302, $r->status);
         $this->assertSame(Prober::MAX_REDIRECTS, $r->redirects);
     }
@@ -141,7 +149,7 @@ class ProberTest extends TestCase
                 return $this->check($url);
             }
         };
-        $r = self::prober($guard)->probeAll([self::target(1, Kind::WEB, '/to-private')], microtime(true) + 30)[1];
+        $r = static::prober($guard)->probeAll([self::target(1, Kind::WEB, '/to-private')], microtime(true) + 30)[1];
         $this->assertSame(Outcome::BLOCKED, $r->error);
         $this->assertSame('http://10.0.0.1/', $r->finalUrl);
         $this->assertCount(2, $guard->seen, 'every hop goes through the guard');
@@ -152,7 +160,7 @@ class ProberTest extends TestCase
         // the guard approves "localhost" only as 10.255.255.1 (unroutable): curl must not resolve localhost itself
         $guard = new AddressGuard(true, static fn(string $host): array => $host === 'localhost' ? ['10.255.255.1'] : []);
         $target = new Target(1, 0, 'web1', Kind::WEB, 'http://localhost:' . HttpFixtureServer::port() . '/ok', 'default');
-        $r = self::prober($guard, 500, 1500)->probeAll([$target], microtime(true) + 30)[1];
+        $r = static::prober($guard, 500, 1500)->probeAll([$target], microtime(true) + 30)[1];
         $this->assertNull($r->status, 'no answer from the fixture server on 127.0.0.1');
         $this->assertSame(Outcome::CONNECT, $r->error);
     }
@@ -162,7 +170,7 @@ class ProberTest extends TestCase
         // 127.0.0.2 refuses at once (the fixture server listens on 127.0.0.1 only), on every host and CI runner
         $guard = new AddressGuard(true, static fn(string $host): array => $host === 'twoaddr.test' ? ['127.0.0.2', '127.0.0.1'] : []);
         $target = new Target(1, 0, 'web1', Kind::WEB, 'http://twoaddr.test:' . HttpFixtureServer::port() . '/ok', 'default');
-        $r = self::prober($guard, 500, 3000)->probeAll([$target], microtime(true) + 30)[1];
+        $r = static::prober($guard, 500, 3000)->probeAll([$target], microtime(true) + 30)[1];
         $this->assertSame(200, $r->status);
     }
 
@@ -173,7 +181,7 @@ class ProberTest extends TestCase
             return ['127.0.0.1'];
         });
         $target = new Target(1, 0, 'web', Kind::WEB, 'http://slow-resolver.test:' . HttpFixtureServer::port() . '/ok', 'default');
-        $response = self::prober($guard, 1000, 2000, 2)->probeAll([$target], microtime(true) + 30)[1];
+        $response = static::prober($guard, 1000, 2000, 2)->probeAll([$target], microtime(true) + 30)[1];
         $this->assertSame(Outcome::DNS, $response->error, 'a slow resolver is no slow website');
     }
 
@@ -183,7 +191,7 @@ class ProberTest extends TestCase
         $url = 'http://127.0.0.1:' . HttpFixtureServer::port() . '/big-login';
         $ui = new Target(1, 0, 'ui', Kind::UI, $url, 'default', ['matomoHost' => '127.0.0.1']);
         $web = new Target(2, 1, 'web:big', Kind::WEB, $url, 'default');
-        $responses = self::prober(new AddressGuard(true, null, true))->probeAll([$ui, $web], microtime(true) + 30);
+        $responses = static::prober(new AddressGuard(true, null, true))->probeAll([$ui, $web], microtime(true) + 30);
         $this->assertGreaterThan(Prober::MAX_BODY, strlen($responses[1]->body));
         $this->assertStringContainsString('name="form_login"', $responses[1]->body);
         $this->assertLessThanOrEqual(Prober::MAX_BODY, strlen($responses[2]->body), 'website pages stay capped');
@@ -202,7 +210,7 @@ class ProberTest extends TestCase
         });
         $fast = new Target(1, 0, 'web1', Kind::WEB, self::$base . '/slow?s=1', 'default');
         $slowDns = new Target(2, 0, 'web2', Kind::WEB, 'http://slowdns.test/', 'default');
-        $responses = self::prober($guard, 1000, 1800, 2)->probeAll([$fast, $slowDns], microtime(true) + 30);
+        $responses = static::prober($guard, 1000, 1800, 2)->probeAll([$fast, $slowDns], microtime(true) + 30);
         $this->assertSame(200, $responses[1]->status, 'its 1.8 s were not spent waiting for the other DNS');
         $this->assertSame(Outcome::DNS, $responses[2]->error);
         $this->assertGreaterThanOrEqual(1900, $responses[2]->timings['dns']);
@@ -219,7 +227,7 @@ class ProberTest extends TestCase
             $targets[] = new Target($i + 1, 0, 'web' . $i, Kind::WEB, 'http://' . $name . '.test:' . HttpFixtureServer::port() . '/ok', 'default');
         }
         // one batch of all three (parallel 2 gives batches of 4): the deadline passes while the second host resolves
-        $responses = self::prober($guard, 1000, 3000, 2)->probeAll($targets, microtime(true) + 1.0);
+        $responses = static::prober($guard, 1000, 3000, 2)->probeAll($targets, microtime(true) + 1.0);
         $this->assertLessThan(3, count($responses), 'resolving stops at the deadline');
         $this->assertArrayHasKey(1, $responses);
         $this->assertGreaterThanOrEqual(700, $responses[1]->timings['total'], 'the lookup counts into the check time');
@@ -227,7 +235,7 @@ class ProberTest extends TestCase
 
     public function test_redirects_shareOneTimeout(): void
     {
-        $r = self::prober(null, 1000, 1500)->probeAll([self::target(1, Kind::WEB, '/r-slow')], microtime(true) + 30)[1];
+        $r = static::prober(null, 1000, 1500)->probeAll([self::target(1, Kind::WEB, '/r-slow')], microtime(true) + 30)[1];
         $this->assertSame(Outcome::TIMEOUT, $r->error);
         $this->assertLessThan(2500, $r->timings['total']);
     }
@@ -237,7 +245,7 @@ class ProberTest extends TestCase
         $saved = getenv('http_proxy');
         putenv('http_proxy=http://127.0.0.1:9');
         try {
-            $r = self::prober()->probeAll([self::target(1, Kind::WEB, '/ok')], microtime(true) + 30)[1];
+            $r = static::prober()->probeAll([self::target(1, Kind::WEB, '/ok')], microtime(true) + 30)[1];
             $this->assertSame(200, $r->status);
         } finally {
             putenv($saved === false ? 'http_proxy' : 'http_proxy=' . $saved);
@@ -246,24 +254,39 @@ class ProberTest extends TestCase
 
     public function test_matomoProxy_excludesLocalAndListedHosts(): void
     {
-        $prober = new Prober(new AddressGuard(true), ['host' => 'proxy.example', 'port' => '3128', 'exclude' => 'intranet.example, other.example'], 'ua');
+        $prober = static::prober(null, 2000, 5000, 8, ['host' => 'proxy.example', 'port' => '3128', 'exclude' => 'intranet.example, other.example']);
         $this->assertFalse($prober->usesProxyFor('localhost'));
         $this->assertFalse($prober->usesProxyFor('intranet.example'));
         $this->assertTrue($prober->usesProxyFor('www.shop.example'));
-        $this->assertFalse((new Prober(new AddressGuard(true), [], 'ua'))->usesProxyFor('www.shop.example'));
+        $this->assertFalse(static::prober()->usesProxyFor('www.shop.example'));
     }
 
     public function test_unreachableProxy_isAProxyError(): void
     {
-        $prober = new Prober(new AddressGuard(true), ['host' => '127.0.0.1', 'port' => '9'], 'ua', 500, 1500);
+        // a guard that looks nothing up: the name stays inside this test, the proxy would resolve it
+        $prober = static::prober(new AddressGuard(true, static fn(string $host): array => []), 500, 1500, 8, self::UNREACHABLE_PROXY);
         $target = new Target(1, 0, 'web1', Kind::WEB, 'http://www.shop.example/', 'default');
         $this->assertSame(Outcome::PROXY, $prober->probeAll([$target], microtime(true) + 30)[1]->error);
+    }
+
+    /**
+     * Review 5.3.1 #1: through Matomo's [proxy], on a PHP without gethostbynamel and dns_get_record, a name is not
+     * checkable while private addresses are not allowed, and nothing is sent (an unreachable proxy would answer "proxy").
+     */
+    public function test_proxiedName_withoutTheLookups_isNotCheckable_andNotSent(): void
+    {
+        $noLookups = new Capabilities(DisabledFunctions::except(['gethostbynamel', 'dns_get_record']));
+        $prober = static::prober(new AddressGuard(false, null, false, $noLookups), 500, 1500, 8, self::UNREACHABLE_PROXY);
+        $target = new Target(1, 0, 'web1', Kind::WEB, 'https://intranet.shop.example/', 'default');
+        $r = $prober->probeAll([$target], microtime(true) + 30)[1];
+        $this->assertSame([null, Outcome::PHP_DISABLED, ''], [$r->status, $r->error, $r->body]);
+        $this->assertSame(['gethostbynamel', 'dns_get_record'], $prober->missingFunctions(), 'named on the admin page');
     }
 
     public function test_consume_handsOverEachResultAndKeepsNothing(): void
     {
         $seen = [];
-        $returned = self::prober()->probeAll([self::target(1, Kind::WEB, '/ok'), self::target(2, Kind::TRACKER, '/matomo.php')], microtime(true) + 30,
+        $returned = static::prober()->probeAll([self::target(1, Kind::WEB, '/ok'), self::target(2, Kind::TRACKER, '/matomo.php')], microtime(true) + 30,
             static function (Target $t, $r) use (&$seen): void {
                 $seen[$t->id] = $r->status;
             });
@@ -274,7 +297,7 @@ class ProberTest extends TestCase
 
     public function test_blockedTarget_isNotRequested(): void
     {
-        $r = self::prober(new AddressGuard(false))->probeAll([self::target(1, Kind::WEB, '/ok')], microtime(true) + 30)[1];
+        $r = static::prober(new AddressGuard(false))->probeAll([self::target(1, Kind::WEB, '/ok')], microtime(true) + 30)[1];
         $this->assertSame(Outcome::BLOCKED, $r->error);
         $this->assertNull($r->status);
     }
@@ -282,13 +305,13 @@ class ProberTest extends TestCase
     public function test_connectTimeout_isReportedAsConnect(): void
     {
         $target = new Target(1, 0, 'web1', Kind::WEB, 'http://10.255.255.1/', 'default');
-        $r = self::prober(null, 500, 2000)->probeAll([$target], microtime(true) + 30)[1];
+        $r = static::prober(null, 500, 2000)->probeAll([$target], microtime(true) + 30)[1];
         $this->assertSame(Outcome::CONNECT, $r->error);
     }
 
     public function test_deadlinePassed_probesNothing(): void
     {
-        $this->assertSame([], self::prober()->probeAll([self::target(1, Kind::WEB, '/ok')], microtime(true) - 1));
+        $this->assertSame([], static::prober()->probeAll([self::target(1, Kind::WEB, '/ok')], microtime(true) - 1));
     }
 
     public function test_parallel_eightAtOnce(): void
@@ -300,7 +323,7 @@ class ProberTest extends TestCase
             $targets[] = new Target($i, 0, 'web' . $i, Kind::WEB, 'http://10.255.255.1:' . (8000 + $i) . '/', 'default');
         }
         $start = microtime(true);
-        $responses = self::prober(null, 1000, 1500, 8)->probeAll($targets, microtime(true) + 30);
+        $responses = static::prober(null, 1000, 1500, 8)->probeAll($targets, microtime(true) + 30);
         $this->assertCount(8, $responses);
         $this->assertLessThan(4.0, microtime(true) - $start, 'eight checks run side by side');
         foreach ($responses as $r) {
@@ -310,7 +333,7 @@ class ProberTest extends TestCase
 
     public function test_resultsAreKeyedByTargetId(): void
     {
-        $responses = self::prober()->probeAll([self::target(11, Kind::TRACKER, '/matomo.php'), self::target(12, Kind::JS, '/matomo.js')], microtime(true) + 30);
+        $responses = static::prober()->probeAll([self::target(11, Kind::TRACKER, '/matomo.php'), self::target(12, Kind::JS, '/matomo.js')], microtime(true) + 30);
         $this->assertSame([11, 12], array_keys($responses));
         $this->assertStringContainsString('This resource is part of Matomo', $responses[11]->body);
     }

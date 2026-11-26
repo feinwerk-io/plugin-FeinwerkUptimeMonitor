@@ -10,7 +10,9 @@
 namespace Piwik\Plugins\FeinwerkUptimeMonitor\tests\Unit\Tracker;
 
 use PHPUnit\Framework\TestCase;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Capabilities;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Tracker\TimingSampler;
+use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\DisabledFunctions;
 
 /**
  * @group FeinwerkUptimeMonitor
@@ -118,5 +120,30 @@ class TimingSamplerTest extends TestCase
         });
         $sampler->onTrackerEnd(self::server(), ['idsite' => '1'], [], $this->body(''));
         $this->addToAssertionCount(1); // no exception reached the tracker
+    }
+
+    /** Matomo posts Tracker.end outside its own try: nothing of the sample may throw, the draw included. */
+    public function test_aFailingDraw_neverReachesTheTrackingRequest(): void
+    {
+        $sampler = new TimingSampler(100, function (): void {
+            $this->inserts[] = 'insert';
+        }, static function (int $min, int $max): int {
+            throw new \Error('Call to undefined function random_int()');
+        });
+        $sampler->onTrackerEnd(self::server(), ['idsite' => '1', 'rec' => '1'], [], $this->body(''));
+        $this->assertSame([], $this->inserts);
+    }
+
+    public function test_withoutRandomInt_drawsWithMtRand_withoutEither_samplesNothing(): void
+    {
+        $insert = function (string $at, int $ms, bool $bulk): void {
+            $this->inserts[] = $ms;
+        };
+        (new TimingSampler(1, $insert, null, new Capabilities(DisabledFunctions::except(['random_int']))))
+            ->onTrackerEnd(self::server(), ['idsite' => '1', 'rec' => '1'], [], $this->body(''));
+        $this->assertCount(1, $this->inserts);
+        (new TimingSampler(1, $insert, null, new Capabilities(DisabledFunctions::except(['random_int', 'mt_rand']))))
+            ->onTrackerEnd(self::server(), ['idsite' => '1', 'rec' => '1'], [], $this->body(''));
+        $this->assertCount(1, $this->inserts, 'no random number: no sample');
     }
 }

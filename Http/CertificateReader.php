@@ -38,11 +38,14 @@ final class CertificateReader
     }
 
     /**
-     * Opens a TLS connection to the given address (already checked by the guard) and reads the leaf certificate.
+     * Opens a TLS connection to the given address (already checked by the guard) and reads the leaf certificate. Null
+     * also where the host disabled a function this needs (Capabilities::canHandshake()).
+     *
+     * @param Capabilities|null $capabilities the PHP functions there are; default PHP's function_exists
      */
-    public static function fromHandshake(string $host, string $ip, int $port, float $timeoutSeconds = 5.0): ?string
+    public static function fromHandshake(string $host, string $ip, int $port, float $timeoutSeconds = 5.0, ?Capabilities $capabilities = null): ?string
     {
-        if (!function_exists('openssl_x509_parse')) {
+        if (!($capabilities ?? new Capabilities())->canHandshake()) {
             return null;
         }
         $address = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? "[$ip]" : $ip;
