@@ -90,7 +90,7 @@ final class ResponseClassifier
                     || ($target->kind === Kind::PROXY && str_contains($body, self::MARKER_TRACKER));
                 return $reached ? self::up() : self::down(Outcome::CONTENT);
             case Kind::CONTAINER:
-                return $this->container($target, $status, $body);
+                return $this->container($target, $status, $body, $response->capped);
             case Kind::WEB:
             default:
                 if ($status >= 200 && $status < 300) {
@@ -154,26 +154,58 @@ final class ResponseClassifier
     }
 
     /**
+     * The container file names its id and, when published, its live revision. A body cut at the cap (a container
+     * larger than Prober::MAX_BODY_LARGE) may stop before the id or before a whole revision number ("3" at the cut can
+     * be 30): then it proves neither a current nor an outdated container, and the result is not checkable with the
+     * note too_large instead of an outage.
+     *
      * @return array{0: string, 1: ?string, 2: ?string}
      */
-    private function container(Target $target, int $status, string $body): array
+    private function container(Target $target, int $status, string $body, bool $capped): array
     {
         if ($status !== 200) {
             return self::down($status >= 300 && $status < 400 ? Outcome::REDIRECT : Outcome::HTTP_STATUS);
         }
+        $tooLarge = [Outcome::NOT_CHECKABLE, Outcome::CONTENT, Outcome::TOO_LARGE];
         $id = (string) ($target->extra['idContainer'] ?? '');
-        // Matomo pretty-prints the container JSON in development mode: allow spaces after the colon
-        if ($id === '' || !preg_match('/"id":\s*' . preg_quote((string) json_encode($id), '/') . '/', $body)) {
+        if ($id === '') {
             return self::down(Outcome::CONTENT);
+        }
+        // Matomo pretty-prints the container JSON in development mode: allow spaces after the colon
+        if (!preg_match('/"id":\s*' . preg_quote((string) json_encode($id), '/') . '/', $body)) {
+            return $capped ? $tooLarge : self::down(Outcome::CONTENT);
         }
         // without a live revision (a container set by hand that is no longer published) only the id is checked
         if (isset($target->extra['revision'])) {
             $revision = (int) $target->extra['revision'];
-            if (!preg_match('/"revision":\s*' . $revision . '(?![0-9])/', $body)) {
-                return self::down(Outcome::STALE_CONTAINER);
+            if (self::wholeMatch('/"revision":\s*' . $revision . '(?![0-9])/', $body, $capped)) {
+                return self::up();
             }
+            // cut before the key, inside it or inside the number: no whole revision was read, so none is outdated
+            if ($capped && !self::wholeMatch('/"revision":\s*[0-9]+(?![0-9])/', $body, true)) {
+                return $tooLarge;
+            }
+            return self::down(Outcome::STALE_CONTAINER);
         }
         return self::up();
+    }
+
+    /**
+     * Whether the pattern matches in the body as a whole: in a body cut at the cap, a match that touches the end may go
+     * on past it ("revision":3 there can be 30) and does not count.
+     */
+    private static function wholeMatch(string $pattern, string $body, bool $capped): bool
+    {
+        if (preg_match_all($pattern, $body, $matches, PREG_OFFSET_CAPTURE) < 1) {
+            return false;
+        }
+        foreach ($matches[0] as [$text, $offset]) {
+            if (!$capped || $offset + strlen($text) < strlen($body)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

@@ -105,6 +105,41 @@ final class RollupStore
     }
 
     /**
+     * The start of the first hour in which any of the targets was measured, at any time (UTC, "Y-m-d H:i:s"): from the
+     * hour rows (kept 90 days), else the first UTC day of the day rows (kept 400 days) at 00:00; null when never. One
+     * MIN per table over the primary key's leading columns (idtarget, then the hour or day).
+     *
+     * @param int[] $idTargets
+     * @param string $source all|local|external
+     */
+    public function firstMeasured(array $idTargets, string $source = 'all'): ?string
+    {
+        if ($idTargets === []) {
+            return null;
+        }
+        $first = [];
+        foreach ([Schema::HOUR => 'hour', Schema::DAY => 'day'] as $table => $column) {
+            $sql = "SELECT MIN(`$column`) FROM " . Schema::table($table) . ' WHERE idtarget IN (' . Sql::placeholders($idTargets) . ')'
+                . ' AND measured_seconds > 0';
+            $bind = $idTargets;
+            if ($source !== 'all') {
+                $sql .= ' AND source = ?';
+                $bind[] = $source;
+            }
+            $value = Db::fetchOne($sql, $bind);
+            $first[$column] = $value === null || $value === false ? null : (string) $value;
+        }
+        $hour = $first['hour'];
+        $day = $first['day'] !== null ? substr($first['day'], 0, 10) : null;
+        // the hour is exact; when the hours of the first day are gone (older than 90 days), the UTC day
+        if ($hour !== null && ($day === null || substr($hour, 0, 10) <= $day)) {
+            return $hour;
+        }
+
+        return $day !== null ? $day . ' 00:00:00' : null;
+    }
+
+    /**
      * Writes external rows (Pro); local rows are refused by the caller.
      */
     public function upsertHours(array $rows): void

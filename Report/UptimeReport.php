@@ -229,7 +229,11 @@ final class UptimeReport
             $out[] = ['time' => self::iso($t), 'measuredSeconds' => $measured, 'upSeconds' => $up, 'state' => $state];
         }
 
-        return ['grain' => $grain, 'days' => $days, 'cells' => $out];
+        // final review D3: a period before the first measurement names the day the measurements start
+        $first = $rollups->firstMeasured($ids, $source);
+
+        return ['grain' => $grain, 'days' => $days, 'cells' => $out,
+            'firstMeasured' => $first !== null ? self::iso((int) strtotime($first . ' UTC')) : null];
     }
 
     /**
@@ -278,14 +282,21 @@ final class UptimeReport
     }
 
     /**
+     * The incidents that overlap the range, newest first, each with the part that lies inside it (startInPeriod,
+     * durationInPeriodSeconds; UptimeMath::partIn()): an outage across midnight counts on each day only with its own
+     * part, an open one up to now.
+     *
+     * @param array{from: int, to: int, grain: string} $range from range()
      * @return list<array>
      */
     public function incidents(int $idSite, array $range, string $state, int $limit, string $source): array
     {
         $out = [];
+        $now = $this->now();
         foreach ((new IncidentStore())->find($idSite, self::utc($range['from']), self::utc($range['to']), $state, $limit, $source) as $row) {
             $start = (int) strtotime($row['started_at'] . ' UTC');
             $end = $row['ended_at'] !== null ? (int) strtotime($row['ended_at'] . ' UTC') : null;
+            $part = UptimeMath::partIn($start, $end, $range['from'], $range['to'], $now);
             $out[] = [
                 'idIncident' => (int) $row['idincident'],
                 'type' => (string) $row['kind'],
@@ -294,7 +305,9 @@ final class UptimeReport
                 'source' => (string) $row['source'],
                 'start' => self::iso($start),
                 'end' => $end !== null ? self::iso($end) : null,
-                'durationSeconds' => ($end ?? $this->now()) - $start,
+                'durationSeconds' => ($end ?? $now) - $start,
+                'startInPeriod' => self::iso($part['start']),
+                'durationInPeriodSeconds' => $part['seconds'],
                 'open' => $end === null,
                 'cause' => $row['cause'] !== null ? (string) $row['cause'] : null,
                 'detail' => $row['detail'] !== null ? (string) $row['detail'] : null,
@@ -385,6 +398,8 @@ final class UptimeReport
     {
         $states = (new StateStore())->all();
         $staleAfter = Freshness::now($this->now());
+        // the certificate thresholds once, not per target
+        $settings = self::settings();
         $names = [0 => 'Matomo'];
         $zones = [0 => 'UTC'];
         foreach ((new \Piwik\Plugins\SitesManager\Model())->getAllSites() as $site) {
@@ -401,7 +416,7 @@ final class UptimeReport
             $row = $rows[$idRow] ?? ['idSite' => $idRow, 'name' => $names[$idRow],
                 'timezone' => $zones[$idRow] ?? 'UTC', 'targets' => 0,
                 'off' => 0, 'up' => 0, 'down' => 0, 'notCheckable' => 0, 'stale' => 0, 'lastCheckedAt' => null,
-                'certificateDaysLeft' => null, 'containersDown' => []];
+                'certificateDaysLeft' => null, 'certificateLevel' => null, 'containersDown' => []];
             if (!$target->enabled) {
                 // listed so that a super user can switch it on again from the overview (a container: from its website)
                 $row['off']++;
@@ -427,8 +442,12 @@ final class UptimeReport
                 $checked = self::iso($checkedTs);
                 $row['lastCheckedAt'] = $row['lastCheckedAt'] === null ? $checked : max($row['lastCheckedAt'], $checked);
                 if ($state['cert_not_after'] !== null) {
-                    $days = $this->certificate($state['cert_not_after'])['daysLeft'];
-                    $row['certificateDaysLeft'] = $row['certificateDaysLeft'] === null ? $days : min($row['certificateDaysLeft'], $days);
+                    $cert = $this->certificate($state['cert_not_after'], $settings);
+                    if ($row['certificateDaysLeft'] === null || $cert['daysLeft'] < $row['certificateDaysLeft']) {
+                        // the soonest certificate and its level, as the uptime page colours it
+                        $row['certificateDaysLeft'] = $cert['daysLeft'];
+                        $row['certificateLevel'] = $cert['level'];
+                    }
                 }
             }
             $rows[$idRow] = $row;

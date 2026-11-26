@@ -66,6 +66,10 @@ switch ($path) {
     case '/big':
         $send(200, str_repeat('x', 1024 * 1024));
         break;
+    case '/bytes':
+        // exactly n bytes (at most 8 MiB): the prober's cap edges
+        $send(200, str_repeat('x', max(0, min(8388608, (int) ($_GET['n'] ?? 0)))));
+        break;
     case '/r1':
         $send(302, '', ['Location: ' . $self . '/r2']);
         break;

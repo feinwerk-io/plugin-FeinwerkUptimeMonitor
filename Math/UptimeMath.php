@@ -79,4 +79,23 @@ final class UptimeMath
 
         return (int) round($values[max(1, $rank) - 1]);
     }
+
+    /**
+     * The part of an outage inside a period: it starts at the later of the outage's start and $from and ends at the
+     * earliest of its end, $to and $now (an open outage runs until $now). An outage that only touches the period has
+     * 0 seconds in it.
+     *
+     * @param int $start the outage's start (unix time)
+     * @param int|null $end its end, null while it is open
+     * @param int $from the period's start
+     * @param int $to the period's end (exclusive)
+     * @param int $now the current time
+     * @return array{start: int, seconds: int} the start of the part inside the period and its length in seconds
+     */
+    public static function partIn(int $start, ?int $end, int $from, int $to, int $now): array
+    {
+        $begin = max($start, $from);
+
+        return ['start' => $begin, 'seconds' => max(0, min($end ?? $now, $to, $now) - $begin)];
+    }
 }

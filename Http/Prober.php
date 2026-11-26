@@ -321,7 +321,8 @@ final class Prober
             $state['url'],
             $timings,
             $cert,
-            $state['hops']
+            $state['hops'],
+            $error === null && $sink->capped
         );
     }
 

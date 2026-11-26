@@ -61,16 +61,27 @@ by hand, copy the folder to `plugins/FeinwerkUptimeMonitor` and activate it unde
   website's part): first one answer line, whether Matomo and the website are reachable and when they were last
   checked, or which part has been unreachable since when and why. Below it the key figures (the tracker's processing
   time, the soonest certificate expiry) and an hour strip for Matomo and for the website, which shows every hour of
-  the day (every day of longer periods) as reachable, partly reachable, not reachable or not measured, with the
-  uptime at its end (and the measured share when less than 95 % of the time was measured). Then one table with
-  Matomo's addresses together with the website's Tag Manager containers (Matomo serves their files, so they count in
-  Matomo's uptime), the website's addresses and its tracking proxy (on phones and in narrow dashboard columns a list),
-  and the outages of the chosen period. Times follow the website's timezone.
+  the day (every day of longer periods) as reachable, partly reachable, not reachable or not measured, with the uptime
+  at its end (and the measured share when less than 95 % of the time was measured). Then one table with Matomo's
+  addresses together with the website's Tag Manager containers (Matomo serves their files, so they count in Matomo's
+  uptime), the website's addresses and its tracking proxy (on phones and in narrow dashboard columns a list), and the
+  outages of the chosen period (on phones and in narrow dashboard columns a list as well): outages of several
+  addresses of Matomo, or of the website, at the same time are one row naming them, and on a past day or a longer
+  period each row's duration is its part inside it, with the whole length when that is longer ("30 min of 1 h"). On a
+  past day the answer line speaks of that day first (no outage, or how many outages, how long and where; outages of
+  several addresses at the same time count once, and an outage across midnight counts on each day only with its own
+  part) and then names the current state in one muted line. When something is not reachable right now, that line comes
+  first and in full, with since when and why, and the day follows. A line that names an address that is not reachable
+  is red; a line that counts partly reachable addresses ("2 of 4 addresses not reachable") is amber. On a past day the
+  dots of the addresses follow that day's uptime and the Response column is left out. A period without any measurement
+  is one line, and before the first measurement it links the day the measurements start ("Nov 21: not measured.
+  Measurements start on Nov 23"). Times follow the website's timezone.
   Admins of the website change the check targets with **Edit check targets** and check at once with **Check now**
   (once a minute).
 - **Dashboard widgets:** add "Uptime: Matomo" and "Uptime: Website" from the category **Uptime**. They show the state
   first and, when something is down, only what failed, with a link to the uptime page.
-- **Administration > Diagnostic > Uptime Monitor** (super users): all websites in one list, Matomo first, and checks
+- **Administration > Diagnostic > Uptime Monitor** (super users): all websites in one list (on phones one block per
+  website), Matomo first, the soonest certificate in the warning or critical colour as on the uptime page, and checks
   and alerts as status rows: whether a system cron runs the checks (else the cron line to copy) and whether alerts go
   out through Feinwerk Sentinel. Websites that cannot be checked from the Matomo server are summed up in one line
   below the list; "Show" brings them back into it.
@@ -98,7 +109,7 @@ hour; the others then show "no recent check". Use the cron line above there.
 | Tracker endpoint | `matomo.php` (no parameters, so no visit is recorded) | Matomo's own answer for this address arrives |
 | JavaScript tracker | `matomo.js` | the file is Matomo's tracker |
 | Website | the website's main address | it answers with a success status |
-| Tag Manager container | each published web container | it is the file of the live version |
+| Tag Manager container | each published web container | it is the file of the live version (the check reads the first 4 MB: a larger file that ends before its version can be read shows as not checkable, not as an outage) |
 | Tracking proxy | found on the website or set by hand | it delivers Matomo's tracker, or Matomo's own answer when the web server forwards the path to Matomo (a PHP proxy that cannot reach Matomo answers "200" with an error text: that counts as an outage) |
 
 ### Settings (super users)
@@ -161,7 +172,10 @@ alert can come up to two hours after an outage began; with the cron line above, 
 Every function of the screens is an API method. idSite 0 stands for Matomo itself; with idSite 0, `getUptime`,
 `getResponseTimes`, `getIncidents` and `getTimeline` take `timezoneOf=<idSite>` to follow that website's day instead of UTC. Times are ISO 8601 in UTC,
 response times in milliseconds. Wrong input is answered with HTTP 400 and a message naming the parameter and the
-allowed values.
+allowed values. Each outage of `getIncidents` names its part inside the requested period (`startInPeriod`,
+`durationInPeriodSeconds`): add those up for a period's downtime, not `durationSeconds`. `getTimeline` names the
+first measured hour of its addresses at any time (`firstMeasured`, null when nothing was ever measured), and each row
+of `getSitesOverview` the level of its soonest certificate (`certificateLevel`: ok, warning, critical or expired).
 
 | Method | Example |
 |---|---|

@@ -43,6 +43,12 @@
   &.is-narrow { @rules(); }
 }
 
+// L2: one look for the group headings Matomo and This website, in the table's group rows and in the narrow list
+.fwum-group-heading() {
+  padding: 14px 0 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  line-height: 1.4; color: var(--fwum-muted); border-bottom: 1px solid @fwum-border; background: none;
+}
+
 .fwum-page {
   // the hour strip's cells and tooltip (no theme variable for status colours: own light and dark values)
   --fwum-cell-up: #2e8540;
@@ -78,6 +84,12 @@
     .fwum-fresh > .fwum-muted { font-size: 0.8em; }
   }
   .fwum-answer__detail { color: @fwum-text-light; }
+  // B3: under a past day's answer, the current state in one muted line (its spans carry the colour), aligned with
+  // the text above
+  .fwum-answer__now {
+    margin: 2px 0 0; padding-left: 18px; line-height: 1.5;
+    .fwum-fresh > .fwum-muted { font-size: inherit; }
+  }
   // check now and edit check targets: quiet icons after "checked 3 minutes ago" (Peter, 2026-11-25); the freshness
   // and the icons wrap as one unit, never the icons alone
   .fwum-fresh { display: inline-block; white-space: nowrap; }
@@ -108,7 +120,9 @@
   .fwum-state { font-weight: 600; }
   .is-up .fwum-state { color: var(--fwum-up); }
   .is-down .fwum-state { color: var(--fwum-down); }
-  .is-partial .fwum-state { color: var(--fwum-warn); }
+  // D2: a past day's finished outages in the warning colour, never red; F1 (final review): a line that names a down
+  // address is red (today and the "Now" line), a count of partly reachable addresses amber
+  .is-partial .fwum-state, .is-warn .fwum-state { color: var(--fwum-warn); }
   .is-not_checkable .fwum-state, .is-none .fwum-state, .is-stale .fwum-state, .is-off .fwum-state {
     color: var(--fwum-muted);
   }
@@ -118,7 +132,7 @@
   }
   .is-up .fwum-dot { background: var(--fwum-up); }
   .is-down .fwum-dot { background: var(--fwum-down); }
-  .is-partial .fwum-dot { background: var(--fwum-warn); }
+  .is-partial .fwum-dot, .is-warn .fwum-dot { background: var(--fwum-warn); }
 
   // key figures: small; the hour strip is the picture
   .fwum-figures {
@@ -126,7 +140,9 @@
     > div { min-width: 0; }
     dt { font-size: 0.85em; color: var(--fwum-muted); }
     dd { margin: 0; font-size: 1.2em; font-weight: 600; font-variant-numeric: tabular-nums; }
-    dd.fwum-figures__sub { font-size: 0.85em; font-weight: normal; color: var(--fwum-muted); overflow-wrap: anywhere; }
+    dd.fwum-figures__sub {
+      font-size: 0.85em; font-weight: normal; color: var(--fwum-muted); overflow-wrap: anywhere; text-wrap: balance;
+    }
     dd.fwum-figures__spark { margin-top: 2px; line-height: 0; }
     dd.is-warning { color: var(--fwum-warn); }
     dd.is-critical, dd.is-expired { color: var(--fwum-down); }
@@ -141,24 +157,36 @@
     flex: 0 0 110px; padding-top: 5px; font-size: 0.9em; color: @fwum-text-light; overflow-wrap: anywhere;
   }
   .fwum-strips__row > .fwum-strip { flex: 1 1 auto; min-width: 0; }
-  // the page: name, strip and the group's uptime at its end (D3)
-  .fwum-strips__row--page {
-    // a fixed uptime column: the strips of Matomo and of the website line up hour by hour
-    display: grid; grid-template-columns: 110px minmax(0, 1fr) 7.5em; grid-template-areas: "name strip uptime";
-    column-gap: 12px; align-items: start;
-    .fwum-strips__name { grid-area: name; }
-    > .fwum-strip { grid-area: strip; }
+  // the page: name, strip and the group's uptime at its end (D3), all strips in one grid: they line up hour by hour,
+  // and the uptime column is as wide as its longest text, so "measured 5 % of the time" stays on one line (L11)
+  .fwum-strips--page {
+    display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; column-gap: 12px; row-gap: 6px;
+    align-items: start;
+    .fwum-strips__row--page { display: contents; }
+    .fwum-strips__name { grid-column: 1; }
+    .fwum-strips__row--page > .fwum-strip { grid-column: 2; }
+    .fwum-strips__uptime { grid-column: 3; }
+    .fwum-strips__measured { white-space: nowrap; }
+    // start and end apart: less.php 3 (Matomo 5) would compute "2 / -1" as -2
+    .fwum-legend { grid-column-start: 2; grid-column-end: -1; margin-left: 0; }
   }
   .fwum-strips__uptime {
-    grid-area: uptime; min-width: 6.5em; max-width: 9em; padding-top: 2px; text-align: right; line-height: 1.3;
+    min-width: 6.5em; padding-top: 2px; text-align: right; line-height: 1.3;
     strong { display: block; font-size: 1.1em; font-variant-numeric: tabular-nums; }
   }
   .fwum-strips__measured { display: block; font-size: 0.8em; color: var(--fwum-muted); text-wrap: balance; }
-  // P1: the narrow address list under its group headings, like the table's group rows
-  .fwum-narrow-list { margin: 8px 0 0; }
-  .fwum-narrow-list__group {
-    margin: 12px 0 0; padding: 4px 0; font-size: 0.8em; font-weight: 600; letter-spacing: 0.05em;
-    text-transform: uppercase; color: @fwum-text-light; border-bottom: 1px solid @fwum-border;
+  // P1: the narrow address list under its group headings, like the table's group rows (L2)
+  .fwum-narrow-list { margin: 4px 0 0; }
+  .fwum-group-head {
+    .fwum-group-heading();
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 12px;
+  }
+  .fwum-group-head__name { margin: 0; }
+  // B2: the one certificate of all the group's addresses, on the right in the row's own words
+  .fwum-group-head__cert {
+    margin-left: auto; white-space: nowrap; font-weight: normal; letter-spacing: normal; text-transform: none;
+    &.is-warning { color: var(--fwum-warn); }
+    &.is-critical, &.is-expired { color: var(--fwum-down); }
   }
   .fwum-narrow-list .fwum-targets { margin-top: 0; }
   .fwum-legend {
@@ -176,13 +204,20 @@
     // phones: the figures in a fixed grid of two columns, not one under the other (B4)
     .fwum-figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(8em, 1fr)); gap: 8px 16px; }
     // phones: name and uptime on one line above the strip
-    .fwum-strips__row--page {
+    .fwum-strips--page { display: block; }
+    .fwum-strips--page .fwum-strips__row--page {
       // the name stays whole, the uptime takes the rest (its "measured" wraps under the number when needed)
-      grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "name uptime" "strip strip"; row-gap: 4px;
-      .fwum-strips__name { white-space: nowrap; overflow-wrap: normal; }
+      display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "name uptime" "strip strip";
+      column-gap: 12px; row-gap: 4px; margin-bottom: 6px;
+      .fwum-strips__name { grid-area: name; white-space: nowrap; overflow-wrap: normal; }
+      > .fwum-strip { grid-area: strip; }
+      .fwum-strips__uptime { grid-area: uptime; }
     }
-    .fwum-strips__uptime { max-width: none; padding-top: 0; strong, .fwum-strips__measured { display: inline; } }
-    .fwum-strips__measured { margin-left: 6px; }
+    .fwum-strips__uptime { padding-top: 0; strong { display: inline; } }
+    // L4: the measured share wraps as one balanced block next to the number, never a ragged last word
+    .fwum-strips--page .fwum-strips__measured {
+      display: inline-block; max-width: 100%; margin-left: 6px; vertical-align: baseline; white-space: normal;
+    }
     .fwum-legend { margin-left: 0; }
   });
   .fwum-strip { position: relative; }
@@ -237,8 +272,11 @@
     th.label, td.label { width: auto; white-space: normal; overflow-wrap: break-word; }
     td.fwum-targets__text { white-space: normal; min-width: 7em; }
     tr.fwum-group-row th, tr.fwum-group-row th:not(.label) {
-      padding-left: 0; padding-right: 0; padding-top: 14px; padding-bottom: 4px; text-align: left; font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
-      text-transform: uppercase; color: var(--fwum-muted); border-bottom: 1px solid @fwum-border;
+      .fwum-group-heading();
+      text-align: left;
+      // Matomo gives every th of a dataTable the page background with !important: the group rows sit on the card,
+      // like the narrow list's headings (L2), not in a band like the column headings
+      background: transparent !important;
     }
     tr.fwum-group-empty td { color: @fwum-text-light; }
     tr.fwum-group-empty .fwum-icon-button { margin-left: 4px; }
@@ -282,11 +320,28 @@
     }
     // an address wraps at its <wbr> after dots and slashes; a word breaks only when it alone is too wide
     .fwum-targets__label { font-weight: 600; min-width: 0; overflow-wrap: break-word; }
+    // B2: response, uptime and certificate as one unit on the right: beside a short address, or as a whole on the
+    // next line; a long state text ("No recent check (last: ...)") wraps inside the unit, the numbers never
+    .fwum-targets__values {
+      display: flex; align-items: baseline; justify-content: flex-end; gap: 0 8px; margin-left: auto; min-width: 0;
+      max-width: 100%;
+    }
+    .fwum-targets__text { min-width: 0; text-align: right; overflow-wrap: break-word; }
+    .fwum-targets__uptime, .fwum-targets__cert { flex: none; white-space: nowrap; }
     .fwum-targets__text, .fwum-targets__uptime { color: @fwum-text-light; font-variant-numeric: tabular-nums; }
-    .fwum-targets__cert { margin-left: auto; color: var(--fwum-muted); }
+    .fwum-targets__cert { color: var(--fwum-muted); }
     .fwum-targets__cert.is-warning { color: var(--fwum-warn); }
     .fwum-targets__cert.is-critical, .fwum-targets__cert.is-expired { color: var(--fwum-down); }
     li.is-down .fwum-targets__text { color: var(--fwum-down); }
+  }
+  // B1: the outages on a narrow page, in the look of the address list: start and duration, what, cause
+  .fwum-targets.fwum-outages__list {
+    li { display: block; }
+    .fwum-outages__first { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; }
+    .fwum-outages__when { font-weight: 600; font-variant-numeric: tabular-nums; }
+    .fwum-outages__length { margin-left: auto; color: @fwum-text-light; white-space: nowrap; }
+    .fwum-outages__what, .fwum-outages__cause { display: block; overflow-wrap: break-word; }
+    .fwum-outages__cause { color: @fwum-text-light; > span + span { margin-left: 8px; } }
   }
 
   // addresses this server cannot check: one line, the reason on demand (B1)
@@ -339,6 +394,12 @@
 
 .fwum-muted { color: var(--fwum-muted, #616161); }
 .fwum-inline-error { color: var(--fwum-down, #c62828); }
+// F2 (5.1.5 review): Matomo 5 and 6 colour every paragraph of a card (#content .card-content p), which outranks a class:
+// the muted and error paragraphs name #content too (Widgetize has neither #content nor that rule: the rules above)
+#content .fwum-page, #content .fwum-admin {
+  p.fwum-note, p.fwum-muted { color: var(--fwum-muted, #616161); }
+  p.fwum-inline-error { color: var(--fwum-down, #c62828); }
+}
 .fwum-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 .fwum-admin {
@@ -353,15 +414,22 @@
   }
   .fwum-icon-only { padding: 0 8px; min-width: 0; height: auto; line-height: 1; vertical-align: baseline; }
   .fwum-admin__name { white-space: nowrap; }
+  // the certificate column (and the phones' muted line) in the uptime page's warning and critical colours
+  .fwum-admin__cert.is-warning { color: var(--fwum-warn); }
+  .fwum-admin__cert.is-critical, .fwum-admin__cert.is-expired { color: var(--fwum-down); }
   // Matomo's row: whose container is down, on its own line under the state
   .fwum-admin__containers { display: block; white-space: normal; font-weight: normal; margin-top: 2px; }
-  .fwum-narrow-only { display: none; }
-  @media (max-width: 600px) {
-    // phones: two columns, website and status; names and status wrap, the last check under the status
-    .fwum-admin__name, .fwum-admin__status { white-space: normal; }
+  // B5: phones, stacked rows: the name with its pencil, the status, then certificate and last check (muted)
+  .fwum-admin__list {
+    list-style: none; margin: 8px 0 0; padding: 0;
+    li { margin: 0; padding: 8px 0; border-bottom: 1px solid @fwum-bg-tiny; }
+    .fwum-admin__name, .fwum-admin__status, .fwum-admin__meta { display: block; white-space: normal; }
+    // the name as in the table (L: phone links looked bold and underlined): Matomo's link colour, normal weight
+    .fwum-admin__name { overflow-wrap: break-word; }
+    .fwum-admin__name a { font-weight: normal; text-decoration: none; }
     .fwum-admin__name .fwum-icon-only { white-space: nowrap; }
-    .fwum-wide-only { display: none; }
-    .fwum-narrow-only { display: block; font-weight: normal; margin-top: 2px; }
+    .fwum-admin__status { margin-top: 2px; }
+    .fwum-admin__meta { display: flex; flex-wrap: wrap; gap: 0 12px; margin-top: 2px; font-size: 0.9em; }
   }
   .fwum-cron {
     display: flex; gap: 8px; align-items: center; flex-wrap: wrap;

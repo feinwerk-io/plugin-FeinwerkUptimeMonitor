@@ -3,6 +3,12 @@
 
   @link    https://matomo.org
   @license https://www.gnu.org/licenses/gpl-3.0.html GPL v3 or later
+
+  The outages of the period, newest first: a table, and on a narrow page (phones, a narrow
+  dashboard column) a list like the addresses' (B1): start and duration on the first line,
+  what on the second, the cause on the third, each value with its name for screen readers.
+  Final review D1: outages of one group at the same time are one row naming its addresses; on a
+  past day or a longer period a row's duration is its part inside it ("30 min of 1 h").
 -->
 <template>
   <div class="fwum-outages">
@@ -17,10 +23,49 @@
         class="fwum-muted"
       >{{ countText }}</span>
     </div>
+    <!-- D4: a period without any measurement is no period without outages -->
     <p
-      v-if="incidents.length === 0"
+      v-if="outages.length === 0"
       class="fwum-muted"
-    >{{ translate('FeinwerkUptimeMonitor_UiNoOutages') }}</p>
+    >{{ translate(notMeasured ? 'FeinwerkUptimeMonitor_UiOutagesNotMeasured'
+      : 'FeinwerkUptimeMonitor_UiNoOutages') }}</p>
+    <ul
+      v-else-if="narrow"
+      class="fwum-targets fwum-outages__list"
+      role="list"
+    >
+      <li
+        v-for="row in outages"
+        :key="row.key"
+      >
+        <span class="fwum-outages__first">
+          <span class="fwum-outages__when"><span class="fwum-sr">{{
+            translate('FeinwerkUptimeMonitor_UiStart') }}: </span>{{ when(row.start) }}</span>
+          <span class="fwum-outages__length">
+            <span class="fwum-sr">{{ translate('FeinwerkUptimeMonitor_UiDuration') }}: </span>
+            <span
+              v-if="row.open"
+              class="fwum-ongoing"
+            >{{ translate('FeinwerkUptimeMonitor_UiOngoing') }}, </span>
+            <span>{{ length(row) }}</span>
+          </span>
+        </span>
+        <span class="fwum-outages__what"><span class="fwum-sr">{{
+          translate('FeinwerkUptimeMonitor_UiWhat') }}: </span>{{ what(row) }}</span>
+        <span
+          v-if="cause(row) || hasExternal"
+          class="fwum-outages__cause"
+        >
+          <span v-if="cause(row)"><span class="fwum-sr">{{
+            translate('FeinwerkUptimeMonitor_UiCause') }}: </span>{{ cause(row) }}</span>
+          <span
+            v-if="hasExternal"
+            class="fwum-muted"
+          ><span class="fwum-sr">{{ translate('FeinwerkUptimeMonitor_UiSource') }}: </span>{{
+            source(row.source) }}</span>
+        </span>
+      </li>
+    </ul>
     <div
       v-else
       class="fwum-table-wrap"
@@ -46,31 +91,31 @@
         </thead>
         <tbody>
           <tr
-            v-for="incident in incidents"
-            :key="incident.idIncident"
+            v-for="row in outages"
+            :key="row.key"
           >
             <td class="label fwum-outages__start">
-              {{ when(incident.start) }}
+              {{ when(row.start) }}
               <!-- phones (L1): the duration under the start, so What and Cause keep their room -->
               <span class="fwum-outages__narrow">
                 <span class="fwum-sr">{{ translate('FeinwerkUptimeMonitor_UiDuration') }}: </span>
                 <span
-                  v-if="incident.open"
+                  v-if="row.open"
                   class="fwum-ongoing"
                 >{{ translate('FeinwerkUptimeMonitor_UiOngoing') }}, </span>
-                <span class="fwum-nowrap">{{ length(incident.durationSeconds) }}</span>
+                <span>{{ length(row) }}</span>
               </span>
             </td>
             <td class="fwum-outages__wide">
               <span
-                v-if="incident.open"
+                v-if="row.open"
                 class="fwum-ongoing"
               >{{ translate('FeinwerkUptimeMonitor_UiOngoing') }}, </span>
-              <span class="fwum-nowrap">{{ length(incident.durationSeconds) }}</span>
+              <span>{{ length(row) }}</span>
             </td>
-            <td>{{ what(incident) }}</td>
-            <td>{{ cause(incident) }}</td>
-            <td v-if="hasExternal">{{ source(incident.source) }}</td>
+            <td>{{ what(row) }}</td>
+            <td>{{ cause(row) }}</td>
+            <td v-if="hasExternal">{{ source(row.source) }}</td>
           </tr>
         </tbody>
       </table>
@@ -89,41 +134,49 @@
 <script lang="ts">
 import { defineComponent, PropType } from 'vue';
 import { translate } from 'CoreHome';
-import { Incident } from './types';
 import {
-  causeText, dateTime, duration,
+  causeText, dateTime, duration, listOf,
 } from './format';
+import { KIND_ORDER, OutageRow } from './outages';
 
 export default defineComponent({
   props: {
-    incidents: { type: Array as PropType<Incident[]>, required: true },
-    labels: { type: Object as PropType<Record<string, string>>, required: true },
+    /** the rows shown (outages.ts outageRows), newest first */
+    outages: { type: Array as PropType<OutageRow[]>, required: true },
+    /** each address's name without its group ("Interface", "www.example.com") */
+    names: { type: Object as PropType<Record<string, string>>, required: true },
+    /** a past day or a longer period: durations are the part inside it */
+    past: { type: Boolean, default: false },
     language: { type: String, default: '' },
     /** the website's timezone (Peter's 6a) */
     timezone: { type: String, default: '' },
-    /** the outages of the period that were loaded (the list shows the first ones) */
+    /** the rows of the period that were loaded (the list shows the first ones) */
     total: { type: Number, default: 0 },
     /** the API cut a list at its limit: the period has at least `total` outages */
     totalIsMinimum: { type: Boolean, default: false },
     /** "Show more" can show or load more */
     canShowMore: { type: Boolean, default: false },
     loadingMore: { type: Boolean, default: false },
+    /** the page is narrow (UptimePage's own width): the outages as a list */
+    narrow: { type: Boolean, default: false },
+    /** nothing was measured in the period: no outages say nothing */
+    notMeasured: { type: Boolean, default: false },
   },
   emits: ['more'],
   computed: {
     /** "20 of 57" above a cut list (the UI review's later item 10) */
     countText(): string {
-      if (this.incidents.length === 0
-        || (this.incidents.length >= this.total && !this.totalIsMinimum)) {
+      if (this.outages.length === 0
+        || (this.outages.length >= this.total && !this.totalIsMinimum)) {
         return '';
       }
       return translate(this.totalIsMinimum
         ? 'FeinwerkUptimeMonitor_UiOutagesOfAtLeast'
-        : 'FeinwerkUptimeMonitor_UiOutagesOf', String(this.incidents.length), String(this.total));
+        : 'FeinwerkUptimeMonitor_UiOutagesOf', String(this.outages.length), String(this.total));
     },
     /** the column helps only once results come from outside (the free plugin checks from Matomo) */
     hasExternal(): boolean {
-      return this.incidents.some((i) => i.source === 'external');
+      return this.outages.some((row) => row.source === 'external');
     },
   },
   methods: {
@@ -131,17 +184,38 @@ export default defineComponent({
     when(iso: string): string {
       return dateTime(iso, this.language, this.timezone);
     },
-    length(seconds: number): string {
-      return duration(seconds, this.language);
+    /** the whole length; on a past day or longer period the part inside it, "30 min of 1 h" */
+    length(row: OutageRow): string {
+      const whole = duration(row.durationSeconds, this.language);
+      if (!this.past) {
+        return whole;
+      }
+      const part = duration(row.durationInPeriodSeconds, this.language);
+      return part === whole ? part
+        : translate('FeinwerkUptimeMonitor_UiPartOfWhole', part, whole);
     },
-    what(incident: Incident): string {
-      if (incident.type === 'gap') {
+    /** "Matomo: Interface, Tracker endpoint and JavaScript tracker": the group named once */
+    what(row: OutageRow): string {
+      if (row.type === 'gap') {
         return translate('FeinwerkUptimeMonitor_UiGap');
       }
-      return this.labels[incident.targetKey || ''] || incident.targetKey || '';
+      const targets = row.incidents
+        .map((i) => ({ key: i.targetKey || '', kind: i.kind || '' }))
+        .filter((t, n, all) => all.findIndex((o) => o.key === t.key) === n)
+        .sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind)
+          || a.key.localeCompare(b.key));
+      const names = listOf(targets.map((t) => this.names[t.key] || t.key), this.language);
+      return row.group === 'matomo'
+        ? translate('FeinwerkUptimeMonitor_UiMatomoTarget', names) : names;
     },
-    cause(incident: Incident): string {
-      return incident.type === 'gap' ? '' : causeText(incident.cause, incident.detail);
+    /** the causes of the merged outages, each once */
+    cause(row: OutageRow): string {
+      if (row.type === 'gap') {
+        return '';
+      }
+      const causes = row.incidents.map((i) => causeText(i.cause, i.detail))
+        .filter((c, n, all) => c !== '' && all.indexOf(c) === n);
+      return listOf(causes, this.language);
     },
     source(source: string): string {
       return translate(source === 'external'

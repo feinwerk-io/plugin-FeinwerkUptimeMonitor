@@ -60,8 +60,10 @@ class API extends \Piwik\Plugin\API
      *               {samples: int, p50Ms: int|null, p95Ms: int|null, maxMs: int|null, from: ISO time, to: ISO time}|null};
      *               State = {outcome: up|down|not_checkable, error: string|null (dns, connect, tls, timeout, blocked,
      *               protocol, proxy, http_status, content, redirect, maintenance, tracking_off, stale_container),
-     *               note: protected|null, httpStatus: int|null, responseMs: int|null, checkedAt: ISO time, stale: bool
-     *               (older than two check intervals: the checks stopped; not current)}
+     *               note: protected|too_large|null (protected: behind a password or bot protection; too_large: a Tag
+     *               Manager container larger than 4 MB, not read whole, so not checkable), httpStatus: int|null,
+     *               responseMs: int|null, checkedAt: ISO time, stale: bool (older than two check intervals: the checks
+     *               stopped; not current)}
      */
     public function getStatus($idSite)
     {
@@ -118,8 +120,11 @@ class API extends \Piwik\Plugin\API
      *                      without its containers. With idSite 0 only all or matomo.
      * @return array {grain: hour|day, days: local|utc|null (with grain day: whether a cell is a day in the website's
      *               timezone or a UTC day), cells: list of {time: ISO time (start of the hour or day, UTC),
-     *               measuredSeconds: int, upSeconds: int, state: up|down|partial|none|future}}; at most 367 cells; a period
-     *               longer than 366 days is refused with HTTP 400 naming 'period'
+     *               measuredSeconds: int, upSeconds: int, state: up|down|partial|none|future}, firstMeasured: ISO time|null
+     *               (the start of the first hour in which any of the strip's targets was measured, at any time, also
+     *               after the period: a period before it reads "measurements start on"; once the hourly values are gone
+     *               (90 days) the start of that UTC day; null when nothing was ever measured)}; at most 367 cells; a
+     *               period longer than 366 days is refused with HTTP 400 naming 'period'
      */
     public function getTimeline($idSite, $period, $date, $source = 'all', $timezoneOf = 0, $group = 'all')
     {
@@ -176,7 +181,9 @@ class API extends \Piwik\Plugin\API
 
     /**
      * Outages of a website's check targets (idSite 0: of Matomo's own targets, and the gaps in which Matomo itself
-     * ran no checks) that overlap a Matomo period, newest first.
+     * ran no checks) that overlap a Matomo period, newest first. Use durationInPeriodSeconds, not durationSeconds, to
+     * add up the downtime of a period: an outage from 23:30 to 00:30 counts 30 minutes on each day. Outages of several
+     * targets may overlap; each target counts its own.
      *
      * @param int $idSite website ID, or 0 for the Matomo instance
      * @param string $period day|week|month|year|range
@@ -186,9 +193,11 @@ class API extends \Piwik\Plugin\API
      * @param string $source all|local|external, default all
      * @param int $timezoneOf only with idSite 0: a website ID whose timezone the period follows; default 0 = UTC
      * @return array list of {idIncident: int, type: outage|gap, targetKey: string|null, kind: string|null, source:
-     *               local|external, start: ISO time, end: ISO time|null (null while open), durationSeconds: int, open:
-     *               bool, cause: string|null (the error of the first failed check), detail: string|null (e.g. "HTTP
-     *               500"), failedChecks: int}
+     *               local|external, start: ISO time, end: ISO time|null (null while open), durationSeconds: int (the
+     *               whole outage, until now while open), startInPeriod: ISO time (the later of start and the period's
+     *               start), durationInPeriodSeconds: int (the seconds from startInPeriod to the earliest of end, the
+     *               period's end and now; 0 when the outage only touches the period), open: bool, cause: string|null
+     *               (the error of the first failed check), detail: string|null (e.g. "HTTP 500"), failedChecks: int}
      */
     public function getIncidents($idSite, $period, $date, $state = 'all', $limit = 100, $source = 'all', $timezoneOf = 0)
     {
@@ -375,8 +384,8 @@ class API extends \Piwik\Plugin\API
      *
      * @param int $idSite website ID (admin access), or 0 for the Matomo instance (super user)
      * @return array {locked: bool (another check run is going; nothing done), results: list of {targetKey: string,
-     *               outcome: up|down|not_checkable, error: string|null, note: string|null, httpStatus: int|null,
-     *               responseMs: int}}
+     *               outcome: up|down|not_checkable, error: string|null, note: protected|too_large|null, httpStatus:
+     *               int|null, responseMs: int}}
      */
     public function checkNow($idSite)
     {
@@ -419,7 +428,9 @@ class API extends \Piwik\Plugin\API
      *               such as Europe/Berlin or UTC+2; UTC for Matomo), targets: int (switched on), off: int (switched
      *               off), up: int, down: int, notCheckable: int, stale: int (results older than two check intervals: the
      *               checks stopped; counted neither as up nor as down), lastCheckedAt: ISO time|null,
-     *               certificateDaysLeft: int|null (soonest expiry; negative when expired), containersDown: list of
+     *               certificateDaysLeft: int|null (soonest expiry; negative when expired), certificateLevel:
+     *               ok|warning|critical|expired|null (the level of that soonest certificate: warning from the super user
+     *               setting, by default 14 days before, critical from 3 days before), containersDown: list of
      *               {idSite: int, name: string} (in Matomo's row: the websites whose Tag Manager container is not
      *               reachable; empty in the other rows)}
      */

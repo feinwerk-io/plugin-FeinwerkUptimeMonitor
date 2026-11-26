@@ -90,6 +90,29 @@ export interface Timeline {
   /** with grain day: days in the website's timezone (local) or UTC days (long periods, old data) */
   days?: 'local' | 'utc' | null;
   cells: TimelineCell[];
+  /** the first measured hour of the strip's addresses at any time (null: never); D3 */
+  firstMeasured?: string | null;
+}
+
+/** One address as the uptime page and the widgets list it (current state, period uptime). */
+export interface AddressRow {
+  key: string;
+  label: string;
+  outcome: string;
+  text: string;
+  title: string;
+  uptime: string;
+  cert: string;
+  certLevel: string;
+  /** days until the certificate expires (null: no certificate) */
+  certDays: number | null;
+  checkedAt: string;
+  /** the address's host ('' when the API sends no address, e.g. Matomo's own to non-super users) */
+  host: string;
+  /** a past day or period (D1): the dot follows its uptime, up, partial or none; '' for today */
+  dayOutcome: string;
+  /** not checkable because the file is larger than the 4 MB the check reads (note too_large) */
+  tooLarge: boolean;
 }
 
 export interface Incident {
@@ -101,6 +124,10 @@ export interface Incident {
   start: string;
   end: string | null;
   durationSeconds: number;
+  /** the part inside the requested period: its start (the later of start and the period's) */
+  startInPeriod: string;
+  /** and its length, up to the period's end or now (0: the outage only touches the period) */
+  durationInPeriodSeconds: number;
   open: boolean;
   cause: string | null;
   detail: string | null;
@@ -138,6 +165,8 @@ export interface SiteOverview {
   off: number;
   lastCheckedAt: string | null;
   certificateDaysLeft: number | null;
+  /** the level of that soonest certificate, as the uptime page colours it */
+  certificateLevel?: 'ok' | 'warning' | 'critical' | 'expired' | null;
   /** Matomo's row: the websites whose Tag Manager container is not reachable */
   containersDown?: Array<{ idSite: number; name: string }>;
 }

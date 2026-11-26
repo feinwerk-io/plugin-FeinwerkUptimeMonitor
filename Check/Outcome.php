@@ -35,8 +35,10 @@ final class Outcome
     public const TRACKING_OFF = 'tracking_off';
     public const STALE_CONTAINER = 'stale_container';
 
-    // notes on an up result
+    // notes on a result: protected (up, or not checkable, behind a password or bot protection), too_large (not
+    // checkable: a Tag Manager container larger than Prober::MAX_BODY_LARGE, cut before its id or revision)
     public const PROTECTED = 'protected';
+    public const TOO_LARGE = 'too_large';
 
     public const TRANSPORT_ERRORS = [self::DNS, self::CONNECT, self::TLS, self::TIMEOUT, self::BLOCKED, self::PROTOCOL, self::PROXY];
 }

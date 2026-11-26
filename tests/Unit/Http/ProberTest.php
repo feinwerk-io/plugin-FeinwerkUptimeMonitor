@@ -56,6 +56,7 @@ class ProberTest extends TestCase
         $this->assertSame(200, $r->status);
         $this->assertSame('ok', $r->body);
         $this->assertNull($r->error);
+        $this->assertFalse($r->capped, 'read to its end');
         $this->assertSame(0, $r->redirects);
         $this->assertSame(['dns', 'connect', 'tls', 'ttfb', 'total'], array_keys($r->timings));
         $this->assertIsInt($r->timings['total']);
@@ -76,6 +77,25 @@ class ProberTest extends TestCase
         $this->assertNull($r->error);
         $this->assertLessThanOrEqual(Prober::MAX_BODY, strlen($r->body));
         $this->assertGreaterThan(0, strlen($r->body));
+        $this->assertTrue($r->capped, 'the body ends at the cap, not where the answer ended');
+    }
+
+    /**
+     * The cap's edge (5.1.5 review, item 6): a body of exactly the cap was read to its end and is not capped, so a
+     * container revision at its very end counts; one byte more is capped. For both caps.
+     */
+    public function test_bodyOfExactlyTheCap_isWhole_oneByteMoreIsCapped(): void
+    {
+        $responses = self::prober()->probeAll([
+            self::target(1, Kind::WEB, '/bytes?n=' . Prober::MAX_BODY),
+            self::target(2, Kind::WEB, '/bytes?n=' . (Prober::MAX_BODY + 1)),
+            self::target(3, Kind::CONTAINER, '/bytes?n=' . Prober::MAX_BODY_LARGE),
+            self::target(4, Kind::CONTAINER, '/bytes?n=' . (Prober::MAX_BODY_LARGE + 1)),
+        ], microtime(true) + 30);
+        $this->assertSame([200, null, Prober::MAX_BODY, false], [$responses[1]->status, $responses[1]->error, strlen($responses[1]->body), $responses[1]->capped]);
+        $this->assertSame([200, null, Prober::MAX_BODY, true], [$responses[2]->status, $responses[2]->error, strlen($responses[2]->body), $responses[2]->capped]);
+        $this->assertSame([200, null, Prober::MAX_BODY_LARGE, false], [$responses[3]->status, $responses[3]->error, strlen($responses[3]->body), $responses[3]->capped]);
+        $this->assertSame([200, null, Prober::MAX_BODY_LARGE, true], [$responses[4]->status, $responses[4]->error, strlen($responses[4]->body), $responses[4]->capped]);
     }
 
     public function test_web_followsTwoRedirects(): void
@@ -168,6 +188,7 @@ class ProberTest extends TestCase
         $this->assertStringContainsString('name="form_login"', $responses[1]->body);
         $this->assertLessThanOrEqual(Prober::MAX_BODY, strlen($responses[2]->body), 'website pages stay capped');
         $this->assertSame(200, $responses[2]->status);
+        $this->assertSame([false, true], [$responses[1]->capped, $responses[2]->capped]);
     }
 
     public function test_slowDns_doesNotEatOtherChecksTime(): void

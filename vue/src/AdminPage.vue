@@ -9,7 +9,9 @@
   check reads "3 minutes ago" (it follows the clock), its hover the time in the row's own
   timezone with the zone named, since the rows' timezones differ (L3). Websites that cannot be
   checked from this server fold into one line below the table (Peter's 3a, D4), like the uptime
-  page's line for addresses; "Show" brings their rows back, pencil included.
+  page's line for addresses; "Show" brings their rows back, pencil included. Narrower than a
+  phone (B5) the table becomes stacked rows: name and pencil, the status, then certificate and
+  last check, muted and named.
 -->
 <template>
   <div
@@ -44,7 +46,62 @@
         v-else-if="rows.length"
         class="fwum-table-wrap"
       >
+        <ul
+          v-if="narrow"
+          :id="`${uid}-table`"
+          class="fwum-admin__list"
+          role="list"
+        >
+          <li
+            v-for="row in visibleRows"
+            :key="row.idSite"
+          >
+            <span class="fwum-admin__name">
+              <a
+                v-if="row.idSite > 0"
+                :href="pageUrl(row.idSite)"
+              >{{ row.name }}</a>
+              <span v-else>{{ row.name }}</span>
+              <button
+                type="button"
+                class="btn-flat fwum-icon-only"
+                :title="translate('FeinwerkUptimeMonitor_UiEditTargetsOf', row.name)"
+                :aria-label="translate('FeinwerkUptimeMonitor_UiEditTargetsOf', row.name)"
+                @click="openPanel(row)"
+              ><span
+                class="icon-edit"
+                aria-hidden="true"
+              /></button>
+            </span>
+            <span
+              class="fwum-admin__status"
+              :class="`is-${status(row).outcome}`"
+            >
+              <AdminStatus
+                :row="row"
+                :status="status(row)"
+                :language="config.language"
+              />
+            </span>
+            <span
+              v-if="row.certificateDaysLeft !== null || row.lastCheckedAt"
+              class="fwum-admin__meta fwum-muted"
+            >
+              <span
+                v-if="row.certificateDaysLeft !== null"
+                class="fwum-admin__cert"
+                :class="certClass(row)"
+              >{{ translate('FeinwerkUptimeMonitor_UiCertificateValue',
+                            certText(row.certificateDaysLeft)) }}</span>
+              <span
+                v-if="row.lastCheckedAt"
+                :title="when(row.lastCheckedAt, row.timezone)"
+              >{{ translate('FeinwerkUptimeMonitor_UiChecked', since(row.lastCheckedAt)) }}</span>
+            </span>
+          </li>
+        </ul>
         <table
+          v-else
           :id="`${uid}-table`"
           class="entityTable dataTable fwum-admin__table"
         >
@@ -56,10 +113,7 @@
                 v-if="hasCerts"
                 scope="col"
               >{{ translate('FeinwerkUptimeMonitor_UiCertificate') }}</th>
-              <th
-                scope="col"
-                class="fwum-wide-only"
-              >{{ translate('FeinwerkUptimeMonitor_UiLastCheck') }}</th>
+              <th scope="col">{{ translate('FeinwerkUptimeMonitor_UiLastCheck') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -88,40 +142,19 @@
                 class="fwum-admin__status"
                 :class="`is-${status(row).outcome}`"
               >
-                <span class="fwum-cell-label">
-                  <span
-                    class="fwum-dot"
-                    aria-hidden="true"
-                  />
-                  <span>{{ status(row).text }}</span>
-                </span>
-                <span
-                  v-if="row.containersDown && row.containersDown.length > 3"
-                  class="fwum-admin__containers"
-                >{{ translate('FeinwerkUptimeMonitor_UiAdminContainersDownMany',
-                  String(row.containersDown.length)) }}</span>
-                <span
-                  v-else-if="row.containersDown && row.containersDown.length"
-                  class="fwum-admin__containers"
-                >{{ containerLine(row).before }}<template
-                  v-for="(part, i) in containerLine(row).parts"
-                  :key="i"
-                ><a
-                  v-if="part.index >= 0"
-                  :href="pageUrl(row.containersDown[part.index].idSite)"
-                >{{ part.text }}</a><template v-else>{{ part.text }}</template></template>{{
-                  containerLine(row).after }}</span>
-                <span
-                  v-if="row.lastCheckedAt"
-                  class="fwum-muted fwum-narrow-only"
-                  :title="when(row.lastCheckedAt, row.timezone)"
-                >{{ since(row.lastCheckedAt) }}</span>
+                <AdminStatus
+                  :row="row"
+                  :status="status(row)"
+                  :language="config.language"
+                />
               </td>
-              <td v-if="hasCerts">{{ certText(row.certificateDaysLeft) }}</td>
+              <!-- the warning and critical colours of the uptime page and the widgets -->
               <td
-                class="fwum-wide-only"
-                :title="row.lastCheckedAt ? when(row.lastCheckedAt, row.timezone) : ''"
-              >
+                v-if="hasCerts"
+                class="fwum-admin__cert"
+                :class="certClass(row)"
+              >{{ certText(row.certificateDaysLeft) }}</td>
+              <td :title="row.lastCheckedAt ? when(row.lastCheckedAt, row.timezone) : ''">
                 {{ row.lastCheckedAt ? since(row.lastCheckedAt) : '' }}
               </td>
             </tr>
@@ -245,12 +278,15 @@ import { ContentBlock, MatomoUrl, translate } from 'CoreHome';
 import { api } from './api';
 import { ScreenConfig, SiteOverview } from './types';
 import {
-  ago, dateTime, duration, listOf, listParts, statusOf, zoneOf,
+  ago, dateTime, duration, keepUnits, listOf, statusOf, zoneOf,
 } from './format';
+import { observeNarrow } from './narrow';
+import { uptimePageToday } from './links';
 import TargetPanel from './TargetPanel.vue';
+import AdminStatus from './AdminStatus.vue';
 
 export default defineComponent({
-  components: { ContentBlock, TargetPanel },
+  components: { ContentBlock, TargetPanel, AdminStatus },
   props: {
     config: { type: Object as PropType<ScreenConfig>, required: true },
   },
@@ -269,6 +305,9 @@ export default defineComponent({
       /** the screen's clock: "3 minutes ago" follows it every minute */
       tick: Date.now(),
       timer: 0,
+      /** narrower than a phone (B5): stacked rows instead of the table */
+      narrow: false,
+      resize: null as ResizeObserver | null,
     };
   },
   computed: {
@@ -352,9 +391,17 @@ export default defineComponent({
     this.timer = window.setInterval(() => {
       this.tick = Date.now();
     }, 60000);
+    if (this.$el instanceof HTMLElement) {
+      this.resize = observeNarrow(this.$el, (narrow) => {
+        this.narrow = narrow;
+      });
+    }
   },
   beforeUnmount() {
     window.clearInterval(this.timer);
+    if (this.resize) {
+      this.resize.disconnect();
+    }
   },
   methods: {
     translate,
@@ -377,19 +424,6 @@ export default defineComponent({
     },
     since(iso: string): string {
       return ago(iso, this.config.language, this.tick);
-    },
-    /**
-     * Matomo's row: whose Tag Manager container is down (containers count with Matomo), each
-     * website a link to its uptime page, up to three like the fold line
-     */
-    containerLine(row: SiteOverview): {
-      before: string; after: string; parts: Array<{ index: number; text: string }>;
-    } {
-      const mark = '\u0001';
-      const [before, after = ''] = translate('FeinwerkUptimeMonitor_UiAdminContainersDown', mark)
-        .split(mark);
-      const names = (row.containersDown || []).map((s) => s.name);
-      return { before, after, parts: listParts(names, this.config.language) };
     },
     openPanel(row: SiteOverview): void {
       this.panelName = row.name;
@@ -414,23 +448,15 @@ export default defineComponent({
       if (days < 0) {
         return translate('FeinwerkUptimeMonitor_UiCertificateExpired');
       }
-      return days === 1
+      return keepUnits(days === 1
         ? translate('FeinwerkUptimeMonitor_UiCertificateDay')
-        : translate('FeinwerkUptimeMonitor_UiCertificateDays', String(days));
+        : translate('FeinwerkUptimeMonitor_UiCertificateDays', String(days)));
     },
-    pageUrl(idSite: number): string {
-      const query = MatomoUrl.stringify({
-        module: 'CoreHome', action: 'index', idSite, period: 'day', date: 'today',
-      });
-      const hash = MatomoUrl.stringify({
-        idSite,
-        period: 'day',
-        date: 'today',
-        category: 'General_Visitors',
-        subcategory: 'FeinwerkUptimeMonitor_Uptime',
-      });
-      return `?${query}#?${hash}`;
+    /** the soonest certificate's level (API certificateLevel) as a class: is-warning ... */
+    certClass(row: SiteOverview): string {
+      return row.certificateLevel ? `is-${row.certificateLevel}` : '';
     },
+    pageUrl: uptimePageToday,
     /** The clipboard API needs HTTPS; many intranet Matomos run on HTTP: then the classic way. */
     copy(): void {
       const text = this.config.cronLine || '';

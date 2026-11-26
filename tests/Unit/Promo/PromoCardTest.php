@@ -108,11 +108,11 @@ class PromoCardTest extends TestCase
     }
 
     /**
-     * The kit's pausable card place (promocard.js 5, Page Filter Report templates/_premiumCard.twig 2b6e3f5) in
-     * PromoCard.vue: Vue renders only the slot div; the group with its inert template is built with createElement,
-     * setAttribute and textContent, never from raw HTML.
+     * The kit's pausable card place in PromoCard.vue, static guards only: Vue renders only the slot div, and the group is
+     * never built from raw HTML. How the card behaves (its group, template, link, demo mode, rebuild, the dashboard's
+     * one place when widgets are minimised or restored) is checked in a browser: tests/js/run-uptimepage-check.sh.
      */
-    public function test_the_vue_card(): void
+    public function test_the_vue_card_owns_only_its_slot_and_builds_no_raw_html(): void
     {
         $vue = (string) file_get_contents(__DIR__ . '/../../../vue/src/PromoCard.vue');
         $code = (string) preg_replace('/<!--.*?-->/s', '', $vue);
@@ -120,26 +120,13 @@ class PromoCardTest extends TestCase
 
         // Vue owns the slot only: no child elements in its template, so Vue never patches what the kit removes
         self::assertSame(1, preg_match('/<template>\s*<div\s+ref="slot"\s+class="fwum-promo-card-slot"\s*\/>\s*<\/template>/', $markup));
-        foreach (["'data-fwpromo-pausable', PLACE", "'data-fwpromo-pause', PLACE", "'data-fwpromo-pause-days', String(card.pauseDays)",
-            "'data-fwpromo-rotation', PLACE", "const PLACE = 'card';", "'data-fwpromo-only-in', 'dashboard'",
-            "document.createElement('template')", 'template.content.appendChild(cardNode(', "class: 'fwpromo-card'",
-            "'data-fwpromo-id': card.id", "'data-fwpromo-days': String(card.days)", "attributes['data-fwpromo-demo'] = '1'",
-            "class: 'fwpromo-card__mark'", "class: 'fwpromo-card__link'", "link.target = '_blank'", "link.rel = 'noopener'",
-            "class: 'fwpromo-card__close'", "'data-fwpromo-close': ''", "'aria-label': dismissLabel", 'textContent'] as $part) {
-            self::assertStringContainsString($part, $code);
-        }
-        // pausable with pause days, a plain rotation in demo mode (pause days 0)
-        self::assertSame(1, preg_match('/if \(card\.pauseDays > 0\) \{\s*group\.setAttribute\(\'data-fwpromo-pausable\'/', $code));
         self::assertSame(0, preg_match('/innerHTML|outerHTML|insertAdjacentHTML|v-html|createContextualFragment/', $code), 'no raw HTML');
         self::assertSame(0, preg_match('/(?<![\w:-])id="|(?<![\w-])src=|url\(/', $markup), 'no ids, nothing loaded');
     }
 
-    /** The card sits in the widgets only (the uptime page has the tip line), after the widget's own content. */
+    /** The card sits in the widgets only (the uptime page has the tip line): what the server sends where. */
     public function test_the_widgets_show_the_card_the_page_the_line(): void
     {
-        $page = (string) file_get_contents(__DIR__ . '/../../../vue/src/UptimePage.vue');
-        self::assertSame(1, preg_match('/<PromoCard\s+:card="config\.promoCard/', $page));
-        self::assertSame(1, preg_match('/<PromoLine\s/', $page));
         $props = (string) file_get_contents(__DIR__ . '/../../../Widgets/ScreenProps.php');
         // the page on a dashboard is a widget too: card, no tip line, no feedback row
         self::assertStringContainsString("\$ownPage = \$variant === 'page' && !\$embedded && !\$onDashboard;", $props);

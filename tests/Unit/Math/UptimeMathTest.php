@@ -114,4 +114,40 @@ class UptimeMathTest extends TestCase
     {
         $this->assertEqualsWithDelta(99.8611, UptimeMath::uptimePercent(86280, 86400), 0.0001);
     }
+
+    /** F1 of the 5.1.5 review: an outage from 23:30 to 00:30 counts 30 minutes on each of the two days. */
+    public function test_partIn_anOutageAcrossMidnight_countsHalfOnEachDay(): void
+    {
+        $day1 = (int) strtotime('2026-03-14 00:00:00 UTC');
+        $day2 = $day1 + 86400;
+        $start = $day2 - 1800;
+        $end = $day2 + 1800;
+        $now = $day2 + 10 * 86400;
+        $this->assertSame(['start' => $start, 'seconds' => 1800], UptimeMath::partIn($start, $end, $day1, $day2, $now));
+        $this->assertSame(['start' => $day2, 'seconds' => 1800], UptimeMath::partIn($start, $end, $day2, $day2 + 86400, $now));
+    }
+
+    public function test_partIn_anOpenOutageSinceYesterday_runsFromMidnightToNow(): void
+    {
+        $today = (int) strtotime('2026-03-14 00:00:00 UTC');
+        $now = $today + 10 * 3600;
+        $start = $today - 2 * 3600;
+        // today's period is cut at now; an open outage never counts past now, even in a longer period
+        $this->assertSame(['start' => $today, 'seconds' => 36000], UptimeMath::partIn($start, null, $today, $now, $now));
+        $this->assertSame(['start' => $today, 'seconds' => 36000], UptimeMath::partIn($start, null, $today, $today + 86400, $now));
+        // yesterday's view: from the start to the end of yesterday
+        $this->assertSame(['start' => $start, 'seconds' => 7200], UptimeMath::partIn($start, null, $today - 86400, $today, $now));
+    }
+
+    public function test_partIn_outsideOrTouching_isZero(): void
+    {
+        $from = (int) strtotime('2026-03-14 00:00:00 UTC');
+        $to = $from + 86400;
+        $now = $to + 86400;
+        // ended exactly when the period starts (the store returns it: ended_at >= from)
+        $this->assertSame(['start' => $from, 'seconds' => 0], UptimeMath::partIn($from - 600, $from, $from, $to, $now));
+        $this->assertSame(0, UptimeMath::partIn($to + 60, $to + 120, $from, $to, $now)['seconds']);
+        // a whole period inside one long outage
+        $this->assertSame(['start' => $from, 'seconds' => 86400], UptimeMath::partIn($from - 60, $to + 60, $from, $to, $now));
+    }
 }

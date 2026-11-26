@@ -85,8 +85,16 @@ export function sharePercent(value: number, language: string): string {
   return value > 0 && value < 0.5 ? `< ${percent(1, language, 0)}` : percent(value, language, 0);
 }
 
+/**
+ * A number stays with its unit (final review D4): a no-break space after a digit ("30 min",
+ * "1 h 30 min" breaks only between the units, "4 MB")
+ */
+export function keepUnits(text: string): string {
+  return text.replace(/(\d) (?=\S)/g, '$1\u00a0');
+}
+
 export function milliseconds(value: number | null, language: string): string {
-  return value === null ? '' : `${new Intl.NumberFormat(locale(language)).format(value)} ms`;
+  return value === null ? '' : `${new Intl.NumberFormat(locale(language)).format(value)}\u00a0ms`;
 }
 
 /**
@@ -165,6 +173,25 @@ export function clockOrDate(iso: string, language: string, timezone = '', now = 
     : dateTime(iso, language, timezone);
 }
 
+/** the calendar day "YYYY-MM-DD" moved by whole days (no clock change can shift it) */
+export function shiftDay(day: string, days: number): string {
+  const [y, m, d] = day.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+/**
+ * A calendar day "YYYY-MM-DD" as "Nov 24" in the page language, with the year when it is not
+ * thisYear; read as UTC, so a timezone west of UTC never shows the day before.
+ */
+export function calendarDay(day: string, language: string, thisYear: string): string {
+  const [y, m, d] = day.split('-').map(Number);
+  const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', timeZone: 'UTC' };
+  if (String(y) !== thisYear) {
+    options.year = 'numeric';
+  }
+  return new Intl.DateTimeFormat(locale(language), options).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
 /** "3 minutes ago" in the page language; now: the screen's clock, so that it re-renders. */
 export function ago(iso: string, language: string, now = Date.now()): string {
   const seconds = Math.round((new Date(iso).getTime() - now) / 1000);
@@ -178,17 +205,42 @@ export function ago(iso: string, language: string, now = Date.now()): string {
   return format.format(Math.round(seconds / 86400), 'day');
 }
 
+/**
+ * "12 min", "1 h 30 min", "3 days" (final review D4: hours and minutes, no "1.5 h"), rounded to
+ * whole minutes first, so that 59 min 50 s reads "1 h", never "60 min" or "1 h 60 min"
+ */
 export function duration(seconds: number, language = ''): string {
-  const number = (n: number) => new Intl.NumberFormat(locale(language), {
-    maximumFractionDigits: 1,
-  }).format(n);
-  if (seconds < 3600) {
-    return translate('FeinwerkUptimeMonitor_UiMinutes', number(Math.max(1, Math.round(seconds / 60))));
+  const number = (n: number) => new Intl.NumberFormat(locale(language)).format(n);
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  if (minutes < 60) {
+    return keepUnits(translate('FeinwerkUptimeMonitor_UiMinutes', number(minutes)));
   }
   if (seconds < 172800) {
-    return translate('FeinwerkUptimeMonitor_UiHours', number(Math.round(seconds / 360) / 10));
+    const hours = Math.floor(minutes / 60);
+    const rest = minutes % 60;
+    return keepUnits(rest === 0
+      ? translate('FeinwerkUptimeMonitor_UiHours', number(hours))
+      : translate('FeinwerkUptimeMonitor_UiHoursMinutes', number(hours), number(rest)));
   }
-  return translate('FeinwerkUptimeMonitor_UiDays', number(Math.round(seconds / 86400)));
+  return keepUnits(translate('FeinwerkUptimeMonitor_UiDays', number(Math.round(seconds / 86400))));
+}
+
+/**
+ * An address in pieces that may wrap after ".", "/", "?", "&", "=", "-" or "_" (a <wbr> after
+ * each): on a phone "www.outdoor-shop-demo.example" wraps between its parts, not inside a word
+ */
+export function breakParts(text: string): string[] {
+  const parts = text.replace(/([./?&=_-])/g, '$1\u0001').split('\u0001').filter((p) => p !== '');
+  // "www." never stands alone on a line
+  if (parts.length > 1 && parts[0].toLowerCase() === 'www.') {
+    parts.splice(0, 2, parts[0] + parts[1]);
+  }
+  return parts;
+}
+
+/** "HTTP-Status 403" stays whole on a phone: non-breaking hyphens in a short state text */
+export function keepHyphens(text: string): string {
+  return text.replace(/-/g, '\u2011');
 }
 
 export function hostOf(url: string | null): string {

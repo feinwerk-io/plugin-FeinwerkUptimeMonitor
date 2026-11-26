@@ -1,5 +1,62 @@
 # Changelog
 
+## 5.1.5
+
+- Visitors > Uptime today: a line that names an address that is not reachable is red, also when the other addresses
+  of its group answer ("Matomo: Tag Manager container Ab12Cd34 not reachable"), as the "Now" line of a past day.
+  A line that counts partly reachable addresses ("Matomo: 2 of 4 addresses not reachable") is amber, today and on a
+  past day; when a group does not answer at all, its line stays red.
+- The outage list: outages of several addresses of Matomo (or of the website) at the same time are one row that
+  names them, "Matomo: Interface, Tracker endpoint, and JavaScript tracker". On a past day or a longer period each
+  row's duration is its part inside it, with the whole length when that is longer ("30 min of 1 h"); on phones the
+  list follows the same rows.
+- A Tag Manager container larger than 4 MB reads "Too large to check (over 4 MB)" in its row, and when only such
+  containers cannot be checked, the note under the list no longer says "from this server".
+- A day or period without any measurement is one line, without empty hour strips, addresses or outage list. Before
+  the first measurement it names the day the measurements start, with a link to it ("Nov 21: not measured.
+  Measurements start on Nov 23"). The API's `getTimeline` gives that moment as `firstMeasured`.
+- Shorter texts: the answer line of a past day names Matomo once before its addresses ("Matomo: JavaScript tracker,
+  Interface, and Tracker endpoint"); durations read "1 h 30 min" instead of "1.5 h"; a number and its unit stay
+  together on one line.
+- Administration > Diagnostic > Uptime Monitor shows a certificate that expires soon in the warning colour and one
+  that expires within 3 days, or has expired, in red, as the uptime page and the widgets do. The API's
+  `getSitesOverview` gives its level as `certificateLevel`.
+- On a past day Visitors > Uptime first answers for that day ("Nov 24: no outage", or how many outages, how long and
+  where), with the measured share when less than 95 % of the time was measured; the current state follows in one
+  muted line ("Now: Everything reachable, checked 4 minutes ago"). When something is not reachable right now, the
+  "Now" line comes first and in full, with its dot, since when and why and the address that fails, and the day follows;
+  a finished outage of that day shows in the warning colour, not in red. Longer periods answer for "In this period".
+- The totals of a day or period count only the part of each outage inside it (an outage from 23:30 to 00:30 counts
+  30 minutes on each day), and outages of several addresses at the same time count once, with their real length.
+  The API's outages name that part: `startInPeriod` and `durationInPeriodSeconds` in `getIncidents`.
+- On a past day the dots of the addresses follow that day's uptime (reachable, partly reachable, not measured) and the
+  Response column, which only knows the latest answer, is left out.
+- On phones and in narrow dashboard columns the outages are a list like the addresses: start and duration first, then
+  what failed and why.
+- In the narrow address list and in the dashboard widgets, response time, uptime and certificate stay together on the
+  right and move to the next line as a whole under a long address. When all addresses of a group share one
+  certificate, its heading names it once ("Certificate 63 days"); in the widgets the certificate figure does, with
+  the host it belongs to. Differing certificates are named in each row ("Certificate 41 days").
+- The dashboard widgets show the measured share under their uptime only when less than 95 % of the time was measured
+  (always as the number's tooltip), as the hour strips do.
+- Administration > Diagnostic > Uptime Monitor on phones: one block per website, its name with the edit button, its
+  status, then certificate and last check.
+- The group headings Matomo and This website look the same in the table and in the narrow list, and the measured share
+  wraps evenly in narrow columns.
+- On a dashboard the tip card of Feinwerk Plugins always sits in the same widget: the big Uptime widget when it is
+  there, else the first of the small ones. It moves along when that widget is minimised or restored, never shows
+  twice, and also shows while a widget loads or after a failed load.
+- A Tag Manager container larger than 4 MB whose version the check cannot read in its first 4 MB no longer counts as
+  current or as outdated by mistake: it shows as not checkable, with its own reason under "Why?" (the file is larger
+  than 4 MB and cannot be read whole), without the firewall text or the link to private addresses. In the API
+  (`getStatus`) such a result carries the note `too_large`.
+- Notes inside cards (what cannot be checked, the check's answer, "Nothing was measured") show in the muted colour as
+  intended; Matomo coloured them as normal text. In light and dark mode.
+- Smaller things: on phones the website names on Administration > Diagnostic > Uptime Monitor look like the table's
+  links; French "Conteneur Tag Manager du site ...", with own words for several websites in all languages; in the
+  small widgets no empty band under the response time line; at full width the measured share at the end of an hour
+  strip stays on one line. Lists are announced as lists by screen readers.
+
 ## 5.1.4
 
 - In a narrow dashboard column and on phones, Visitors > Uptime lists the addresses like the dashboard widgets, under

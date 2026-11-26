@@ -15,7 +15,7 @@
   <div
     class="fwum-page"
     :class="[`fwum-page--${config.variant}`, {
-      'fwum-page--in-widget': config.inWidget, 'is-narrow': narrow,
+      'fwum-page--in-widget': config.inWidget, 'is-narrow': narrow, 'is-past': !!past,
     }]"
     :lang="config.language || undefined"
   >
@@ -72,17 +72,31 @@
       <template v-else>
         <div class="fwum-answer">
           <div class="fwum-answer__text">
+            <!-- B3, D2: a past day states that day first, then the current state in one muted line;
+                 when something is down now, the full "Now" line leads (lines) -->
             <p
-              v-for="(line, i) in answer"
+              v-for="(line, i) in lines"
               :key="line.key"
-              class="fwum-answer__line"
-              :class="`is-${line.outcome}`"
+              :class="[line.now ? 'fwum-answer__now' : 'fwum-answer__line', `is-${line.outcome}`]"
             >
+              <!-- the colour on a span: Matomo 6 colours text in #content .card-content p -->
               <span
-                class="fwum-dot"
-                aria-hidden="true"
-              />
-              <strong class="fwum-state">{{ line.text }}</strong>
+                v-if="line.now"
+                class="fwum-muted"
+              >{{ line.text }}</span>
+              <template v-else>
+                <span
+                  class="fwum-dot"
+                  aria-hidden="true"
+                />
+                <!-- D3 (final review): the first measured day is a link to it -->
+                <strong class="fwum-state">{{ line.text }}<template v-if="line.link"><a
+                  v-if="line.link.href"
+                  :href="line.link.href"
+                >{{ line.link.text }}</a><template
+                  v-else
+                >{{ line.link.text }}</template>{{ line.link.after }}</template></strong>
+              </template>
               <span
                 v-if="line.detail"
                 class="fwum-answer__detail"
@@ -126,6 +140,10 @@
                   /></button>
                 </span>
               </span>
+              <span
+                v-if="line.after"
+                class="fwum-muted"
+              >{{ line.after }}</span>
             </p>
             <span
               class="fwum-sr"
@@ -148,23 +166,27 @@
             :key="figure.key"
           >
             <dt>{{ figure.label }}</dt>
+            <!-- B4: an uptime's measured share only where it matters, always as its tooltip -->
             <dd
               v-if="figure.value"
               :class="figure.level ? `is-${figure.level}` : undefined"
+              :title="figure.measured !== null ? figure.sub : undefined"
             >{{ figure.value }}</dd>
             <dd
               v-if="figure.sub"
-              class="fwum-figures__sub"
+              :class="figure.measured !== null && !measuredVisible(figure.measured)
+                ? 'fwum-sr' : 'fwum-figures__sub'"
             >{{ figure.sub }}</dd>
             <dd
               v-if="figure.key === 'tracker' && sparkValues.length > 1"
               class="fwum-figures__spark"
             >
+              <!-- the small widgets: a low line, no empty band under it -->
               <Sparkline
                 :values="sparkValues"
                 :label="sparkLabel"
                 :width="isPage ? 160 : 120"
-                :height="28"
+                :height="isPage ? 28 : 14"
               />
             </dd>
           </div>
@@ -174,9 +196,11 @@
           class="fwum-note"
         >{{ translate('FeinwerkUptimeMonitor_UiQueuedTracking') }}</p>
 
+        <!-- D3 (final review): a period without any measurement is its answer line alone -->
         <div
-          v-if="strips.length"
+          v-if="strips.length && !unmeasured"
           class="fwum-strips"
+          :class="{ 'fwum-strips--page': isPage }"
         >
           <div
             v-for="strip in strips"
@@ -211,7 +235,7 @@
               <strong>{{ strip.uptime.value }}</strong>
               <!-- P2: one number; the measured share only where it matters -->
               <span
-                :class="Math.round(strip.uptime.measured) < measuredShown
+                :class="measuredVisible(strip.uptime.measured)
                   ? 'fwum-strips__measured' : 'fwum-sr'"
               >{{ strip.uptime.sub }}</span>
             </div>
@@ -228,7 +252,7 @@
         </div>
 
         <div
-          v-if="isPage"
+          v-if="isPage && !unmeasured"
           class="fwum-table-wrap"
         >
           <!-- P1 (Peter, 2026-11-25): narrow, the addresses as the widgets' list -->
@@ -240,11 +264,19 @@
               v-for="group in groups"
               :key="group.key"
             >
-              <div
-                class="fwum-narrow-list__group"
-                role="heading"
-                aria-level="3"
-              >{{ group.name }}</div>
+              <!-- B2, L2: the heading names the one certificate of all its addresses -->
+              <div class="fwum-group-head">
+                <div
+                  class="fwum-group-head__name"
+                  role="heading"
+                  aria-level="3"
+                >{{ group.name }}</div>
+                <span
+                  v-if="group.cert"
+                  class="fwum-group-head__cert"
+                  :class="`is-${group.cert.level}`"
+                >{{ translate('FeinwerkUptimeMonitor_UiCertificateValue', group.cert.text) }}</span>
+              </div>
               <p
                 v-if="!group.rows.length"
                 class="fwum-muted"
@@ -265,42 +297,12 @@
                   :href="adminUrl"
                 >{{ translate('FeinwerkUptimeMonitor_UiEditTargets') }}</a>
               </p>
-              <ul
+              <TargetList
                 v-else
-                class="fwum-targets"
-              >
-                <li
-                  v-for="row in group.rows"
-                  :key="row.key"
-                  :class="`is-${row.outcome}`"
-                  :title="row.title"
-                >
-                  <span class="fwum-cell-label">
-                    <span
-                      class="fwum-dot"
-                      aria-hidden="true"
-                    />
-                    <span class="fwum-targets__label"><template
-                      v-for="(part, p) in breakParts(row.label)"
-                      :key="p"
-                    >{{ part }}<wbr></template></span>
-                  </span>
-                  <span class="fwum-targets__text"><span class="fwum-sr">{{
-                    translate('FeinwerkUptimeMonitor_UiResponse') }}: </span>{{
-                    keepHyphens(row.text) }}</span>
-                  <span class="fwum-targets__uptime"><span class="fwum-sr">{{
-                    translate('FeinwerkUptimeMonitor_UiUptime') }}: </span>{{ row.uptime }}</span>
-                  <span
-                    class="fwum-targets__cert"
-                    :class="`is-${row.certLevel}`"
-                    :title="row.cert ? certTitle(row.cert) : undefined"
-                  ><span
-                    v-if="row.cert"
-                    class="fwum-sr"
-                  >{{ translate('FeinwerkUptimeMonitor_UiCertificate') }}: </span>{{
-                    row.cert }}</span>
-                </li>
-              </ul>
+                :rows="group.rows"
+                :show-cert="!group.cert"
+                :past="!!past"
+              />
             </template>
           </div>
           <table
@@ -313,8 +315,16 @@
                   scope="col"
                   class="label"
                 >{{ translate('FeinwerkUptimeMonitor_UiAddress') }}</th>
-                <th scope="col">{{ translate('FeinwerkUptimeMonitor_UiResponse') }}</th>
-                <th scope="col">{{ translate('FeinwerkUptimeMonitor_UiUptime') }}</th>
+                <!-- D1: a past day has no Response column (the latest answer is not that day's);
+                     D4: no Uptime column when nothing was measured -->
+                <th
+                  v-if="!past"
+                  scope="col"
+                >{{ translate('FeinwerkUptimeMonitor_UiResponse') }}</th>
+                <th
+                  v-if="hasUptime"
+                  scope="col"
+                >{{ translate('FeinwerkUptimeMonitor_UiUptime') }}</th>
                 <th
                   v-if="hasCerts"
                   scope="col"
@@ -359,7 +369,7 @@
               <tr
                 v-for="row in group.rows"
                 :key="row.key"
-                :class="`is-${row.outcome}`"
+                :class="`is-${past ? row.dayOutcome : row.outcome}`"
               >
                 <td
                   class="label"
@@ -376,8 +386,14 @@
                     >{{ part }}<wbr></template></span>
                   </span>
                 </td>
-                <td class="column fwum-targets__text">{{ keepHyphens(row.text) }}</td>
-                <td class="column">{{ row.uptime }}</td>
+                <td
+                  v-if="!past"
+                  class="column fwum-targets__text"
+                >{{ keepHyphens(row.text) }}</td>
+                <td
+                  v-if="hasUptime"
+                  class="column"
+                >{{ row.uptime }}</td>
                 <td
                   v-if="hasCerts"
                   class="column fwum-targets__cert"
@@ -387,47 +403,17 @@
             </tbody>
           </table>
         </div>
-        <template v-else-if="widgetGroup">
+        <template v-else-if="!isPage && widgetGroup">
           <p
             v-if="!widgetGroup.rows.length"
             class="fwum-muted"
           >{{ widgetGroup.note }}</p>
-          <ul
+          <!-- the widget's figure names a certificate that all addresses share -->
+          <TargetList
             v-else
-            class="fwum-targets"
-          >
-            <li
-              v-for="row in widgetRows"
-              :key="row.key"
-              :class="`is-${row.outcome}`"
-              :title="row.title"
-            >
-              <span class="fwum-cell-label">
-                <span
-                  class="fwum-dot"
-                  aria-hidden="true"
-                />
-                <span class="fwum-targets__label"><template
-                  v-for="(part, p) in breakParts(row.label)"
-                  :key="p"
-                >{{ part }}<wbr></template></span>
-              </span>
-              <span class="fwum-targets__text"><span class="fwum-sr">{{
-                translate('FeinwerkUptimeMonitor_UiResponse') }}: </span>{{
-                    keepHyphens(row.text) }}</span>
-              <span class="fwum-targets__uptime"><span class="fwum-sr">{{
-                translate('FeinwerkUptimeMonitor_UiUptime') }}: </span>{{ row.uptime }}</span>
-              <span
-                class="fwum-targets__cert"
-                :class="`is-${row.certLevel}`"
-                :title="row.cert ? certTitle(row.cert) : undefined"
-              ><span
-                v-if="row.cert"
-                class="fwum-sr"
-              >{{ translate('FeinwerkUptimeMonitor_UiCertificate') }}: </span>{{
-                    row.cert }}</span>
-            </li>
-          </ul>
+            :rows="widgetRows"
+            :show-cert="!widgetGroup.cert"
+          />
         </template>
 
         <div
@@ -444,18 +430,18 @@
               @click="whyOpen = !whyOpen"
             >{{ translate('FeinwerkUptimeMonitor_UiWhy') }}</button>
             <a
-              v-if="config.isSuperUser && !config.embedded && !config.allowPrivate"
+              v-if="notCheckableUnreached && config.isSuperUser && !config.embedded
+                && !config.allowPrivate"
               :href="settingsUrl"
             >{{ translate('FeinwerkUptimeMonitor_UiAllowPrivate') }}</a>
           </p>
-          <!-- next to the link "Allow private addresses" the settings sentence would repeat it -->
+          <!-- next to the link "Allow private addresses" the settings sentence would repeat it; a
+               container larger than 4 MB has its own reason, without firewall or settings -->
           <p
             v-show="whyOpen"
             :id="`${uid}-why`"
             class="fwum-note fwum-nc__why"
-          >{{ translate('FeinwerkUptimeMonitor_UiNotCheckableHelp') }}<template
-            v-if="!(config.isSuperUser && !config.embedded) && !config.allowPrivate"
-          > {{ translate('FeinwerkUptimeMonitor_UiNotCheckableSettings') }}</template></p>
+          >{{ whyText }}</p>
         </div>
 
         <!-- the website widget: its container counts with Matomo, but the alarm (U02) goes to the
@@ -477,22 +463,19 @@
           <a :href="uptimePageUrl">{{ translate('FeinwerkUptimeMonitor_UiOpenPage') }}</a>
         </p>
         <OutageList
-          v-if="isPage"
-          :incidents="shownIncidents"
-          :labels="labels"
+          v-if="isPage && !(unmeasured && !outageList.length)"
+          :outages="shownOutages"
+          :names="names"
+          :past="!!past"
           :language="config.language"
           :timezone="config.timezone || ''"
-          :total="incidents.length"
+          :total="outageList.length"
           :total-is-minimum="incidentsMore"
           :can-show-more="canShowMore"
           :loading-more="loadingMore"
+          :narrow="narrow"
+          :not-measured="!measuredShares.length"
           @more="showMoreOutages"
-        />
-        <!-- the kit's card on dashboards (Peter's 7b): after the widget's whole content, the
-             outages too; the server sends it for widgets only; the page has the tip line -->
-        <PromoCard
-          :card="config.promoCard || null"
-          :dismiss-label="translate('FeinwerkUptimeMonitor_PromoDismiss')"
         />
       </template>
 
@@ -514,6 +497,15 @@
         @close="onPanelClose"
       />
     </template>
+    <!-- the kit's card on dashboards (Peter's 7b): after the widget's whole content, the outages
+         too, also while it loads, after a failed load and before the first check; the server sends
+         it for widgets only; the page has the tip line. One place on a dashboard (L5): only the
+         widget that cardPlace.ts names, decided again when a widget is minimised or restored -->
+    <PromoCard
+      v-if="cardHere && config.promoCard"
+      :card="config.promoCard"
+      :dismiss-label="translate('FeinwerkUptimeMonitor_PromoDismiss')"
+    />
   </div>
 </template>
 
@@ -522,15 +514,20 @@ import { defineComponent, PropType } from 'vue';
 import { MatomoUrl, translate } from 'CoreHome';
 import { api, Period } from './api';
 import {
-  Certificate, Incident, ScreenConfig, SeriesPoint, Status, TargetStatus, Timeline, UptimeRow,
+  AddressRow, Certificate, Incident, ScreenConfig, SeriesPoint, Status, TargetStatus, Timeline,
+  UptimeRow,
 } from './types';
 import {
-  ago, causeText, clockOrDate, dateTime, dayKey, errorText, listOf, milliseconds, percent,
-  sharePercent,
-  statusOf,
+  ago, breakParts, calendarDay, causeText, clockOrDate, dateTime, dayKey, duration, errorText,
+  hostOf, keepHyphens, keepUnits, listOf, milliseconds, percent, sharePercent, shiftDay, statusOf,
   targetLabel,
 } from './format';
 import { stripTotals } from './timeline';
+import { observeNarrow } from './narrow';
+import { ownsDashboardCard, watchDashboardCard } from './cardPlace';
+import {
+  groupOf, KIND_ORDER, OutageRow, outageRows, outagesInPeriod, outageTotals,
+} from './outages';
 import Sparkline from './Sparkline.vue';
 import OutageList from './OutageList.vue';
 import TargetPanel from './TargetPanel.vue';
@@ -538,20 +535,9 @@ import FeedbackBar from './FeedbackBar.vue';
 import PromoLine from './PromoLine.vue';
 import PromoCard from './PromoCard.vue';
 import HourStrip from './HourStrip.vue';
+import TargetList from './TargetList.vue';
 
-interface Row {
-  key: string;
-  label: string;
-  outcome: string;
-  text: string;
-  title: string;
-  uptime: string;
-  cert: string;
-  certLevel: string;
-  /** days until the certificate expires (null: no certificate) */
-  certDays: number | null;
-  checkedAt: string;
-}
+type Row = AddressRow;
 
 interface State {
   outcome: string;
@@ -565,13 +551,22 @@ interface Group {
   /** what a group without switched-on addresses says instead of its rows */
   note: string;
   state: State;
+  /** B2: the certificate all its addresses share, named once in the heading; else null */
+  cert: { text: string; level: string } | null;
 }
 
 interface AnswerLine {
   key: string;
+  /** up, down, partial ...; warn: a past day's finished outages (D2: not red) */
   outcome: string;
   text: string;
   detail: string;
+  /** B3: the muted line with the current state under a past day's answer (all fine now) */
+  now?: boolean;
+  /** the text after the freshness ("checked 4 minutes ago" and the icons, kept as one unit) */
+  after?: string;
+  /** D3: a link after the text (no href: the words alone, in an embed), then more text */
+  link?: { text: string; href: string; after: string };
 }
 
 interface Figure {
@@ -580,6 +575,8 @@ interface Figure {
   value: string;
   sub: string;
   level: string;
+  /** an uptime figure's measured share (percent; B4); null for the other figures */
+  measured: number | null;
 }
 
 interface Strip {
@@ -592,16 +589,17 @@ interface Strip {
 }
 
 const MATOMO_KINDS = ['ui', 'tracker', 'js'];
-/** P2 (Peter, 2026-11-25): the measured share shows at the strip end only below this (percent) */
+/**
+ * P2 (Peter, 2026-11-25), B4: the measured share shows at the strip end and in the widgets'
+ * uptime figure only below this (percent, compared rounded as shown)
+ */
 const MEASURED_SHOWN = 95;
-/** below this width (px) the page and widgets take the phone layout (.fwum-narrow) */
-const NARROW_PX = 600;
 /**
  * A Tag Manager container is a file on the Matomo server: listed and counted with Matomo, not
  * with the website (Peter, 2026-11-25, "a)"). Its alarm stays the website's (Sentinel U02).
  */
 const CONTAINER = 'container';
-const ORDER = ['ui', 'tracker', 'js', 'web', 'proxy', 'container'];
+const ORDER = KIND_ORDER;
 /** the answer line names the worst group first */
 const SEVERITY = ['down', 'partial', 'stale', 'not_checkable', 'none', 'off', 'up'];
 const OUTAGES_FIRST = 20;
@@ -611,7 +609,7 @@ const INCIDENT_LIMIT_MAX = 1000;
 
 export default defineComponent({
   components: {
-    Sparkline, OutageList, TargetPanel, FeedbackBar, PromoLine, PromoCard, HourStrip,
+    Sparkline, OutageList, TargetPanel, FeedbackBar, PromoLine, PromoCard, HourStrip, TargetList,
   },
   props: {
     config: { type: Object as PropType<ScreenConfig>, required: true },
@@ -652,6 +650,10 @@ export default defineComponent({
       tick: Date.now(),
       timer: 0,
       uid: `fwum-${Math.random().toString(36).slice(2, 8)}`,
+      /** this widget shows the dashboard's one card (L5, cardPlace.ts) */
+      cardHere: false,
+      /** lets go of the dashboard watch that decides cardHere again (minimise, restore) */
+      cardWatch: null as (() => void) | null,
     };
   },
   computed: {
@@ -713,15 +715,7 @@ export default defineComponent({
     },
     /** Visitors > Uptime of this website, from a dashboard widget */
     uptimePageUrl(): string {
-      const params = {
-        idSite: String(this.config.idSite),
-        period: this.period.period,
-        date: this.period.date,
-      };
-      return `?${MatomoUrl.stringify({ module: 'CoreHome', action: 'index', ...params })}#?${
-        MatomoUrl.stringify({
-          ...params, category: 'General_Visitors', subcategory: 'FeinwerkUptimeMonitor_Uptime',
-        })}`;
+      return this.pageUrl(this.period.period, this.period.date);
     },
     /** the website's own targets, on or off (none before a new website's first check run) */
     siteTargetCount(): number {
@@ -750,6 +744,7 @@ export default defineComponent({
           note: translate(this.matomoAllOff ? 'FeinwerkUptimeMonitor_UiAllOffMatomo'
             : 'FeinwerkUptimeMonitor_UiFirstCheck'),
           state: this.groupState(this.matomoRows, this.matomoAllOff),
+          cert: this.sharedCert(this.matomoRows),
         });
       }
       if (this.showSite) {
@@ -760,6 +755,7 @@ export default defineComponent({
           note: translate(this.siteTargetCount ? 'FeinwerkUptimeMonitor_UiAllOffSite'
             : 'FeinwerkUptimeMonitor_UiFirstCheck'),
           state: this.groupState(this.siteRows, this.siteTargetCount > 0),
+          cert: this.sharedCert(this.siteRows),
         });
       }
       return out;
@@ -788,20 +784,219 @@ export default defineComponent({
         .sort((a, b) => SEVERITY.indexOf(a.state.outcome) - SEVERITY.indexOf(b.state.outcome))
         .map((g) => {
           const down = g.rows.filter((r) => r.outcome === 'down');
-          const state = down.length === 1
+          // F1 (final review): a line that names a down address is red, also when the rest of its
+          // group answers; a count ("2 of 4 addresses") and the widgets' count stay amber
+          const named = this.isPage && down.length === 1;
+          const state = named
             ? translate('FeinwerkUptimeMonitor_UiAddressDown', down[0].label) : g.state.text;
           return {
             key: g.key,
-            outcome: g.state.outcome,
+            outcome: named ? 'down' : g.state.outcome,
             text: this.isPage
               ? translate('FeinwerkUptimeMonitor_UiAnswerGroup', g.name, state)
               : g.state.text,
-            detail: this.downDetail(g),
+            detail: this.downDetail(g.rows),
           };
         });
     },
+    /**
+     * B3 (Peter): on a past day or a longer period the answer states that period first, "Nov 24:
+     * no outage" (with the measured share below 95 %) or its outages; the current state follows
+     * in one muted line (lines). Null today and in the widgets (they show the current state).
+     */
+    past(): AnswerLine | null {
+      if (!this.isPage || this.todaySelected) {
+        return null;
+      }
+      const { language } = this.config;
+      const label = this.periodLabel;
+      // F1: only the parts inside the period, overlapping outages of several addresses as one
+      const outages = outagesInPeriod(this.incidents);
+      if (outages.length) {
+        const { count, seconds } = outageTotals(outages);
+        let text = translate('FeinwerkUptimeMonitor_UiPastOutageOne', label,
+          duration(seconds, language));
+        if (this.incidentsMore) {
+          // a cut list: the count is a minimum and the sum is unknown
+          text = translate('FeinwerkUptimeMonitor_UiPastOutagesAtLeast', label, String(count));
+        } else if (count > 1) {
+          text = translate('FeinwerkUptimeMonitor_UiPastOutagesMany', label,
+            String(count), duration(seconds, language));
+        }
+        // which addresses, up to three by name (as the admin fold), with the cause when only one
+        const keys = outages.map((i) => i.targetKey || '')
+          .filter((key, n, all) => all.indexOf(key) === n);
+        const causes = outages.map((i) => causeText(i.cause, i.detail))
+          .filter((cause, n, all) => all.indexOf(cause) === n);
+        const names = keys.length <= 3 ? this.namedOutages(outages) : '';
+        return {
+          key: 'past',
+          // D2: a finished outage is no alarm: the warning colour; a running one leads in red
+          // (lines)
+          outcome: 'warn',
+          text,
+          detail: names && causes.length === 1 && causes[0] ? `${names} (${causes[0]})` : names,
+        };
+      }
+      const shares = this.measuredShares;
+      if (!shares.length) {
+        // nothing measured is no "no outage"; D3: before the first measurement, the day it starts
+        const first = this.firstMeasured;
+        if (first !== '' && this.periodEnd > 0 && new Date(first).getTime() >= this.periodEnd) {
+          const day = dayKey(first, this.config.timezone || '');
+          const today = dayKey(new Date(this.tick).toISOString(), this.config.timezone || '');
+          const mark = '\u0001';
+          const [before, after = ''] = translate('FeinwerkUptimeMonitor_UiPastNotMeasuredStart',
+            label, mark).split(mark);
+          return {
+            key: 'past',
+            outcome: 'none',
+            text: before,
+            detail: '',
+            link: {
+              text: calendarDay(day, language, today.slice(0, 4)),
+              href: this.config.embedded ? '' : this.pageUrl('day', day),
+              after,
+            },
+          };
+        }
+        return {
+          key: 'past',
+          outcome: 'none',
+          text: translate('FeinwerkUptimeMonitor_UiPastNotMeasured', label),
+          detail: '',
+        };
+      }
+      const lowest = Math.min(...shares);
+      return {
+        key: 'past',
+        outcome: 'up',
+        text: translate('FeinwerkUptimeMonitor_UiPastNoOutage', label),
+        detail: this.measuredVisible(lowest)
+          ? translate('FeinwerkUptimeMonitor_UiMeasured', sharePercent(lowest, language)) : '',
+      };
+    },
+    /** D3: the viewed period has no measurement at all (its answer line stands alone) */
+    unmeasured(): boolean {
+      return !!this.past && this.past.outcome === 'none';
+    },
+    /** D3: the first measured moment of the screen's groups (API getTimeline firstMeasured) */
+    firstMeasured(): string {
+      const timelines = [
+        this.showMatomo ? this.matomoTimeline : null,
+        this.showSite ? this.siteTimeline : null,
+      ];
+      const firsts = timelines.map((t) => (t && t.firstMeasured) || '').filter((t) => t !== '');
+      return firsts.length ? firsts.sort()[0] : '';
+    },
+    /** the end of the viewed period (ms): after the strips' last cell; 0 without a strip */
+    periodEnd(): number {
+      const ends = [this.matomoTimeline, this.siteTimeline]
+        .filter((t): t is Timeline => !!t && t.cells.length > 0)
+        .map((t) => new Date(t.cells[t.cells.length - 1].time).getTime()
+          + (t.grain === 'hour' ? 3600000 : 86400000));
+      return ends.length ? Math.max(...ends) : 0;
+    },
+    /** "Nov 24" for a single day (yesterday too), "In this period" for longer ones */
+    periodLabel(): string {
+      const { period, date } = this.period;
+      const today = dayKey(new Date(this.tick).toISOString(), this.config.timezone || '');
+      const day = date === 'yesterday' ? shiftDay(today, -1) : date;
+      if (period !== 'day' || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+        return translate('FeinwerkUptimeMonitor_UiInThisPeriod');
+      }
+      return calendarDay(day, this.config.language, today.slice(0, 4));
+    },
+    /** each group's measured share of the period (percent), for the groups that measured any */
+    measuredShares(): number[] {
+      const out: number[] = [];
+      this.groups.forEach((g) => {
+        const uptime = g.key === 'matomo'
+          ? this.uptimeOf(g.rows, [...this.matomoUptimeRows, ...this.siteUptimeRows],
+            this.matomoTimeline)
+          : this.uptimeOf(g.rows, this.siteUptimeRows, this.siteTimeline);
+        if (uptime && uptime.measured > 0) {
+          out.push(uptime.measured);
+        }
+      });
+      return out;
+    },
+    /** something is not reachable now: on a past day the full "Now" line leads (D2) */
+    downNow(): boolean {
+      return this.groups.some((g) => g.state.outcome === 'down' || g.state.outcome === 'partial');
+    },
+    /**
+     * The current state of every address of the screen in a few words, for the "Now:" line; one
+     * address down is named (D1): "Matomo: Interface not reachable"
+     */
+    nowState(): string {
+      const { groups } = this;
+      if (groups.length && groups.every((g) => g.state.outcome === 'up')) {
+        return translate('FeinwerkUptimeMonitor_UiAllReachable');
+      }
+      const rows = groups.flatMap((g) => g.rows);
+      const down = rows.filter((r) => r.outcome === 'down');
+      if (down.length === 1) {
+        return translate('FeinwerkUptimeMonitor_UiAddressDown',
+          this.labels[down[0].key] || down[0].label);
+      }
+      if (!rows.length) {
+        const worst = [...groups]
+          .sort((a, b) => SEVERITY.indexOf(a.state.outcome) - SEVERITY.indexOf(b.state.outcome));
+        return worst.length ? worst[0].state.text : '';
+      }
+      return this.groupState(rows, false).text;
+    },
+    /**
+     * F1: the Now line's colour by today's rule: red when it names the one down address or a group
+     * does not answer at all ("This website: Not reachable" today); amber when every group with an
+     * outage is partly reachable
+     */
+    nowOutcome(): string {
+      const rows = this.groups.flatMap((g) => g.rows);
+      if (rows.filter((r) => r.outcome === 'down').length === 1
+        || this.groups.some((g) => g.state.outcome === 'down')) {
+        return 'down';
+      }
+      return 'partial';
+    },
+    /**
+     * The answer as shown: today's lines; on a past day, when something is down now, the full
+     * "Now" line first (its dot, since when and why, as today's answer line), then that day's
+     * answer; else the day first and the current state in one muted "Now:" line (D2). Not
+     * checkable, no recent check or not measured are no outage: the day first.
+     */
+    lines(): AnswerLine[] {
+      if (!this.past) {
+        return this.answer;
+      }
+      if (this.downNow) {
+        const rows = this.groups.flatMap((g) => g.rows);
+        // F1 (final review): one rule with today's lines: red when it names the down address or
+        // nothing answers, amber for a count of partly reachable addresses
+        return [{
+          key: 'now',
+          outcome: this.nowOutcome,
+          text: translate('FeinwerkUptimeMonitor_UiNow', this.nowState),
+          detail: this.downDetail(rows),
+        }, this.past];
+      }
+      const mark = '\u0001';
+      const fresh = this.checking || this.freshness !== '';
+      const text = fresh
+        ? translate('FeinwerkUptimeMonitor_UiNowChecked', this.nowState, mark)
+        : translate('FeinwerkUptimeMonitor_UiNow', this.nowState);
+      const [before, after = ''] = text.split(mark);
+      return [this.past, {
+        key: 'now', outcome: 'now', text: before, detail: '', now: true, after,
+      }];
+    },
     /** the answer line that carries the freshness: the first one of a group with results */
     freshnessLine(): number {
+      if (this.past) {
+        // the "Now" line: first when something is down, else under the day's answer
+        return this.downNow ? 0 : 1;
+      }
       const checked = (key: string) => this.groups.some((g) => g.key === key
         && g.rows.some((r) => r.checkedAt !== ''));
       const index = this.answer.findIndex((line) => line.key === 'all' || checked(line.key));
@@ -817,6 +1012,14 @@ export default defineComponent({
       return newest
         ? translate('FeinwerkUptimeMonitor_UiChecked', ago(newest, this.config.language, this.tick))
         : '';
+    },
+    /** each address's name without its group ("Interface", "www.example.com") */
+    names(): Record<string, string> {
+      const out: Record<string, string> = {};
+      [...(this.matomo?.targets || []), ...(this.site?.targets || [])].forEach((t) => {
+        out[t.targetKey] = targetLabel(t);
+      });
+      return out;
     },
     labels(): Record<string, string> {
       const out: Record<string, string> = {};
@@ -863,11 +1066,12 @@ export default defineComponent({
           value: this.trackerTime,
           sub: translate('FeinwerkUptimeMonitor_UiMedianLastHour'),
           level: '',
+          measured: null,
         });
       } else if (this.showMatomo && this.sparkValues.length > 1) {
         // no tracking traffic in the last hour: the endpoint's response times per hour
         out.push({
-          key: 'tracker', label: this.sparkLabel, value: '', sub: '', level: '',
+          key: 'tracker', label: this.sparkLabel, value: '', sub: '', level: '', measured: null,
         });
       }
       const withCert = this.groups.flatMap((g) => g.rows).filter((r) => r.certDays !== null);
@@ -877,8 +1081,9 @@ export default defineComponent({
           key: 'cert',
           label: translate('FeinwerkUptimeMonitor_UiCertificate'),
           value: soonest.cert,
-          sub: this.isPage ? (this.labels[soonest.key] || soonest.label) : soonest.label,
+          sub: this.certFigureSub(withCert, soonest),
           level: soonest.certLevel,
+          measured: null,
         });
       }
       return out;
@@ -931,8 +1136,12 @@ export default defineComponent({
     hasCerts(): boolean {
       return this.groups.some((g) => g.rows.some((r) => r.cert !== ''));
     },
+    /** D4: a period without any measurement shows no empty Uptime column */
+    hasUptime(): boolean {
+      return this.groups.some((g) => g.rows.some((r) => r.uptime !== ''));
+    },
     columnCount(): number {
-      return this.hasCerts ? 4 : 3;
+      return 1 + (this.past ? 0 : 1) + (this.hasUptime ? 1 : 0) + (this.hasCerts ? 1 : 0);
     },
     /** the widget's one group */
     widgetGroup(): Group | null {
@@ -946,9 +1155,6 @@ export default defineComponent({
       }
       return date === 'today'
         || date === dayKey(new Date(this.tick).toISOString(), this.config.timezone || '');
-    },
-    measuredShown(): number {
-      return MEASURED_SHOWN;
     },
     /** the quiet icons: admins of the website, not in an embed */
     showTools(): boolean {
@@ -988,24 +1194,63 @@ export default defineComponent({
         ? this.widgetGroup.rows.filter((r) => r.outcome === 'down')
         : this.widgetGroup.rows;
     },
-    notCheckableCount(): number {
+    notCheckableRows(): Row[] {
       const rows = this.isPage ? this.groups.flatMap((g) => g.rows) : this.widgetRows;
-      return rows.filter((r) => r.outcome === 'not_checkable').length;
+      return rows.filter((r) => r.outcome === 'not_checkable');
     },
+    notCheckableCount(): number {
+      return this.notCheckableRows.length;
+    },
+    /** addresses this server cannot reach (firewall, private address, password): general reason */
+    notCheckableUnreached(): boolean {
+      return this.notCheckableRows.some((r) => !r.tooLarge);
+    },
+    /** Tag Manager containers larger than the 4 MB the check reads: their own reason */
+    notCheckableTooLarge(): boolean {
+      return this.notCheckableRows.some((r) => r.tooLarge);
+    },
+    /** "Why?": the reasons of the addresses that cannot be checked, each once */
+    whyText(): string {
+      const parts: string[] = [];
+      if (this.notCheckableUnreached) {
+        parts.push(translate('FeinwerkUptimeMonitor_UiNotCheckableHelp'));
+        // next to the link "Allow private addresses" this sentence would repeat it
+        if (!(this.config.isSuperUser && !this.config.embedded) && !this.config.allowPrivate) {
+          parts.push(translate('FeinwerkUptimeMonitor_UiNotCheckableSettings'));
+        }
+      }
+      if (this.notCheckableTooLarge) {
+        parts.push(translate('FeinwerkUptimeMonitor_UiNotCheckableTooLarge'));
+      }
+      // "4 MB" stays together (D4)
+      return keepUnits(parts.join(' '));
+    },
+    /**
+     * D2 (final review): only too large containers, which no server could check: without "from
+     * this server"
+     */
     notCheckableText(): string {
-      return this.notCheckableCount === 1
-        ? translate('FeinwerkUptimeMonitor_UiNotCheckableOne')
-        : translate('FeinwerkUptimeMonitor_UiNotCheckableMany', String(this.notCheckableCount));
+      const anywhere = !this.notCheckableUnreached;
+      if (this.notCheckableCount === 1) {
+        return translate(anywhere ? 'FeinwerkUptimeMonitor_UiCannotCheckOne'
+          : 'FeinwerkUptimeMonitor_UiNotCheckableOne');
+      }
+      return translate(anywhere ? 'FeinwerkUptimeMonitor_UiCannotCheckMany'
+        : 'FeinwerkUptimeMonitor_UiNotCheckableMany', String(this.notCheckableCount));
     },
-    shownIncidents(): Incident[] {
+    /** D1: the outage list's rows, overlapping outages of one group as one */
+    outageList(): OutageRow[] {
+      return outageRows(this.incidents, !!this.past);
+    },
+    shownOutages(): OutageRow[] {
       // with a cut request, only the first `limit` of the merged list are surely the newest
       const cap = this.incidentsMore ? Math.min(this.outagesShown, this.incidentLimit)
         : this.outagesShown;
-      return this.incidents.slice(0, cap);
+      return this.outageList.slice(0, cap);
     },
     canShowMore(): boolean {
       // more of the loaded list, or a larger request; at the API's limit a cut list ends here
-      const moreLoaded = this.shownIncidents.length < this.incidents.length
+      const moreLoaded = this.shownOutages.length < this.outageList.length
         && !(this.incidentsMore && this.outagesShown >= this.incidentLimit
           && this.incidentLimit >= INCIDENT_LIMIT_MAX);
       return moreLoaded || (this.incidentsMore && this.incidentLimit < INCIDENT_LIMIT_MAX);
@@ -1022,21 +1267,16 @@ export default defineComponent({
     this.load();
     // the page and the widgets follow their own width, not the screen's: Matomo's default dashboard
     // has three columns, about 370 px each (Peter, 2026-11-25: the big widget looked broken there)
-    if (typeof ResizeObserver !== 'undefined' && this.$el instanceof HTMLElement) {
-      this.resize = new ResizeObserver((entries) => {
-        // a dashboard reload replaces the widget's HTML without unmounting the app: let go then
-        if (!(this.$el as HTMLElement).isConnected) {
-          if (this.resize) {
-            this.resize.disconnect();
-          }
-          return;
-        }
-        const width = entries[0] ? entries[0].contentRect.width : 0;
-        if (width > 0) {
-          this.narrow = width < NARROW_PX;
-        }
+    if (this.$el instanceof HTMLElement) {
+      this.resize = observeNarrow(this.$el, (narrow) => {
+        this.narrow = narrow;
       });
-      this.resize.observe(this.$el);
+      this.cardHere = ownsDashboardCard(this.$el);
+      // a widget minimised or restored, added or removed: every widget decides again, so the
+      // card moves to the new owner and there is never a second one
+      this.cardWatch = watchDashboardCard(this.$el, (owns) => {
+        this.cardHere = owns;
+      });
     }
     this.timer = window.setInterval(() => {
       // Matomo 5's dashboard reload replaces a widget's HTML without unmounting the app
@@ -1052,27 +1292,27 @@ export default defineComponent({
     if (this.resize) {
       this.resize.disconnect();
     }
+    if (this.cardWatch) {
+      this.cardWatch();
+    }
   },
   methods: {
     translate,
-    /**
-     * An address in pieces that may wrap after ".", "/", "?", "&", "=", "-" or "_" (a <wbr> after
-     * each): on a phone "www.outdoor-shop-demo.example" wraps between its parts, not inside a word
-     */
-    breakParts(text: string): string[] {
-      const parts = text.replace(/([./?&=_-])/g, '$1\u0001').split('\u0001').filter((p) => p !== '');
-      // "www." never stands alone on a line
-      if (parts.length > 1 && parts[0].toLowerCase() === 'www.') {
-        parts.splice(0, 2, parts[0] + parts[1]);
+    breakParts,
+    keepHyphens,
+    /** B4: a measured share is shown below MEASURED_SHOWN %, compared as it reads (rounded) */
+    measuredVisible(measured: number): boolean {
+      return Math.round(measured) < MEASURED_SHOWN;
+    },
+    /** the certificate all rows share (same days and level), else null (B2) */
+    sharedCert(rows: Row[]): { text: string; level: string } | null {
+      const first = rows[0];
+      if (!first || first.certDays === null) {
+        return null;
       }
-      return parts;
-    },
-    certTitle(cert: string): string {
-      return `${translate('FeinwerkUptimeMonitor_UiCertificate')}: ${cert}`;
-    },
-    /** "HTTP-Status 403" stays whole on a phone: non-breaking hyphens in a short state text */
-    keepHyphens(text: string): string {
-      return text.replace(/-/g, '\u2011');
+      const same = rows.every((r) => r.certDays === first.certDays
+        && r.certLevel === first.certLevel);
+      return same ? { text: first.cert, level: first.certLevel } : null;
     },
     load(): Promise<void> {
       if (this.loaded && !(this.$el as HTMLElement | undefined)?.isConnected) {
@@ -1235,11 +1475,19 @@ export default defineComponent({
       } else if (state.outcome === 'up') {
         text = milliseconds(state.responseMs, this.config.language);
       } else if (state.outcome === 'not_checkable') {
-        text = translate('FeinwerkUptimeMonitor_UiNotCheckable');
+        // D2 (final review): a container larger than 4 MB says so in a few words
+        text = state.note === 'too_large'
+          ? keepUnits(translate('FeinwerkUptimeMonitor_UiTooLargeToCheck'))
+          : translate('FeinwerkUptimeMonitor_UiNotCheckable');
       } else {
         text = causeText(state.error, state.httpStatus !== null ? `HTTP ${state.httpStatus}` : null);
       }
       const uptime = uptimeRows.find((r) => r.targetKey === target.targetKey && r.source === 'local');
+      const measured = !!uptime && uptime.uptimePercent !== null && uptime.coveragePercent > 0;
+      let dayOutcome = 'none';
+      if (measured) {
+        dayOutcome = (uptime?.uptimePercent ?? 0) >= 100 ? 'up' : 'partial';
+      }
       return {
         key: target.targetKey,
         label: targetLabel(target),
@@ -1252,7 +1500,27 @@ export default defineComponent({
         certLevel: target.certificate ? target.certificate.level : '',
         certDays: target.certificate ? target.certificate.daysLeft : null,
         checkedAt: state && !state.stale ? state.checkedAt : '',
+        host: hostOf(target.url),
+        // D1: a past day's dot follows that day's uptime: all of it, part of it, nothing measured
+        dayOutcome,
+        tooLarge: !!state && !state.stale && state.outcome === 'not_checkable'
+          && state.note === 'too_large',
       };
+    },
+    /**
+     * D3: the certificate figure under its days: the host when the figure stands for all the
+     * addresses (one shared certificate; nothing for Matomo's addresses without their URLs),
+     * else the address whose certificate expires first
+     */
+    certFigureSub(withCert: Row[], soonest: Row): string {
+      const shared = withCert.every((r) => r.certDays === soonest.certDays
+        && r.certLevel === soonest.certLevel);
+      if (shared) {
+        const hosts = withCert.map((r) => r.host)
+          .filter((host, n, all) => host !== '' && all.indexOf(host) === n);
+        return hosts.length === 1 ? hosts[0] : '';
+      }
+      return this.isPage ? (this.labels[soonest.key] || soonest.label) : soonest.label;
     },
     /**
      * A group's answer: not reachable only when nothing answered; a partial failure is counted
@@ -1275,11 +1543,11 @@ export default defineComponent({
       });
     },
     /** "since 10:42 (no connection)": the oldest open outage of the failing addresses */
-    downDetail(group: Group): string {
-      if (group.state.outcome !== 'down' && group.state.outcome !== 'partial') {
+    downDetail(rows: Row[]): string {
+      const down = rows.filter((r) => r.outcome === 'down');
+      if (!down.length) {
         return '';
       }
-      const down = group.rows.filter((r) => r.outcome === 'down');
       const keys = down.map((r) => r.key);
       const starts = this.openIncidents
         .filter((i) => i.open && i.type === 'outage' && keys.includes(i.targetKey || ''))
@@ -1347,9 +1615,40 @@ export default defineComponent({
       if (cert.level === 'expired') {
         return translate('FeinwerkUptimeMonitor_UiCertificateExpired');
       }
-      return cert.daysLeft === 1
+      return keepUnits(cert.daysLeft === 1
         ? translate('FeinwerkUptimeMonitor_UiCertificateDay')
-        : translate('FeinwerkUptimeMonitor_UiCertificateDays', String(cert.daysLeft));
+        : translate('FeinwerkUptimeMonitor_UiCertificateDays', String(cert.daysLeft)));
+    },
+    /** Visitors > Uptime of this website for a period and date */
+    pageUrl(period: string, date: string): string {
+      const params = { idSite: String(this.config.idSite), period, date };
+      return `?${MatomoUrl.stringify({ module: 'CoreHome', action: 'index', ...params })}#?${
+        MatomoUrl.stringify({
+          ...params, category: 'General_Visitors', subcategory: 'FeinwerkUptimeMonitor_Uptime',
+        })}`;
+    },
+    /**
+     * D4 (final review): the addresses of the day's outages, each group named once, "Matomo:
+     * JavaScript tracker, Interface and Tracker endpoint", then the website's
+     */
+    namedOutages(outages: Incident[]): string {
+      const { language } = this.config;
+      const matomo: string[] = [];
+      const site: string[] = [];
+      outages.filter((i, n, all) => all.findIndex((o) => o.targetKey === i.targetKey) === n)
+        .forEach((i) => {
+          const name = this.names[i.targetKey || ''] || i.targetKey || '';
+          (groupOf(i) === 'matomo' ? matomo : site).push(name);
+        });
+      const parts: string[] = [];
+      if (matomo.length) {
+        parts.push(translate('FeinwerkUptimeMonitor_UiMatomoTarget', listOf(matomo, language)));
+      }
+      if (site.length) {
+        parts.push(listOf(site, language));
+      }
+      // French puts a space before the semicolon
+      return parts.join(language.startsWith('fr') ? ' ; ' : '; ');
     },
   },
 });

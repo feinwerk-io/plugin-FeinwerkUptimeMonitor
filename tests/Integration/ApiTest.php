@@ -18,6 +18,7 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Kind;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Outcome;
 use Piwik\Plugins\FeinwerkUptimeMonitor\External\ExternalResults;
 use Piwik\Plugins\FeinwerkUptimeMonitor\FeinwerkUptimeMonitor;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Report\UptimeReport;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\IncidentStore;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\RollupStore;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\Schema;
@@ -227,6 +228,38 @@ class ApiTest extends IntegrationTestCase
         $this->assertBadRequest('getIncidents', ['idSite' => 1, 'period' => 'day', 'date' => '2026-03-14', 'state' => 'gone'], "'state'");
     }
 
+    /** F1 of the 5.1.5 review: each outage names its part inside the period, so day totals never count across midnight. */
+    public function test_getIncidents_partInThePeriod_anOutageAcrossMidnight(): void
+    {
+        $store = new IncidentStore();
+        $store->apply([new CheckResult($this->web, Outcome::DOWN, Outcome::TIMEOUT, null, null, [], null, '2026-03-14 23:30:00')]);
+        $store->apply([new CheckResult($this->web, Outcome::UP, null, null, 200, [], null, '2026-03-15 00:30:00')]);
+        foreach (['2026-03-14' => '2026-03-14T23:30:00Z', '2026-03-15' => '2026-03-15T00:00:00Z'] as $date => $start) {
+            $incidents = self::api('getIncidents', ['idSite' => 1, 'period' => 'day', 'date' => $date]);
+            $this->assertCount(1, $incidents, $date);
+            $this->assertSame(3600, $incidents[0]['durationSeconds'], $date);
+            $this->assertSame($start, $incidents[0]['startInPeriod'], $date);
+            $this->assertSame(1800, $incidents[0]['durationInPeriodSeconds'], $date);
+        }
+        // the week (Monday to Sunday) holds it whole
+        $week = self::api('getIncidents', ['idSite' => 1, 'period' => 'week', 'date' => '2026-03-14']);
+        $this->assertSame(['2026-03-14T23:30:00Z', 3600], [$week[0]['startInPeriod'], $week[0]['durationInPeriodSeconds']]);
+    }
+
+    public function test_incidents_anOpenOutageSinceYesterday_countsTodayFromMidnightToNow(): void
+    {
+        (new IncidentStore())->apply([new CheckResult($this->web, Outcome::DOWN, Outcome::TIMEOUT, null, null, [], null, '2026-03-14 22:00:00')]);
+        $now = (int) strtotime('2026-03-15 10:00:00 UTC');
+        $report = new UptimeReport(static fn(): int => $now);
+        $today = $report->incidents(1, $report->range(1, 'day', '2026-03-15'), 'all', 100, 'all');
+        $this->assertCount(1, $today);
+        $this->assertTrue($today[0]['open']);
+        $this->assertSame(12 * 3600, $today[0]['durationSeconds']);
+        $this->assertSame(['2026-03-15T00:00:00Z', 10 * 3600], [$today[0]['startInPeriod'], $today[0]['durationInPeriodSeconds']]);
+        $yesterday = $report->incidents(1, $report->range(1, 'day', '2026-03-14'), 'all', 100, 'all');
+        $this->assertSame(['2026-03-14T22:00:00Z', 2 * 3600], [$yesterday[0]['startInPeriod'], $yesterday[0]['durationInPeriodSeconds']]);
+    }
+
     public function test_getCertificates_happy_andNoAccess(): void
     {
         (new StateStore())->upsertMany([new CheckResult($this->web, Outcome::UP, null, null, 200, [], '2000-01-01', '2026-03-14 10:00:00')], StateStore::LOCAL);
@@ -341,9 +374,29 @@ class ApiTest extends IntegrationTestCase
         $this->assertSame('Shop', $rows[1]['name']);
         $this->assertSame(1, $rows[1]['down']);
         $this->assertLessThan(0, $rows[1]['certificateDaysLeft']);
+        $this->assertSame('expired', $rows[1]['certificateLevel']);
+        $this->assertNull($rows[0]['certificateLevel'], 'no certificate read: no level');
         FakeAccess::clearAccess(false, [1], [1]);
         $this->expectException(NoAccessException::class);
         self::api('getSitesOverview');
+    }
+
+    /** Final review: the overview colours the certificate column like the uptime page: the soonest one's level. */
+    public function test_getSitesOverview_certificateLevel_ofTheSoonest(): void
+    {
+        $targets = new TargetStore();
+        $ui = $targets->get(0, 'ui')->id;
+        $tracker = $targets->get(0, 'tracker')->id;
+        $now = gmdate('Y-m-d H:i:s');
+        $in = static fn(int $days): string => gmdate('Y-m-d', time() + $days * 86400);
+        (new StateStore())->upsertMany([
+            new CheckResult($ui, Outcome::UP, null, null, 200, [], $in(40), $now),
+            new CheckResult($tracker, Outcome::UP, null, null, 200, [], $in(2), $now),
+            new CheckResult($this->web, Outcome::UP, null, null, 200, [], $in(10), $now),
+        ], StateStore::LOCAL);
+        $rows = array_column(self::api('getSitesOverview'), null, 'idSite');
+        $this->assertSame([2, 'critical'], [$rows[0]['certificateDaysLeft'], $rows[0]['certificateLevel']], 'the soonest of Matomo');
+        $this->assertSame([10, 'warning'], [$rows[1]['certificateDaysLeft'], $rows[1]['certificateLevel']]);
     }
 
     public function test_getSitesOverview_oldResultsAreNotReachableNorDown(): void
@@ -450,6 +503,15 @@ class ApiTest extends IntegrationTestCase
         $this->assertSame(['none', 'up', 'partial', 'down'], [$states['2026-03-14T09:00:00Z'], $states['2026-03-14T10:00:00Z'],
             $states['2026-03-14T11:00:00Z'], $states['2026-03-14T12:00:00Z']]);
 
+        // final review D3: the first measured hour, also for a period before it
+        $this->assertSame('2026-03-14T10:00:00Z', $day['firstMeasured']);
+        $before = self::api('getTimeline', ['idSite' => 1, 'period' => 'day', 'date' => '2026-03-10']);
+        $this->assertSame(['none', '2026-03-14T10:00:00Z'], [array_unique(array_column($before['cells'], 'state'))[0], $before['firstMeasured']]);
+        $this->assertNull(self::api('getTimeline', ['idSite' => 1, 'period' => 'day', 'date' => '2026-03-14', 'source' => 'local'])['firstMeasured'],
+            'only the source asked for');
+        $this->assertNull(self::api('getTimeline', ['idSite' => 0, 'period' => 'day', 'date' => '2026-03-14'])['firstMeasured'],
+            'never measured');
+
         $week = self::api('getTimeline', ['idSite' => 1, 'period' => 'week', 'date' => '2026-03-14']);
         $this->assertSame('day', $week['grain']);
         $this->assertCount(7, $week['cells']);
@@ -497,6 +559,7 @@ class ApiTest extends IntegrationTestCase
         $this->assertSame(['day', 'utc'], [$week['grain'], $week['days']]);
         $byDay = array_column($week['cells'], 'state', 'time');
         $this->assertSame('partial', $byDay['2026-03-14T00:00:00Z']);
+        $this->assertSame('2026-03-14T00:00:00Z', $week['firstMeasured'], 'without hours: the start of the first UTC day');
         $this->assertBadRequest('getTimeline', ['idSite' => 1, 'period' => 'range', 'date' => '2024-01-01,2026-03-14'], "'period'");
     }
 

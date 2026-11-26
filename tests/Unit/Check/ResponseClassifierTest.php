@@ -16,6 +16,7 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Outcome;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\ProbeResponse;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\ResponseClassifier;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Target;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Prober;
 
 /**
  * @group FeinwerkUptimeMonitor
@@ -240,5 +241,61 @@ class ResponseClassifierTest extends TestCase
     {
         $body = "{\n    \"id\": \"AbC123\",\n    \"revision\": 3\n}";
         $this->assertResult($this->classify(Kind::CONTAINER, 200, $body, null, 'https://m/x', ['idContainer' => 'AbC123', 'revision' => 3]), Outcome::UP, null);
+    }
+
+    /** A container whose kept body (4 MiB, Prober::MAX_BODY_LARGE) ends with `$tail`; `$capped`: the file went on. */
+    private function classifyCutContainer(string $tail, int $liveRevision, bool $capped): CheckResult
+    {
+        $target = new Target(7, 1, Kind::CONTAINER, Kind::CONTAINER, 'https://matomo.example.com/x', 'default', ['matomoHost' => 'matomo.example.com', 'idContainer' => 'AbC123', 'revision' => $liveRevision], '2026-03-01 00:00:00');
+        $body = str_repeat('x', Prober::MAX_BODY_LARGE - strlen($tail)) . $tail;
+        $response = new ProbeResponse(200, $body, null, 'https://m/x', ['total' => 5], null, 0, $capped);
+
+        return (new ResponseClassifier())->classify($target, $response, self::NOW);
+    }
+
+    /** Regression: revision 30 cut at the cap read as revision 3, so an outdated container counted as current. */
+    public function test_container_revisionCutAtTheCap_isNotCheckable_notCurrent(): void
+    {
+        $this->assertResult($this->classifyCutContainer('{"id":"AbC123","revision":3', 3, true), Outcome::NOT_CHECKABLE, Outcome::CONTENT, Outcome::TOO_LARGE);
+    }
+
+    /** Regression: the same cut "3" may be the live revision 30, so it is no outdated container either. */
+    public function test_container_revisionCutAtTheCap_isNotCheckable_notStale(): void
+    {
+        $this->assertResult($this->classifyCutContainer('{"id":"AbC123","revision":3', 30, true), Outcome::NOT_CHECKABLE, Outcome::CONTENT, Outcome::TOO_LARGE);
+        $this->assertResult($this->classifyCutContainer('{"id":"AbC123","revision": ', 3, true), Outcome::NOT_CHECKABLE, Outcome::CONTENT, Outcome::TOO_LARGE);
+    }
+
+    /**
+     * Regression (5.1.5 review, item 3): a cut before the "revision" key or inside it read no revision at all, and the
+     * container counted as outdated (down, stale_container). Without a whole revision number nothing is outdated.
+     */
+    public function test_container_cutBeforeOrInsideTheRevisionKey_isNotCheckable(): void
+    {
+        foreach (['{"id":"AbC123","idsite":1,', '{"id":"AbC123","idsite":1,"revis', '{"id":"AbC123","revision"'] as $tail) {
+            $this->assertResult($this->classifyCutContainer($tail, 3, true), Outcome::NOT_CHECKABLE, Outcome::CONTENT, Outcome::TOO_LARGE);
+        }
+        // the same file read whole has no revision: outdated
+        $this->assertResult($this->classifyCutContainer('{"id":"AbC123","idsite":1,', 3, false), Outcome::DOWN, Outcome::STALE_CONTAINER);
+    }
+
+    /** A cut before the id proves nothing either; a whole file without it is another file. */
+    public function test_container_cutBeforeTheId_isNotCheckable(): void
+    {
+        $this->assertResult($this->classifyCutContainer('{"idsite":1,', 3, true), Outcome::NOT_CHECKABLE, Outcome::CONTENT, Outcome::TOO_LARGE);
+        $this->assertResult($this->classifyCutContainer('{"idsite":1,', 3, false), Outcome::DOWN, Outcome::CONTENT);
+    }
+
+    public function test_container_revisionAtTheEndOfAWholeBody_counts(): void
+    {
+        // a file of exactly 4 MiB that ends there was read whole: its last number is complete
+        $this->assertResult($this->classifyCutContainer('{"id":"AbC123","revision":3', 3, false), Outcome::UP, null);
+        $this->assertResult($this->classifyCutContainer('{"id":"AbC123","revision":3', 30, false), Outcome::DOWN, Outcome::STALE_CONTAINER);
+    }
+
+    public function test_container_revisionBeforeTheCut_counts(): void
+    {
+        $this->assertResult($this->classifyCutContainer('{"id":"AbC123","revision":3,"environment":"li', 3, true), Outcome::UP, null);
+        $this->assertResult($this->classifyCutContainer('{"id":"AbC123","revision":30,"environment":"li', 3, true), Outcome::DOWN, Outcome::STALE_CONTAINER);
     }
 }
