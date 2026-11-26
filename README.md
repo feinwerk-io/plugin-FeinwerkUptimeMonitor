@@ -176,6 +176,9 @@ allowed values. Each outage of `getIncidents` names its part inside the requeste
 `durationInPeriodSeconds`): add those up for a period's downtime, not `durationSeconds`. `getTimeline` names the
 first measured hour of its addresses at any time (`firstMeasured`, null when nothing was ever measured), and each row
 of `getSitesOverview` the level of its soonest certificate (`certificateLevel`: ok, warning, critical or expired).
+`getStatus` says for each address whether the Matomo server never checks it (`serverRefuses`, for example a private
+address while private addresses are not allowed in the settings): such an address is not checkable from the moment it
+is set.
 
 | Method | Example |
 |---|---|

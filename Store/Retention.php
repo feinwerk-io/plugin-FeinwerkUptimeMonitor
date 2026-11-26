@@ -17,10 +17,13 @@ use Piwik\Db;
  */
 final class Retention
 {
+    /** days the hour rows are kept */
+    public const HOUR_DAYS = 90;
+
     public const RULES = [
         [Schema::CHECK, 'checked_at', 14, ''],
         [Schema::SAMPLE, 'sampled_at', 2, ''],
-        [Schema::HOUR, 'hour', 90, ''],
+        [Schema::HOUR, 'hour', self::HOUR_DAYS, ''],
         [Schema::DAY, 'day', 400, ''],
         [Schema::INCIDENT, 'ended_at', 400, ' AND ended_at IS NOT NULL'],
     ];

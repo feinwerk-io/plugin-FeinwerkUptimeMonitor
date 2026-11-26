@@ -12,6 +12,7 @@ namespace Piwik\Plugins\FeinwerkUptimeMonitor\tests\Integration;
 use Piwik\Db;
 use Piwik\NoAccessException;
 use Piwik\Option;
+use Piwik\Piwik;
 use Piwik\Plugins\FeinwerkUptimeMonitor\API;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\CheckResult;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Kind;
@@ -19,6 +20,7 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Outcome;
 use Piwik\Plugins\FeinwerkUptimeMonitor\External\ExternalResults;
 use Piwik\Plugins\FeinwerkUptimeMonitor\FeinwerkUptimeMonitor;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Report\UptimeReport;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\IntervalTracker;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\IncidentStore;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\RollupStore;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\Schema;
@@ -110,6 +112,39 @@ class ApiTest extends IntegrationTestCase
     private static function viewer(): void
     {
         FakeAccess::clearAccess(false, [], [1]);
+    }
+
+    /**
+     * A plugin that adds results checked from outside, registered as the seam's event asks (Pro's shape): active and
+     * reached at $reachedAt (default a minute ago), so it delivers (ExternalResults::isActive) unless $active is false.
+     */
+    private static function outsideSource(bool $active = true, ?int $reachedAt = null): void
+    {
+        Piwik::addAction(ExternalResults::EVENT_SOURCES, static function (&$sources) use ($active, $reachedAt): void {
+            $sources[] = ['name' => 'Outside checks', 'active' => $active,
+                'reachedAt' => gmdate('Y-m-d\TH:i:s\Z', $reachedAt ?? time() - 60), 'settingsUrl' => null];
+        });
+    }
+
+    /** the latest result from outside of one target, as the other plugin writes it (ExternalResults::setLatest) */
+    private static function outsideState(int $idTarget, string $outcome, ?string $cert = null, ?string $checkedAt = null): void
+    {
+        (new ExternalResults())->setLatest([['idtarget' => $idTarget, 'outcome' => $outcome,
+            'error' => $outcome === Outcome::DOWN ? Outcome::HTTP_STATUS : null, 'status' => $outcome === Outcome::DOWN ? 502 : 200,
+            'ms_total' => 118, 'cert_not_after' => $cert, 'checked_at' => $checkedAt ?? gmdate('Y-m-d H:i:s')]]);
+    }
+
+    /**
+     * The days a certificate has left, as the report counts them, for a call between $before and $after: the run may
+     * cross UTC midnight between the fixture and the call (L8 review finding 11).
+     *
+     * @return int[]
+     */
+    private static function daysLeft(string $notAfter, int $before, int $after): array
+    {
+        $end = (int) strtotime($notAfter . ' 23:59:59 UTC');
+
+        return array_values(array_unique([(int) floor(($end - $before) / 86400), (int) floor(($end - $after) / 86400)]));
     }
 
     public function test_getStatus_siteAndInstance(): void
@@ -394,9 +429,13 @@ class ApiTest extends IntegrationTestCase
             new CheckResult($tracker, Outcome::UP, null, null, 200, [], $in(2), $now),
             new CheckResult($this->web, Outcome::UP, null, null, 200, [], $in(10), $now),
         ], StateStore::LOCAL);
+        $before = time();
         $rows = array_column(self::api('getSitesOverview'), null, 'idSite');
-        $this->assertSame([2, 'critical'], [$rows[0]['certificateDaysLeft'], $rows[0]['certificateLevel']], 'the soonest of Matomo');
-        $this->assertSame([10, 'warning'], [$rows[1]['certificateDaysLeft'], $rows[1]['certificateLevel']]);
+        $after = time();
+        $this->assertSame('critical', $rows[0]['certificateLevel'], 'the soonest of Matomo');
+        $this->assertContains($rows[0]['certificateDaysLeft'], self::daysLeft($in(2), $before, $after));
+        $this->assertSame('warning', $rows[1]['certificateLevel']);
+        $this->assertContains($rows[1]['certificateDaysLeft'], self::daysLeft($in(10), $before, $after));
     }
 
     public function test_getSitesOverview_oldResultsAreNotReachableNorDown(): void
@@ -417,6 +456,175 @@ class ApiTest extends IntegrationTestCase
         $this->assertSame(0, $row['targets']);
         $this->assertGreaterThan(0, $row['off']);
         $this->assertSame(0, $row['up']);
+    }
+
+    /**
+     * F2 (B10 review): while results checked from outside come in, the overview combines both sides as the uptime page
+     * does. A website this server cannot check but the outside reaches is reachable (not folded as "cannot be
+     * checked"); an address down from outside only is down; the certificate from outside fills the server's gap.
+     */
+    public function test_getSitesOverview_withOutside_combinesBothSides(): void
+    {
+        $targets = new TargetStore();
+        $targets->syncDefaults([
+            ['idSite' => 0, 'key' => 'ui', 'kind' => Kind::UI, 'url' => 'https://matomo.example.com/index.php', 'extra' => []],
+            ['idSite' => 0, 'key' => 'tracker', 'kind' => Kind::TRACKER, 'url' => 'https://matomo.example.com/matomo.php', 'extra' => []],
+            ['idSite' => 1, 'key' => DefaultTargets::webKey(self::$base . '/page-proxy'), 'kind' => Kind::WEB, 'url' => self::$base . '/page-proxy', 'extra' => []],
+            ['idSite' => 1, 'key' => 'ctr:abc123', 'kind' => Kind::CONTAINER, 'url' => 'https://matomo.example.com/js/container_abc123.js', 'extra' => ['idContainer' => 'abc123']],
+        ]);
+        $ui = $targets->get(0, 'ui')->id;
+        $tracker = $targets->get(0, 'tracker')->id;
+        $container = $targets->get(1, 'ctr:abc123')->id;
+        $now = gmdate('Y-m-d H:i:s');
+        $earlier = gmdate('Y-m-d H:i:s', time() - 120);
+        (new StateStore())->upsertMany([
+            new CheckResult($ui, Outcome::UP, null, null, 200, [], null, $earlier),
+            new CheckResult($tracker, Outcome::UP, null, null, 200, [], null, $earlier),
+            new CheckResult($container, Outcome::UP, null, null, 200, [], null, $earlier),
+            new CheckResult($this->web, Outcome::NOT_CHECKABLE, Outcome::CONNECT, null, null, [], null, $earlier),
+        ], StateStore::LOCAL);
+        $in10 = gmdate('Y-m-d', time() + 10 * 86400);
+        self::outsideState($this->web, Outcome::UP, $in10, $now);
+        self::outsideState($tracker, Outcome::DOWN, null, $now);
+        self::outsideState($container, Outcome::DOWN, null, $now);
+
+        // without a source that delivers: the server's results only, as before
+        self::outsideSource(false);
+        $rows = array_column(self::api('getSitesOverview'), null, 'idSite');
+        $this->assertSame([0, 1, 0], [$rows[1]['up'], $rows[1]['notCheckable'], $rows[1]['down']], 'not checkable from this server');
+        $this->assertNull($rows[1]['certificateDaysLeft'], 'no certificate from old results from outside');
+        $this->assertSame([3, 0, []], [$rows[0]['up'], $rows[0]['down'], $rows[0]['containersDown']]);
+        $this->assertSame(UptimeReport::iso((int) strtotime($earlier . ' UTC')), $rows[1]['lastCheckedAt']);
+
+        self::outsideSource();
+        $before = time();
+        $rows = array_column(self::api('getSitesOverview'), null, 'idSite');
+        $after = time();
+        $this->assertSame([1, 0, 0], [$rows[1]['up'], $rows[1]['notCheckable'], $rows[1]['down']], 'reachable from outside');
+        $this->assertSame('warning', $rows[1]['certificateLevel'], 'the certificate from outside');
+        $this->assertContains($rows[1]['certificateDaysLeft'], self::daysLeft($in10, $before, $after));
+        $this->assertSame(UptimeReport::iso((int) strtotime($now . ' UTC')), $rows[1]['lastCheckedAt'], 'the newer of both sides');
+        $this->assertSame([1, 2], [$rows[0]['up'], $rows[0]['down']], 'down from outside is down: the tracker and the container');
+        $this->assertSame([['idSite' => 1, 'name' => 'Shop']], $rows[0]['containersDown']);
+    }
+
+    /** F2: a side whose result is old counts only when the other has none that is current, as on the uptime page. */
+    public function test_getSitesOverview_withOutside_staleSidesAsOnThePage(): void
+    {
+        self::outsideSource();
+        $old = gmdate('Y-m-d H:i:s', time() - 3 * 86400);
+        (new StateStore())->upsertMany([new CheckResult($this->web, Outcome::NOT_CHECKABLE, Outcome::CONNECT, null, null, [], null, $old)], StateStore::LOCAL);
+        self::outsideState($this->web, Outcome::UP, null, gmdate('Y-m-d H:i:s', time() - 3600));
+        $row = array_column(self::api('getSitesOverview'), null, 'idSite')[1];
+        $this->assertSame([1, 0], [$row['up'], $row['stale']], 'the server stopped, from outside current within 2 h 15 min');
+
+        self::outsideState($this->web, Outcome::UP, null, gmdate('Y-m-d H:i:s', time() - ExternalResults::STALE_AFTER - 600));
+        $row = array_column(self::api('getSitesOverview'), null, 'idSite')[1];
+        $this->assertSame([0, 1, 0], [$row['up'], $row['stale'], $row['notCheckable']], 'no side current: stale');
+    }
+
+    /**
+     * An address that cannot be checked from outside (a private address, a port the outside does not check) says
+     * nothing about it: it neither hides that the server's checks stopped nor counts as a fresh check.
+     */
+    public function test_getSitesOverview_withOutside_notCheckableFromOutsideAddsNothing(): void
+    {
+        self::outsideSource();
+        $old = gmdate('Y-m-d H:i:s', time() - 3 * 86400);
+        (new StateStore())->upsertMany([new CheckResult($this->web, Outcome::UP, null, null, 200, [], null, $old)], StateStore::LOCAL);
+        self::outsideState($this->web, Outcome::NOT_CHECKABLE);
+        $row = array_column(self::api('getSitesOverview'), null, 'idSite')[1];
+        $this->assertSame([0, 1, 0], [$row['up'], $row['stale'], $row['notCheckable']], 'the server stopped: stale, not "not checkable"');
+        $this->assertSame(UptimeReport::iso((int) strtotime($old . ' UTC')), $row['lastCheckedAt'], 'the server\'s last check');
+
+        (new StateStore())->forget([$this->web]);
+        self::outsideState($this->web, Outcome::NOT_CHECKABLE);
+        $row = array_column(self::api('getSitesOverview'), null, 'idSite')[1];
+        $this->assertSame([0, 0, 0, null], [$row['up'], $row['stale'], $row['notCheckable'], $row['lastCheckedAt']],
+            'not measured yet by the server');
+    }
+
+    /**
+     * L8 review finding 1: the other plugin stops checking an address that was down from outside (switched off there,
+     * beyond its limit): its outage ends and the address no longer reads down from outside, on the page (getStatus) and
+     * in the overview.
+     */
+    public function test_endOutages_theAddressNoLongerReadsDownFromOutside(): void
+    {
+        self::outsideSource();
+        self::outsideState($this->web, Outcome::DOWN);
+        (new ExternalResults())->writeIncidents([['idtarget' => $this->web, 'started_at' => gmdate('Y-m-d H:i:s', time() - 600),
+            'ended_at' => null, 'cause' => Outcome::HTTP_STATUS, 'detail' => 'HTTP 502', 'down_samples' => 10]]);
+        $this->assertSame(Outcome::DOWN, self::api('getStatus', ['idSite' => 1])['targets'][0]['states']['external']['outcome']);
+        $this->assertSame(1, array_column(self::api('getSitesOverview'), null, 'idSite')[1]['down']);
+
+        (new ExternalResults())->endOutages([$this->web], gmdate('Y-m-d H:i:s'));
+
+        $this->assertArrayNotHasKey('external', self::api('getStatus', ['idSite' => 1])['targets'][0]['states']);
+        $row = array_column(self::api('getSitesOverview'), null, 'idSite')[1];
+        $this->assertSame([0, 0], [$row['down'], $row['up']], 'neither down nor reachable: not checked by anyone now');
+        $this->assertSame([], self::api('getIncidents', ['idSite' => 1, 'period' => 'day', 'date' => 'today', 'state' => 'open']));
+    }
+
+    /**
+     * UI review B3: each overview row says how many of the addresses it counts as not checkable the outside cannot
+     * check either, so the admin page names the side ("cannot be checked from this server" unless no side can).
+     */
+    public function test_getSitesOverview_notCheckableOutside(): void
+    {
+        $settings = new SystemSettings();
+        $settings->allowPrivate->setValue(false);
+        $settings->save();
+        $row = array_column(self::api('getSitesOverview'), null, 'idSite')[1];
+        $this->assertSame([1, 0], [$row['notCheckable'], $row['notCheckableOutside']], 'without results from outside');
+
+        self::outsideState($this->web, Outcome::NOT_CHECKABLE);
+        $row = array_column(self::api('getSitesOverview'), null, 'idSite')[1];
+        $this->assertSame([1, 0], [$row['notCheckable'], $row['notCheckableOutside']], 'old results from outside count for nothing');
+
+        self::outsideSource();
+        $row = array_column(self::api('getSitesOverview'), null, 'idSite')[1];
+        $this->assertSame([1, 1], [$row['notCheckable'], $row['notCheckableOutside']], 'no side can check it');
+
+        self::outsideState($this->web, Outcome::NOT_CHECKABLE, null, gmdate('Y-m-d H:i:s', time() - ExternalResults::STALE_AFTER - 600));
+        $row = array_column(self::api('getSitesOverview'), null, 'idSite')[1];
+        $this->assertSame([1, 0], [$row['notCheckable'], $row['notCheckableOutside']], 'an old answer from outside says nothing now');
+        $this->assertSame(0, array_column(self::api('getSitesOverview'), null, 'idSite')[0]['notCheckableOutside']);
+    }
+
+    /**
+     * B11 part 2: an address the Matomo server never checks (a loopback or private IP address while private addresses
+     * are not allowed) reads not checkable from the moment it is set, not "not checked yet" until the next check run;
+     * a public address keeps reading "not checked yet", also when the outside cannot check it.
+     */
+    public function test_anAddressTheServerRefuses_isNotCheckableBeforeItsFirstCheck(): void
+    {
+        $row = array_column(self::api('getSitesOverview'), null, 'idSite')[1];
+        $this->assertSame([0, null], [$row['notCheckable'], $row['lastCheckedAt']], 'private addresses allowed: not checked yet');
+        $this->assertFalse(self::api('getStatus', ['idSite' => 1])['targets'][0]['serverRefuses']);
+
+        $settings = new SystemSettings();
+        $settings->allowPrivate->setValue(false);
+        $settings->save();
+
+        $row = array_column(self::api('getSitesOverview'), null, 'idSite')[1];
+        $this->assertSame([1, 0, null], [$row['notCheckable'], $row['up'], $row['lastCheckedAt']], 'no check time it never had');
+        $target = self::api('getStatus', ['idSite' => 1])['targets'][0];
+        $this->assertTrue($target['serverRefuses']);
+        $this->assertSame([], $target['states'], 'no invented result');
+
+        self::outsideSource();
+        self::outsideState($this->web, Outcome::UP);
+        $row = array_column(self::api('getSitesOverview'), null, 'idSite')[1];
+        $this->assertSame([1, 0], [$row['up'], $row['notCheckable']], 'it answers from outside: reachable');
+
+        (new TargetStore())->setUrl(1, 'web:public', Kind::WEB, 'https://www.example.org/', TargetStore::SOURCE_MANUAL);
+        $id = (new TargetStore())->get(1, 'web:public')->id;
+        self::outsideState($id, Outcome::NOT_CHECKABLE);
+        $row = array_column(self::api('getSitesOverview'), null, 'idSite')[1];
+        $this->assertSame([2, 1, 0], [$row['targets'], $row['up'], $row['notCheckable']], 'the public address: not checked yet');
+        $targets = array_column(self::api('getStatus', ['idSite' => 1])['targets'], null, 'targetKey');
+        $this->assertFalse($targets['web:public']['serverRefuses'], 'a name: only the check tells');
     }
 
     public function test_getSitesOverview_countsReachableTargets(): void
@@ -612,6 +820,34 @@ class ApiTest extends IntegrationTestCase
         $this->assertBadRequest('getUptime', ['idSite' => 0, 'period' => 'day', 'date' => '2026-03-14', 'timezoneOf' => 'x'], "'timezoneOf'");
     }
 
+    /**
+     * With a cron every minute a result is stale after a few minutes; results checked from outside arrive when the
+     * other plugin pulls them (hourly, and on a page view at most every 5 minutes): between two pulls they stay current.
+     */
+    public function test_status_outsideState_staysCurrentBetweenPulls(): void
+    {
+        $now = (int) strtotime('2026-03-14 12:00:00 UTC');
+        $tracker = new IntervalTracker();
+        foreach ([180, 120, 60] as $ago) {
+            $tracker->recordCommandRun($now - $ago);
+        }
+        $at = static fn(int $ago): string => gmdate('Y-m-d H:i:s', $now - $ago);
+        // the other plugin delivers: it reached its service a minute before the report's now
+        self::outsideSource(true, $now - 60);
+        (new StateStore())->upsertMany([new CheckResult($this->web, Outcome::UP, null, null, 200, ['total' => 120], null, $at(1200))], StateStore::LOCAL);
+        (new ExternalResults())->setLatest([['idtarget' => $this->web, 'outcome' => Outcome::UP, 'error' => null, 'status' => 200,
+            'ms_total' => 118, 'cert_not_after' => null, 'checked_at' => $at(1200)]]);
+
+        $states = (new UptimeReport(static fn(): int => $now))->status(1, true)[0]['states'];
+        $this->assertTrue($states['local']['stale'], 'a cron every minute: 20 minutes is no recent check');
+        $this->assertFalse($states['external']['stale'], 'from outside: current until the next pull');
+
+        (new ExternalResults())->setLatest([['idtarget' => $this->web, 'outcome' => Outcome::UP, 'error' => null, 'status' => 200,
+            'ms_total' => 118, 'cert_not_after' => null, 'checked_at' => $at(ExternalResults::ACTIVE_WITHIN + 1800)]]);
+        $states = (new UptimeReport(static fn(): int => $now))->status(1, true)[0]['states'];
+        $this->assertTrue($states['external']['stale'], 'older than the other plugin stays active: no recent check');
+    }
+
     public function test_externalResults_rejectLocal_andShowAsExternal(): void
     {
         try {
@@ -622,8 +858,36 @@ class ApiTest extends IntegrationTestCase
         }
         (new ExternalResults())->setLatest([['idtarget' => $this->web, 'outcome' => Outcome::DOWN, 'error' => Outcome::TIMEOUT,
             'status' => null, 'ms_total' => 10000, 'cert_not_after' => null, 'checked_at' => '2026-03-14 10:00:00']]);
+        $this->assertSame([], self::api('getExternalSources'));
+        self::outsideSource();
         $status = self::api('getStatus', ['idSite' => 1]);
         $this->assertSame(Outcome::DOWN, $status['targets'][0]['states']['external']['outcome']);
-        $this->assertSame([], self::api('getExternalSources'));
+    }
+
+    /**
+     * B11 note: with no source that delivers (none registered, not set up, or stopped for more than 2 hours), getStatus
+     * and getCertificates take no state and no certificate from old results checked from outside. While one delivers,
+     * the certificate is the server's, else the one from outside.
+     */
+    public function test_getStatus_withoutActiveSource_ignoresOldResultsFromOutside(): void
+    {
+        $soon = gmdate('Y-m-d', time() + 2 * 86400);
+        (new StateStore())->upsertMany([new CheckResult($this->web, Outcome::NOT_CHECKABLE, Outcome::CONNECT, null, null, [], null, gmdate('Y-m-d H:i:s'))], StateStore::LOCAL);
+        self::outsideState($this->web, Outcome::DOWN, $soon);
+
+        $read = static function (): array {
+            $target = self::api('getStatus', ['idSite' => 1])['targets'][0];
+
+            return [array_keys($target['states']), $target['certificate']['notAfter'] ?? null, count(self::api('getCertificates', ['idSite' => 1]))];
+        };
+        $this->assertSame([['local'], null, 0], $read(), 'no source registered');
+        self::outsideSource(true, time() - ExternalResults::ACTIVE_WITHIN - 60);
+        $this->assertSame([['local'], null, 0], $read(), 'its source stopped more than 2 hours ago');
+
+        self::outsideSource();
+        $this->assertSame([['local', 'external'], $soon, 1], $read(), 'while it delivers: both sides, the certificate from outside');
+
+        (new StateStore())->upsertMany([new CheckResult($this->web, Outcome::UP, null, null, 200, [], '2099-01-01', gmdate('Y-m-d H:i:s'))], StateStore::LOCAL);
+        $this->assertSame('2099-01-01', $read()[1], 'the server\'s own certificate first');
     }
 }

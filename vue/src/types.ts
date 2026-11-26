@@ -33,6 +33,8 @@ export interface TargetStatus {
   urlSource: string;
   enabled: boolean;
   lastCheckedAt: string | null;
+  /** the Matomo server never checks this address (e.g. a private one while not allowed) */
+  serverRefuses?: boolean;
   states: { local?: State; external?: State };
   certificate: Certificate | null;
 }
@@ -94,6 +96,15 @@ export interface Timeline {
   firstMeasured?: string | null;
 }
 
+/** An address as checked from outside (another plugin's results, source external). */
+export interface OutsideCell {
+  outcome: string;
+  text: string;
+  uptime: string;
+  /** why the outside cannot check it (the cell's tooltip; 5.2.0 review B5); '' otherwise */
+  title?: string;
+}
+
 /** One address as the uptime page and the widgets list it (current state, period uptime). */
 export interface AddressRow {
   key: string;
@@ -113,6 +124,26 @@ export interface AddressRow {
   dayOutcome: string;
   /** not checkable because the file is larger than the 4 MB the check reads (note too_large) */
   tooLarge: boolean;
+  /** checked from the Matomo server alone (with results from outside, outcome combines both) */
+  serverOutcome?: string;
+  /** what failed, for the answer line; with results from outside, where (when one side fails) */
+  cause?: string;
+  /** checked from outside: only while a source of such results is active (ScreenConfig.external) */
+  outside?: OutsideCell | null;
+}
+
+/** The plugin that adds results checked from outside (ScreenProps::external). */
+export interface ExternalSource {
+  /** delivering: licensed and it reached its service within two hours */
+  active: boolean;
+  name: string;
+  reachedAt: string | null;
+  /** its settings page, relative to Matomo; admins only */
+  settingsUrl: string | null;
+  /** the active source sends alerts for outages itself (the admin page's alert row names it) */
+  alerts?: boolean;
+  /** when its latest results arrived (null: none yet); reachedAt also moves with a push */
+  resultsAt?: string | null;
 }
 
 export interface Incident {
@@ -169,6 +200,8 @@ export interface SiteOverview {
   certificateLevel?: 'ok' | 'warning' | 'critical' | 'expired' | null;
   /** Matomo's row: the websites whose Tag Manager container is not reachable */
   containersDown?: Array<{ idSite: number; name: string }>;
+  /** how many of notCheckable cannot be checked from outside either (5.2.0 review B3) */
+  notCheckableOutside?: number;
 }
 
 export interface ScreenConfig {
@@ -201,5 +234,10 @@ export interface ScreenConfig {
   promo?: PromoVariables | null;
   /** the kit's card in dashboard widgets (Promo\PromoCard): admins only, dashboards only */
   promoCard?: PromoCardVariables | null;
+  /**
+   * results checked from outside: null without such a plugin (the screens as before); a source
+   * that is not active reaches admins only
+   */
+  external?: ExternalSource | null;
   cronLine?: string;
 }

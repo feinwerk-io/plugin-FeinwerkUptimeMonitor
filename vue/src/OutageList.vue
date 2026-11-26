@@ -161,6 +161,8 @@ export default defineComponent({
     narrow: { type: Boolean, default: false },
     /** nothing was measured in the period: no outages say nothing */
     notMeasured: { type: Boolean, default: false },
+    /** the screen shows results from outside: every outage names its side (5.2.0 review L2) */
+    outside: { type: Boolean, default: false },
   },
   emits: ['more'],
   computed: {
@@ -176,7 +178,7 @@ export default defineComponent({
     },
     /** the column helps only once results come from outside (the free plugin checks from Matomo) */
     hasExternal(): boolean {
-      return this.outages.some((row) => row.source === 'external');
+      return this.outside || this.outages.some((row) => row.source === 'external');
     },
   },
   methods: {
@@ -217,10 +219,11 @@ export default defineComponent({
         .filter((c, n, all) => c !== '' && all.indexOf(c) === n);
       return listOf(causes, this.language);
     },
+    /** L1: a noun under "Checked from", never "Checked from: from outside" */
     source(source: string): string {
       return translate(source === 'external'
-        ? 'FeinwerkUptimeMonitor_UiFromOutside'
-        : 'FeinwerkUptimeMonitor_UiFromServer');
+        ? 'FeinwerkUptimeMonitor_UiSourceOutside'
+        : 'FeinwerkUptimeMonitor_UiSourceServer');
     },
   },
 });

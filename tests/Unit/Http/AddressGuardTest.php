@@ -69,6 +69,30 @@ class AddressGuardTest extends TestCase
         $this->assertTrue((new AddressGuard(true, null, true))->check('http://127.0.0.1/')->allowed, 'config switch for websites on this server');
     }
 
+    /** B11 part 2: what the guard refuses without a name lookup reads "not checkable" before the first check. */
+    public function test_refusesWithoutLookup_onlyWhatNeedsNoLookup(): void
+    {
+        $lookups = 0;
+        $guard = new AddressGuard(false, static function (string $host) use (&$lookups): array {
+            $lookups++;
+            return ['10.0.0.5'];
+        });
+        foreach (['http://127.0.0.1/', 'https://10.0.0.3:18001/', 'http://[::1]/', 'http://localhost/', 'http://intranet/',
+            'http://shop.localhost/', 'ftp://www.example.org/'] as $url) {
+            $this->assertTrue($guard->refusesWithoutLookup($url), $url);
+        }
+        $this->assertFalse($guard->refusesWithoutLookup('https://intranet.example.org/'), 'a name: only its lookup tells');
+        $this->assertFalse($guard->refusesWithoutLookup('https://93.184.215.14/'));
+        $this->assertSame(0, $lookups, 'never a lookup');
+
+        $allowing = new AddressGuard(true, static fn(string $host): array => []);
+        $this->assertFalse($allowing->refusesWithoutLookup('https://10.0.0.3/'), 'private addresses allowed');
+        $this->assertFalse($allowing->refusesWithoutLookup('http://localhost/', true));
+        $this->assertTrue($allowing->refusesWithoutLookup('http://127.0.0.1/'), 'a website address never on the loopback');
+        $this->assertFalse($allowing->refusesWithoutLookup('http://127.0.0.1:8080/', true), "Matomo's own may be");
+        $this->assertTrue($allowing->refusesWithoutLookup('http://169.254.169.254/', true), 'link-local never');
+    }
+
     public function test_onlyHttpAndHttps(): void
     {
         $guard = self::guard(true, ['a.example.com' => ['93.184.215.14']]);

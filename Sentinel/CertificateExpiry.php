@@ -47,8 +47,10 @@ final class CertificateExpiry extends UptimeCheck
             if (!$context->isInstance() && $host !== '' && strtolower($host) === strtolower((string) ($target->extra['matomoHost'] ?? ''))) {
                 continue;
             }
-            $state = $cache->state($target->id) ?? $cache->state($target->id, StateStore::EXTERNAL);
-            $notAfter = $state['cert_not_after'] ?? null;
+            // the server's certificate, else the one from outside, but only while those results come in: an old one
+            // from outside could be renewed long since (the uptime page and getStatus follow the same rule)
+            $notAfter = $cache->state($target->id)['cert_not_after']
+                ?? ($cache->proActive() ? $cache->state($target->id, StateStore::EXTERNAL)['cert_not_after'] ?? null : null);
             if ($notAfter === null || isset($seenHosts[$host])) {
                 continue;
             }

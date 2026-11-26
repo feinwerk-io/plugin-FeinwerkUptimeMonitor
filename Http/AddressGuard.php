@@ -88,6 +88,25 @@ final class AddressGuard implements UrlGuard
     }
 
     /**
+     * Whether check() refuses the address without looking up a name: an address that is no http(s) URL, an IP address
+     * outside what the settings allow (a website's address on the server's loopback always), or localhost and names
+     * without a dot while private addresses are not allowed. A name that leads to a private address is refused only by
+     * check(), after its lookup: false here.
+     */
+    public function refusesWithoutLookup(string $url, bool $instanceTarget = false): bool
+    {
+        [, $host, , $refusal] = self::parse($url);
+        if ($refusal !== null) {
+            return true;
+        }
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            return !$this->isAllowedIp($host, $instanceTarget);
+        }
+
+        return self::isLocalName($host) && !$this->allowPrivate;
+    }
+
+    /**
      * For requests through Matomo's [proxy]: the proxy resolves the host, so only the scheme, credentials, the host
      * grammar and a literal address or local name in the URL are checked here.
      */

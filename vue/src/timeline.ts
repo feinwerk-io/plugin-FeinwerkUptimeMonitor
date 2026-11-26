@@ -24,6 +24,43 @@ export function elapsedSeconds(cells: TimelineCell[], grain: string, now: number
 }
 
 /**
+ * One strip from two (5.2.0 review B4: the widgets from both sides): each cell sums the measured
+ * and reachable seconds of both, as getTimeline with source=all does, and is up only when both
+ * found every address up for all their measured time, down when neither did, partial between, none
+ * when neither measured it; a future cell stays future. The cells of both have the same times (the
+ * same period and group); a cell only one of them has is taken as it is.
+ */
+export function combineTimelines(a: Timeline, b: Timeline): Timeline {
+  const other: Record<string, TimelineCell> = {};
+  b.cells.forEach((cell) => {
+    other[cell.time] = cell;
+  });
+  const cells = a.cells.map((cell): TimelineCell => {
+    const twin = other[cell.time];
+    if (!twin || cell.state === 'future') {
+      return cell;
+    }
+    const measured = cell.measuredSeconds + twin.measuredSeconds;
+    const up = cell.upSeconds + twin.upSeconds;
+    let state: TimelineCell['state'] = 'partial';
+    if (measured <= 0) {
+      state = 'none';
+    } else if (up >= measured) {
+      state = 'up';
+    } else if (up <= 0) {
+      state = 'down';
+    }
+    return {
+      time: cell.time, measuredSeconds: measured, upSeconds: up, state,
+    };
+  });
+  const firsts = [a.firstMeasured, b.firstMeasured].filter((t): t is string => !!t).sort();
+  return {
+    grain: a.grain, days: a.days, cells, firstMeasured: firsts.length ? firsts[0] : null,
+  };
+}
+
+/**
  * A group's uptime and measured share from its strip, so that the figures match the strip by
  * construction: uptime = reachable seconds / measured seconds of the cells up to now (null when
  * nothing was measured); measured share = measured seconds / seconds of the period up to now, both

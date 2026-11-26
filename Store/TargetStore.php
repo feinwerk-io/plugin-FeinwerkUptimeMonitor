@@ -11,15 +11,18 @@ namespace Piwik\Plugins\FeinwerkUptimeMonitor\Store;
 
 use Piwik\Common;
 use Piwik\Db;
+use Piwik\Piwik;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\CheckResult;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Kind;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Outcome;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Target;
+use Piwik\Plugins\FeinwerkUptimeMonitor\External\ExternalResults;
 
 /**
  * The check targets (spec 5). Defaults come from Matomo and are kept in sync; URLs set by hand (`manual`) or found on
  * the website (`detected`) are never overwritten by a default. Defaults that Matomo no longer produces (deleted site,
  * unpublished container) are retired, and come back when they reappear; `enabled` is only ever changed by people.
+ * Every real change of the current targets posts ExternalResults::EVENT_TARGETS_CHANGED.
  */
 final class TargetStore
 {
@@ -79,13 +82,15 @@ final class TargetStore
 
     /**
      * Inserts missing defaults, updates the URL and extra data of default rows, retires defaults no longer produced.
-     * Two statements in all.
+     * One upsert for every row, besides the reads that find what changed (the targets before, and the fingerprint of
+     * the current targets before and after for targetsChanged) and the clean-up of changed and retired rows.
      *
      * @param array<int, array{idSite: int, key: string, kind: string, url: string, extra: array}> $specs
      */
     public function syncDefaults(array $specs): void
     {
         $now = Sql::now();
+        $was = $this->fingerprint();
         $before = [];
         foreach ($this->all() as $target) {
             $before[$target->idSite . '|' . $target->key] = $target;
@@ -122,10 +127,14 @@ final class TargetStore
                 $changed[] = $target->id;
             }
         }
-        $this->retire($retire);
-        // a new address starts without the old one's state and certificate date
+        $this->retireRows($retire, $now);
+        // a new address starts without the old one's state and certificate date; an outage from outside ends when its
+        // source checked the new address
         (new StateStore())->forget($changed);
-        (new IncidentStore())->closeOpen($changed, $now);
+        (new IncidentStore())->closeOpen($changed, $now, StateStore::LOCAL);
+        if ($this->fingerprint() !== $was) {
+            self::changed();
+        }
     }
 
     /**
@@ -135,15 +144,25 @@ final class TargetStore
      */
     public function retire(array $idTargets): void
     {
-        if ($idTargets === []) {
-            return;
+        if ($this->retireRows($idTargets, Sql::now()) > 0) {
+            self::changed();
         }
-        $now = Sql::now();
-        Db::query(
+    }
+
+    /** @return int how many targets were retired now */
+    private function retireRows(array $idTargets, string $now): int
+    {
+        if ($idTargets === []) {
+            return 0;
+        }
+        $result = Db::query(
             'UPDATE ' . self::table() . ' SET retired_at = ? WHERE retired_at IS NULL AND idtarget IN (' . Sql::placeholders($idTargets) . ')',
             array_merge([$now], $idTargets)
         );
+        // the source of results from outside stops checking them and never reports an end: closed here
         (new IncidentStore())->closeOpen($idTargets, $now);
+
+        return $result->rowCount();
     }
 
     /**
@@ -162,19 +181,24 @@ final class TargetStore
         (new IncidentStore())->closeOpen($ids, Sql::now());
         (new StateStore())->forget($ids);
         Db::query('DELETE FROM ' . self::table() . ' WHERE idsite = ?', [$idSite]);
+        self::changed();
     }
 
     /**
-     * Sets (or adds) a target URL by hand or from detection. Clears the history marks, since it is a new URL.
+     * Sets (or adds) a target URL by hand or from detection. Clears the history marks, since it is a new URL. Posts
+     * targetsChanged only when the row changed (the same address saved again changes nothing).
      */
     public function setUrl(int $idSite, string $key, string $kind, string $url, string $source, array $extra = []): Target
     {
         $now = Sql::now();
+        $was = $this->rowFingerprint($idSite, $key);
         $previous = $this->get($idSite, $key);
         if ($previous !== null && $previous->url !== $url) {
-            // a new address starts without the old one's state, certificate date and open outage
+            // a new address starts without the old one's state, certificate date and the server's open outage; an
+            // outage from outside ends when its source checked the new address (else the next results would open it
+            // again), or when the source stops checking it (ExternalResults::endOutages())
             (new StateStore())->forget([$previous->id]);
-            (new IncidentStore())->closeOpen([$previous->id], $now);
+            (new IncidentStore())->closeOpen([$previous->id], $now, StateStore::LOCAL);
         }
         Sql::insertRows(
             self::table(),
@@ -185,6 +209,9 @@ final class TargetStore
             . ' url_source = VALUES(url_source), extra = VALUES(extra), detected_at = VALUES(detected_at),'
             . ' updated = VALUES(updated), retired_at = NULL'
         );
+        if ($this->rowFingerprint($idSite, $key) !== $was) {
+            self::changed();
+        }
 
         return $this->get($idSite, $key);
     }
@@ -199,6 +226,9 @@ final class TargetStore
             'UPDATE ' . self::table() . ' SET enabled = ?, updated = ? WHERE idsite = ? AND target_key = ?',
             [$enabled ? 1 : 0, Sql::now(), $idSite, $key]
         );
+        if ($target !== null && $target->enabled !== $enabled) {
+            self::changed();
+        }
 
         return $this->get($idSite, $key);
     }
@@ -211,8 +241,12 @@ final class TargetStore
             (new StateStore())->forget([$target->id]);
         }
         $result = Db::query('DELETE FROM ' . self::table() . ' WHERE idsite = ? AND target_key = ?', [$idSite, $key]);
+        if ($result->rowCount() === 0) {
+            return false;
+        }
+        self::changed();
 
-        return $result->rowCount() > 0;
+        return true;
     }
 
     /**
@@ -264,6 +298,44 @@ final class TargetStore
         }
 
         return $target->id;
+    }
+
+    /**
+     * What targets() of the seam gives out, in one string: the current targets with what a check reads of them.
+     */
+    private function fingerprint(): string
+    {
+        $rows = Db::fetchAll(
+            'SELECT idtarget, idsite, target_key, kind, url, url_source, enabled, extra FROM ' . self::table()
+            . ' WHERE retired_at IS NULL AND kind <> ? ORDER BY idtarget',
+            [Kind::PROCESSING]
+        );
+
+        return sha1((string) json_encode($rows));
+    }
+
+    /**
+     * fingerprint() of one row, with retired_at (a retired target is not among the current ones): '' when it does not
+     * exist.
+     */
+    private function rowFingerprint(int $idSite, string $key): string
+    {
+        $row = Db::fetchRow(
+            'SELECT kind, url, url_source, enabled, extra, retired_at FROM ' . self::table() . ' WHERE idsite = ? AND target_key = ?',
+            [$idSite, $key]
+        );
+
+        return $row ? sha1((string) json_encode($row)) : '';
+    }
+
+    /** Tells listeners that the current targets changed (ExternalResults::EVENT_TARGETS_CHANGED). */
+    private static function changed(): void
+    {
+        try {
+            Piwik::postEvent(ExternalResults::EVENT_TARGETS_CHANGED);
+        } catch (\Throwable $e) {
+            // a listener never stops a change of the targets
+        }
     }
 
     /**

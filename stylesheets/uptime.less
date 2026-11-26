@@ -157,6 +157,9 @@
     flex: 0 0 110px; padding-top: 5px; font-size: 0.9em; color: @fwum-text-light; overflow-wrap: anywhere;
   }
   .fwum-strips__row > .fwum-strip { flex: 1 1 auto; min-width: 0; }
+  // results checked from outside: where each strip was checked from, under the group's name
+  // 5.2.0 review L6: as large as the group's name (0.9em of the page), only muted
+  .fwum-strips__vantage { display: block; font-size: 1em; color: var(--fwum-muted); }
   // the page: name, strip and the group's uptime at its end (D3), all strips in one grid: they line up hour by hour,
   // and the uptime column is as wide as its longest text, so "measured 5 % of the time" stays on one line (L11)
   .fwum-strips--page {
@@ -182,6 +185,8 @@
     display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 12px;
   }
   .fwum-group-head__name { margin: 0; }
+  // B1 (narrow): a group without results from outside, on a screen that shows them
+  .fwum-group-note { margin: 4px 0 0; font-size: 0.9em; }
   // B2: the one certificate of all the group's addresses, on the right in the row's own words
   .fwum-group-head__cert {
     margin-left: auto; white-space: nowrap; font-weight: normal; letter-spacing: normal; text-transform: none;
@@ -268,7 +273,8 @@
   .fwum-table-wrap table.fwum-table.dataTable {
     margin-top: 4px;
     th:first-child, td:first-child { padding-left: 0; }
-    th:last-child, td:last-child { padding-right: 0; }
+    // the second heading row of the two sides ends before the certificate column: its padding stays
+    th:last-child:not(.fwum-vantage__column), td:last-child { padding-right: 0; }
     th.label, td.label { width: auto; white-space: normal; overflow-wrap: break-word; }
     td.fwum-targets__text { white-space: normal; min-width: 7em; }
     tr.fwum-group-row th, tr.fwum-group-row th:not(.label) {
@@ -281,6 +287,19 @@
     tr.fwum-group-empty td { color: @fwum-text-light; }
     tr.fwum-group-empty .fwum-icon-button { margin-left: 4px; }
     tr.is-down td.fwum-targets__text { color: var(--fwum-down); }
+    // results checked from outside: each side's cell in its own colour, under its heading
+    &.fwum-table--outside {
+      tr.is-down td.fwum-targets__text { color: inherit; }
+      tr td.fwum-targets__text.is-down { color: var(--fwum-down); }
+      // each side's heading over its columns, underlined as a group
+      thead th.fwum-vantage {
+        text-align: center; padding-bottom: 4px;
+        box-shadow: inset 0 -1px 0 @fwum-border;
+      }
+      thead th.fwum-vantage__column { padding-top: 2px; font-weight: normal; }
+      // B1: a group without results from outside: one muted cell for that side
+      td.fwum-outside-none { color: var(--fwum-muted); text-align: center; }
+    }
     td.fwum-targets__cert.is-warning { color: var(--fwum-warn); }
     td.fwum-targets__cert.is-critical, td.fwum-targets__cert.is-expired { color: var(--fwum-down); }
   }
@@ -333,6 +352,15 @@
     .fwum-targets__cert.is-warning { color: var(--fwum-warn); }
     .fwum-targets__cert.is-critical, .fwum-targets__cert.is-expired { color: var(--fwum-down); }
     li.is-down .fwum-targets__text { color: var(--fwum-down); }
+    // results checked from outside: one line per side, right-aligned, each named; the colour follows the side
+    // the side's name first, the values at the right edge, the uptimes in one column (they compare line by line)
+    .fwum-targets__values--side { flex: 1 0 100%; }
+    .fwum-targets__from {
+      order: -1; margin-right: auto; font-size: 0.85em; color: var(--fwum-muted); white-space: nowrap;
+    }
+    .fwum-targets__values--side .fwum-targets__uptime { min-width: 4.5em; text-align: right; }
+    li.is-down .fwum-targets__values--side .fwum-targets__text:not(.is-down) { color: @fwum-text-light; }
+    .fwum-targets__values--side .fwum-targets__text.is-down { color: var(--fwum-down); }
   }
   // B1: the outages on a narrow page, in the look of the address list: start and duration, what, cause
   .fwum-targets.fwum-outages__list {

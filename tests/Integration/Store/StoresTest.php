@@ -11,9 +11,11 @@ namespace Piwik\Plugins\FeinwerkUptimeMonitor\tests\Integration\Store;
 
 use Piwik\Db;
 use Piwik\Option;
+use Piwik\Piwik;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\CheckResult;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Kind;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Outcome;
+use Piwik\Plugins\FeinwerkUptimeMonitor\External\ExternalResults;
 use Piwik\Plugins\FeinwerkUptimeMonitor\FeinwerkUptimeMonitor;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\CheckStore;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\IncidentStore;
@@ -116,6 +118,97 @@ class StoresTest extends IntegrationTestCase
 
         $this->assertSame([], $incidents->openFor($ids), 'no outage stays open for ever');
         $this->assertArrayNotHasKey($ids[2], (new StateStore())->all(), 'a removed target has no state');
+    }
+
+    /** An outage from outside ends when its source says so: an address change closes only the server's own outage. */
+    public function test_changedAddress_closesOnlyTheServersOutage(): void
+    {
+        $store = new TargetStore();
+        $store->syncDefaults([self::spec(1, 'web:aa', Kind::WEB, 'https://a.example/'), self::spec(1, 'web:bb', Kind::WEB, 'https://b.example/')]);
+        $ids = [$store->get(1, 'web:aa')->id, $store->get(1, 'web:bb')->id];
+        $incidents = new IncidentStore();
+        $incidents->apply(array_map(static fn(int $id) => self::result($id, Outcome::DOWN, '2026-03-14 10:00:00'), $ids));
+        $incidents->upsert(array_map(static fn(int $id): array => ['idtarget' => $id, 'source' => StateStore::EXTERNAL,
+            'kind' => IncidentStore::OUTAGE, 'started_at' => '2026-03-14 09:59:00', 'ended_at' => null, 'cause' => 'http_status',
+            'detail' => 'HTTP 404', 'down_samples' => 2], $ids));
+
+        $store->setUrl(1, 'web:aa', Kind::WEB, 'https://a.example/new', TargetStore::SOURCE_MANUAL);
+        $store->syncDefaults([self::spec(1, 'web:aa', Kind::WEB, 'https://a.example/'), self::spec(1, 'web:bb', Kind::WEB, 'https://b2.example/')]);
+
+        $this->assertSame([], $incidents->openFor($ids, StateStore::LOCAL), 'the server checks the new address from scratch');
+        $this->assertCount(2, $incidents->openFor($ids, StateStore::EXTERNAL), 'the source closes its own outage after its next check');
+    }
+
+    public function test_removedTargets_closeTheOutagesFromOutsideToo(): void
+    {
+        $store = new TargetStore();
+        $store->syncDefaults([self::spec(1, 'web:aa', Kind::WEB, 'https://a.example/'), self::spec(1, 'web:bb', Kind::WEB, 'https://b.example/')]);
+        $store->setUrl(1, 'proxy', Kind::PROXY, 'https://a.example/matomo.php', TargetStore::SOURCE_MANUAL);
+        $ids = [$store->get(1, 'web:aa')->id, $store->get(1, 'web:bb')->id, $store->get(1, 'proxy')->id];
+        $incidents = new IncidentStore();
+        $incidents->upsert(array_map(static fn(int $id): array => ['idtarget' => $id, 'source' => StateStore::EXTERNAL,
+            'kind' => IncidentStore::OUTAGE, 'started_at' => '2026-03-14 09:59:00', 'ended_at' => null, 'cause' => null,
+            'detail' => null, 'down_samples' => 2], $ids));
+
+        $store->syncDefaults([self::spec(1, 'web:bb', Kind::WEB, 'https://b.example/')]); // web:aa retired
+        $store->setEnabled(1, 'web:bb', false);
+        $store->delete(1, 'proxy');
+
+        // the source stops checking them and never reports an end: closed here
+        $this->assertSame([], $incidents->openFor($ids));
+    }
+
+    public function test_targetsChanged_isPostedForEveryRealChange_only(): void
+    {
+        $posted = 0;
+        Piwik::addAction(ExternalResults::EVENT_TARGETS_CHANGED, static function () use (&$posted): void {
+            $posted++;
+        });
+        $count = static function (callable $change) use (&$posted): int {
+            $before = $posted;
+            $change();
+
+            return $posted - $before;
+        };
+        $idSite = Fixture::createWebsite('2026-01-01 00:00:00', 0, 'A', 'https://a.example/');
+        $store = new TargetStore();
+        $specs = [self::spec(0, 'ui', Kind::UI, 'https://m.example/'), self::spec($idSite, 'web:aa', Kind::WEB, 'https://a.example/')];
+
+        $this->assertSame(1, $count(fn() => $store->syncDefaults($specs)), 'new defaults');
+        $this->assertSame(0, $count(fn() => $store->syncDefaults($specs)), 'the hourly sync without a change');
+        $specs[1]['url'] = 'https://a2.example/';
+        $this->assertSame(1, $count(fn() => $store->syncDefaults($specs)), 'a website address changed');
+        $specs[1]['extra'] = ['matomoHost' => 'm2.example'];
+        $this->assertSame(1, $count(fn() => $store->syncDefaults($specs)), 'what the check reads changed');
+        $this->assertSame(1, $count(fn() => $store->syncDefaults([$specs[0]])), 'a default retired');
+        $this->assertSame(1, $count(fn() => $store->syncDefaults($specs)), 'and back');
+        $setProxy = fn() => $store->setUrl($idSite, 'proxy', Kind::PROXY, 'https://a.example/m.php', TargetStore::SOURCE_MANUAL);
+        $this->assertSame(1, $count($setProxy));
+        // L8 review finding 2: Save in the address editor without a change, or addTarget with the stored address
+        $this->assertSame(0, $count($setProxy), 'the same address again');
+        $this->assertSame(1, $count(fn() => $store->setEnabled($idSite, 'proxy', false)));
+        $this->assertSame(0, $count(fn() => $store->setEnabled($idSite, 'proxy', false)), 'already off');
+        $this->assertSame(1, $count(fn() => $store->setEnabled($idSite, 'proxy', true)));
+        $proxy = $store->get($idSite, 'proxy')->id;
+        $this->assertSame(1, $count(fn() => $store->retire([$proxy])), 'detection retires a container');
+        $this->assertSame(0, $count(fn() => $store->retire([$proxy])), 'already retired');
+        $this->assertSame(1, $count($setProxy), 'the same address brings a retired target back');
+        $this->assertSame(1, $count(fn() => $store->delete($idSite, 'proxy')));
+        $this->assertSame(0, $count(fn() => $store->delete($idSite, 'proxy')), 'nothing to delete');
+        $this->assertSame(1, $count(fn() => $store->deleteSite($idSite)));
+        $this->assertSame(0, $count(fn() => $store->deleteSite($idSite)), 'nothing left');
+        $this->assertSame(0, $count(fn() => $store->markChecked([self::result($store->get(0, 'ui')->id, Outcome::UP, '2026-03-14 10:00:00')])),
+            'a check changes no target');
+    }
+
+    public function test_targetsChanged_aListenerThatFailsNeverStopsAChange(): void
+    {
+        Piwik::addAction(ExternalResults::EVENT_TARGETS_CHANGED, static function (): void {
+            throw new \RuntimeException('listener failed');
+        });
+        $store = new TargetStore();
+        $store->setUrl(1, 'proxy', Kind::PROXY, 'https://a.example/m.php', TargetStore::SOURCE_MANUAL);
+        $this->assertSame('https://a.example/m.php', $store->get(1, 'proxy')->url);
     }
 
     public function test_changedAddress_forgetsStateAndCertificate(): void

@@ -2,7 +2,9 @@
 // Vue and a stand-in for CoreHome (translate from lang/en.json, the URL, AjaxHelper answering from fixtures): the answer
 // for a past day and for now (5.1.5 review D1, D2), outage totals inside a period (F1), a day without measurements (D4),
 // the certificate figure (D3), the reasons for what cannot be checked (item 7), the dashboard card's one place and the
-// card itself (items 4, 5, 6 of the code review). The clock is pinned to NOW. Run it with tests/js/run-uptimepage-check.sh,
+// card itself (items 4, 5, 6 of the code review), results checked from outside next to the server's (B10), and the
+// admin overview's fold line and alert row with results checked from outside (F2, alert row). The clock is
+// pinned to NOW. Run it with tests/js/run-uptimepage-check.sh,
 // which puts Vue, the bundle, the English texts and the kit's promocard.js in as VUE, UMD, EN and KIT and starts it
 // through the devtools' browser runner (fw_browser_run). Exit 1 on a failure.
 const { chromium } = require(process.env.FW_SANDBOX_PLAYWRIGHT);
@@ -55,6 +57,7 @@ function pageSetup(en, nowIso) {
         const wanted = Number(params.idSite);
         return (scenario.incidents || [])
             .filter((i) => i.idSite === wanted)
+            .filter((i) => !params.source || params.source === 'all' || (i.source || 'local') === params.source)
             .filter((i) => Date.parse(i.start) < to && (i.end === null || Date.parse(i.end) >= from))
             .filter((i) => params.state !== 'open' || i.end === null)
             .sort((a, b) => b.start.localeCompare(a.start))
@@ -63,7 +66,7 @@ function pageSetup(en, nowIso) {
                 const end = i.end === null ? NOW_MS : Date.parse(i.end);
                 const begin = Math.max(start, from);
                 return {
-                    idIncident: n + 1, type: 'outage', targetKey: i.targetKey, kind: i.kind, source: 'local',
+                    idIncident: n + 1, type: 'outage', targetKey: i.targetKey, kind: i.kind, source: i.source || 'local',
                     start: i.start, end: i.end, durationSeconds: (end - start) / 1000, startInPeriod: iso(begin),
                     durationInPeriodSeconds: Math.max(0, (Math.min(end, to, NOW_MS) - begin) / 1000), open: i.end === null,
                     cause: i.cause || 'timeout', detail: i.detail || null, failedChecks: 2,
@@ -74,7 +77,13 @@ function pageSetup(en, nowIso) {
     /** a day's hour strip: every address of the group measured (all up) up to now, or nothing measured */
     function timeline(scenario, params) {
         const { from } = range(params.period, params.date);
-        const measured = scenario.measured !== false;
+        // from outside (B10): measured only where the scenario says so, for every group (true) or per group
+        // ({matomo: true, website: false}, 5.2.0 review B1)
+        const om = scenario.outsideMeasured;
+        const outside = params.source === 'external';
+        const measured = outside ? (om !== null && typeof om === 'object' ? !!om[params.group] : om === true) : scenario.measured !== false;
+        // B4: hours (UTC) in which every address of the group was down from outside
+        const downHours = outside ? ((scenario.outsideDown || {})[params.group] || []) : [];
         const status = scenario.status || {};
         const site = status[1] || [];
         const count = Math.max(1, params.group === 'matomo'
@@ -85,9 +94,10 @@ function pageSetup(en, nowIso) {
         for (let h = 0; h < 24; h++) {
             const t = from + h * 3600000;
             const future = t >= NOW_MS;
+            const down = downHours.includes(h);
             cells.push({
-                time: iso(t), measuredSeconds: future ? 0 : seconds, upSeconds: future ? 0 : seconds,
-                state: future ? 'future' : (measured ? 'up' : 'none'),
+                time: iso(t), measuredSeconds: future ? 0 : seconds, upSeconds: future || down ? 0 : seconds,
+                state: future ? 'future' : (measured ? (down ? 'down' : 'up') : 'none'),
             });
         }
         // the first measured hour of the group, at any time (API getTimeline firstMeasured)
@@ -113,6 +123,8 @@ function pageSetup(en, nowIso) {
                 return copy(incidents(scenario, params));
             case 'getTimeline':
                 return copy(timeline(scenario, params));
+            case 'getSitesOverview':
+                return copy(scenario.overview || []);
             default:
                 return Promise.reject(new Error('no fixture for ' + method));
         }
@@ -163,6 +175,33 @@ function pageSetup(en, nowIso) {
         });
     };
 
+    /** Mounts the admin page (Administration > Diagnostic > Uptime Monitor); resolves when its overview has loaded. */
+    window.fwumMountAdmin = function (scenario) {
+        window.fwumScenario = scenario;
+        const host = document.createElement('div');
+        host.style.width = (scenario.width || 1000) + 'px';
+        document.body.appendChild(host);
+        const config = window.Vue.reactive(Object.assign({
+            idSite: 0, variant: 'admin', isSuperUser: true, isAdmin: false, language: 'en', sentinel: 'absent',
+            sentinelVersion: null, sentinelSettings: 'index.php?module=FeinwerkSentinel&action=index&tab=instance',
+            allowPrivate: false, cron: { active: true, intervalSeconds: 60 }, cronLine: '* * * * * php console',
+            external: null, timezone: 'UTC', siteName: 'Matomo',
+        }, scenario.config || {}));
+        window.Vue.createApp({ render: () => window.Vue.h(window.FeinwerkUptimeMonitor.AdminPage, { config }) }).mount(host);
+        const root = host.querySelector('.fwum-admin');
+        return new Promise((resolve) => {
+            const started = Date.now();
+            const wait = () => {
+                if (!root.querySelector('.fwum-loading') || Date.now() - started > 3000) {
+                    requestAnimationFrame(() => requestAnimationFrame(() => resolve(root)));
+                } else {
+                    setTimeout(wait, 10);
+                }
+            };
+            setTimeout(wait, 0);
+        });
+    };
+
     /** the text as read: elements apart by a space (the stylesheet's margins), an address whole (its <wbr>s) */
     function words(node) {
         if (node.nodeType === 3) {
@@ -181,6 +220,18 @@ function pageSetup(en, nowIso) {
         const copy = node.cloneNode(true);
         copy.querySelectorAll('.fwum-sr, .fwum-outages__narrow').forEach((e) => e.remove());
         return clean(copy);
+    };
+    window.fwumAdminSummary = function (root) {
+        const alert = root.querySelectorAll('.fwum-checks > li')[1];
+        return {
+            intro: clean(root.querySelector('.fwum-admin > div > p')),
+            fold: clean(root.querySelector('.fwum-nc > p')),
+            rows: Array.from(root.querySelectorAll('.fwum-admin__table tbody tr')).map((tr) => [clean(tr.children[0]), clean(tr.children[1])]),
+            alertClass: alert ? alert.className : null,
+            alertLines: alert ? Array.from(alert.querySelectorAll('p')).map(clean) : [],
+            outsideRow: clean(root.querySelectorAll('.fwum-checks > li')[2] || null),
+            why: (() => { const w = root.querySelector('.fwum-nc__why'); return w ? w.textContent.trim() : null; })(),
+        };
     };
     window.fwumSummary = function (root) {
         const table = root.querySelector('table.fwum-table:not(.fwum-outages__table)');
@@ -201,6 +252,14 @@ function pageSetup(en, nowIso) {
             figures: Array.from(root.querySelectorAll('.fwum-figures > div')).map((d) => Array.from(d.children)
                 .filter((c) => !c.classList.contains('fwum-figures__spark')).map(clean)),
             nc: clean(root.querySelector('.fwum-nc > p')),
+            // B10: results checked from outside
+            strips: Array.from(root.querySelectorAll('.fwum-strips__name')).map(clean),
+            outsideNote: clean(root.querySelector('.fwum-outside-note')),
+            outsideLink: (() => { const a = root.querySelector('.fwum-outside-note a'); return a ? a.getAttribute('href') : null; })(),
+            listShown: Array.from(root.querySelectorAll('ul.fwum-targets:not(.fwum-outages__list) li')).map(shown),
+            sideClasses: Array.from(root.querySelectorAll('.fwum-targets__values--side .fwum-targets__text')).map((e) => e.className),
+            cellClasses: table ? Array.from(table.querySelectorAll('tbody td.fwum-targets__text')).map((td) => td.className) : null,
+            outageSources: Array.from(root.querySelectorAll('table.fwum-outages__table tbody tr')).map((tr) => shown(tr.lastElementChild)),
             why: why ? why.textContent.trim() : null,
             allowPrivateLink: !!root.querySelector('.fwum-nc a'),
             lists: Array.from(root.querySelectorAll('ul.fwum-targets')).map((ul) => ul.getAttribute('role')),
@@ -216,6 +275,14 @@ function pageSetup(en, nowIso) {
             // raw, with its no-break spaces
             rawLines: Array.from(root.querySelectorAll('.fwum-answer__text > p')).map((p) => p.textContent.replace(/\s+(?=\S)/g, (m) => (m.indexOf('\u00a0') >= 0 ? '\u00a0' : ' ')).trim()),
             rowTexts: table ? Array.from(table.querySelectorAll('td.fwum-targets__text')).map((td) => td.textContent) : null,
+            // 5.2.0 review: the tooltips of the cells, the strips' cells, the narrow group heads
+            cellTitles: table ? Array.from(table.querySelectorAll('tbody td.fwum-targets__text')).map((td) => td.getAttribute('title')) : null,
+            stripCells: Array.from(root.querySelectorAll('.fwum-strip')).map((strip) => Array.from(strip.querySelectorAll('.fwum-strip__cell'))
+                .map((c) => (Array.from(c.classList).find((k) => k.indexOf('is-') === 0 && k !== 'is-next') || '').slice(3))),
+            stripNames: Array.from(root.querySelectorAll('.fwum-strip__cells')).map((list) => list.getAttribute('aria-label')),
+            groupNotes: Array.from(root.querySelectorAll('.fwum-group-note')).map(clean),
+            groupHeads: Array.from(root.querySelectorAll('.fwum-group-head')).map(clean),
+            empty: clean(root.querySelector('.fwum-empty')),
         };
     };
 }
@@ -224,19 +291,31 @@ function pageSetup(en, nowIso) {
 const CHECKED = '2026-11-26T09:55:00Z';
 function target(key, kind, url, outcome, extra) {
     const more = extra || {};
-    return {
-        targetKey: key, kind, url, urlSource: 'default', enabled: true, lastCheckedAt: CHECKED,
-        states: more.unchecked ? {} : { local: {
-            outcome, error: outcome === 'up' ? null : (more.error || 'timeout'), note: more.note || null,
-            httpStatus: more.httpStatus || (outcome === 'up' ? 200 : null), responseMs: outcome === 'up' ? 120 : null,
+    const states = more.unchecked ? {} : { local: {
+        outcome, error: outcome === 'up' ? null : (more.error || 'timeout'), note: more.note || null,
+        httpStatus: more.httpStatus || (outcome === 'up' ? 200 : null), responseMs: outcome === 'up' ? 120 : null,
+        checkedAt: more.stale ? '2026-11-25T08:00:00Z' : CHECKED, stale: !!more.stale,
+    } };
+    // B10: the latest result from outside (another plugin's, source external)
+    if (more.outside) {
+        states.external = {
+            outcome: more.outside, error: more.outside === 'up' ? null : (more.outsideError || 'timeout'), note: null,
+            httpStatus: more.outsideStatus || (more.outside === 'up' ? 200 : null), responseMs: more.outside === 'up' ? 118 : null,
             checkedAt: CHECKED, stale: false,
-        } },
+        };
+        if (more.outsideError === null) {
+            states.external.error = null;
+        }
+    }
+    return {
+        targetKey: key, kind, url, urlSource: 'default', enabled: true, lastCheckedAt: more.unchecked ? null : CHECKED, states,
+        serverRefuses: !!more.serverRefuses,
         certificate: more.days === undefined ? null : { notAfter: '2027-01-01', daysLeft: more.days, level: more.level || 'ok' },
     };
 }
-function uptimeRow(key, kind, percent, coverage) {
+function uptimeRow(key, kind, percent, coverage, source) {
     return {
-        targetKey: key, kind, source: 'local', uptimePercent: percent, coveragePercent: coverage === undefined ? 100 : coverage,
+        targetKey: key, kind, source: source || 'local', uptimePercent: percent, coveragePercent: coverage === undefined ? 100 : coverage,
         outages: 0, samples: 24, p50Ms: 120, p95Ms: 200, maxMs: 300,
     };
 }
@@ -326,8 +405,8 @@ async function answers(browser) {
     ];
     let s = await mounted(browser, scenario({ date: '2026-11-25', incidents: three }));
     check('F1: three addresses down together count once, 1 h; D4: the prefix Matomo once', s.lines[0].text,
-        // the addresses in the order of the outage list, the newest first
-        'Nov 25: 1 outage, 1 h Matomo: JavaScript tracker, Interface, and Tracker endpoint (no answer within 10 seconds)');
+        // 5.2.0 review: in the order of the outage list's row
+        'Nov 25: 1 outage, 1 h Matomo: Interface, Tracker endpoint, and JavaScript tracker (no answer within 10 seconds)');
     // final review D1: overlapping outages of one group are one row naming them, in the order of the addresses
     check('D1: one row for the three addresses down together', s.outages,
         [['Nov 25, 2026, 10:00 AM', '1 h', 'Matomo: Interface, Tracker endpoint, and JavaScript tracker', 'no answer within 10 seconds']]);
@@ -405,6 +484,15 @@ async function answers(browser) {
     // the widgets show the count, never a name: amber
     s = await mounted(browser, scenario({ width: 300, status: containerDown, incidents: containerOpen, config: { variant: 'matomo' } }));
     check('F1 widget: the count without a name stays amber', s.lines[0].cls, 'is-partial');
+    // B11 part 2: an address this server never checks (a private address while they are not allowed) reads not
+    // checkable before its first check, not "Not checked yet"; a public one not checked yet stays so
+    const refused = { 0: matomoTargets(), 1: [target(WEB, 'web', 'http://192.168.1.10/', 'up', { unchecked: true, serverRefuses: true })] };
+    s = await mounted(browser, scenario({ status: refused }));
+    check('B11 part 2 refused by this server: the answer', s.lines[0].text.indexOf('This website: Not checkable from this server'), 0);
+    check('B11 part 2 refused by this server: its row', [s.rows[3][0], s.rows[3][2]], ['is-not_checkable', 'Not checkable from this server']);
+    s = await mounted(browser, scenario({ status: { 0: matomoTargets(), 1: [target(WEB, 'web', 'https://www.example.com/', 'up', { unchecked: true })] } }));
+    check('B11 part 2 a public address not checked yet: so', s.rows[3][2], 'Not checked yet');
+
     // stale, not checkable or not measured are no outage: the day first
     const unchecked = { 0: matomoTargets(), 1: [target(WEB, 'web', 'https://www.example.com/', 'up', { unchecked: true })] };
     s = await mounted(browser, scenario({ date: '2026-11-25', status: unchecked }));
@@ -456,6 +544,339 @@ async function answers(browser) {
         ['is-up', 'shop.example.org Uptime: 100% Certificate 12 days'],
         ['is-partial', 'www.example.com Uptime: 97.92% Certificate 41 days']]);
     check('narrow: the lists are lists for screen readers', s.lists, ['list', 'list']);
+}
+
+/** B10: results checked from outside (another plugin, ScreenProps external) next to those from the Matomo server */
+async function outsideResults(browser) {
+    const ACTIVE = { active: true, name: 'Outside checks', reachedAt: '2026-11-26T09:58:00Z', settingsUrl: null };
+    const PAUSED = { active: false, name: 'Outside checks', reachedAt: null, settingsUrl: 'index.php?module=OutsideChecks&action=index' };
+    const matomoBoth = () => ['ui', 'tracker', 'js'].map((k) => target(k, k, MATOMO_URL + k, 'up', { days: 63, outside: 'up' }));
+    const uptimeBoth = (webOutside) => ({
+        0: ['ui', 'tracker', 'js'].map((k) => uptimeRow(k, k, 100)).concat(['ui', 'tracker', 'js'].map((k) => uptimeRow(k, k, 100, 100, 'external'))),
+        1: [uptimeRow(WEB, 'web', null, 0), uptimeRow(WEB, 'web', webOutside, 100, 'external')],
+    });
+    // the website cannot be checked from the Matomo server (a typical router), from outside it answers
+    const behindRouter = (extra) => scenario(Object.assign({
+        status: { 0: matomoBoth(), 1: [target(WEB, 'web', 'https://www.example.com/', 'not_checkable', { days: 41, error: 'blocked', outside: 'up' })] },
+        uptime: uptimeBoth(99.5), outsideMeasured: true, config: { external: ACTIVE },
+    }, extra));
+
+    let s = await mounted(browser, scenario({ config: { external: null } }));
+    check('B10 without a source: the page as before', [s.heads, s.outsideNote, s.strips], [['Address', 'Response', 'Uptime', 'Certificate'], null, ['Matomo', 'This website']]);
+
+    s = await mounted(browser, behindRouter());
+    check('B10 active: both sides under their headings', s.heads,
+        ['Address', 'Checked from the Matomo server', 'Checked from outside', 'Certificate', 'Checked from the Matomo server: Response',
+            'Checked from the Matomo server: Uptime', 'Checked from outside: Response', 'Checked from outside: Uptime']);
+    check('B10 active: the group rows span every column', s.colspans, ['6', '6']);
+    check('B10 active: the website row, reachable from outside though not from this server', s.rows[3],
+        ['is-up', 'www.example.com', 'Not checkable', '', '118 ms', '99.5%', '41 days']);
+    check('B10 active: Matomo\'s rows with both sides', s.rows[0], ['is-up', 'Interface', '120 ms', '100%', '118 ms', '100%', '63 days']);
+    check('B10 active: reachable from outside is an answer', s.lines[0], { cls: 'is-up', muted: false, text: 'Everything reachable checked 5 minutes ago' });
+    check('B10 active: no note about what this server cannot check', s.nc, null);
+    check('B10 active: a strip from outside under each group\'s strip', s.strips,
+        ['Matomo from the Matomo server', 'from outside', 'This website from the Matomo server', 'from outside']);
+    check('B10 active: no line about paused checks', s.outsideNote, null);
+
+    // down from outside only: the answer is red and says where it failed
+    const outsideDown = scenario({
+        status: { 0: matomoBoth(), 1: [target(WEB, 'web', 'https://www.example.com/', 'up', { days: 41, outside: 'down', outsideError: 'http_status', outsideStatus: 502 })] },
+        uptime: uptimeBoth(98), outsideMeasured: true, config: { external: ACTIVE },
+        incidents: [{ idSite: 1, targetKey: WEB, kind: 'web', source: 'external', start: '2026-11-26T09:13:00Z', end: null, cause: 'http_status', detail: 'HTTP 502' }],
+    });
+    s = await mounted(browser, outsideDown);
+    check('B10 down from outside: the answer names the address and where it failed', s.lines[0],
+        { cls: 'is-down', muted: false, text: 'This website: www.example.com not reachable since 9:13 AM (HTTP status 502, from outside) checked 5 minutes ago' });
+    check('B10 down from outside: only the outside cell in red', s.cellClasses.slice(-2),
+        ['column fwum-targets__text is-up', 'column fwum-targets__text is-down']);
+    // 5.2.0 review L1: a noun under "Checked from", not "Checked from: from outside"
+    check('B10 down from outside: the outage list says where from', s.outageSources, ['Outside']);
+    s = await mounted(browser, Object.assign({}, outsideDown, { width: 390 }));
+    check('B10 down from outside, narrow: only the outside line in red (review F1)', s.sideClasses.slice(-2),
+        ['fwum-targets__text is-up', 'fwum-targets__text is-down']);
+
+    s = await mounted(browser, behindRouter({ width: 390 }));
+    check('B10 narrow: each address with both sides, each named', s.listShown.slice(-1),
+        ['www.example.com Not checkable from the Matomo server 118 ms 99.5% from outside']);
+    s = await mounted(browser, behindRouter({ width: 300, config: { variant: 'site', external: ACTIVE } }));
+    check('B10 widget: both sides in the list too, the dot from both', [s.listShown, s.lines[0].cls],
+        [['www.example.com Not checkable from the Matomo server 118 ms 99.5% from outside'], 'is-up']);
+
+    s = await mounted(browser, behindRouter({ date: '2026-11-25' }));
+    // 5.2.0 review L3: one header row, each Uptime column naming its side
+    check('B10 past day: the Uptime column of each side', s.heads,
+        ['Address', 'Uptime from the Matomo server', 'Uptime from outside', 'Certificate']);
+    check('B10 past day: the website measured from outside only', s.rows[3], ['is-partial', 'www.example.com', 'Not measured', '99.5%', '41 days']);
+
+    // B11 finding 3: an address the outside cannot check (a private address) adds nothing to its dot, the answer or
+    // the freshness: here the server's checks of the website stopped, and that must still show
+    const privateOutside = (extra) => scenario(Object.assign({
+        status: {
+            0: ['ui', 'tracker', 'js'].map((k) => target(k, k, MATOMO_URL + k, 'up', { days: 63, outside: 'not_checkable', outsideError: 'blocked' })),
+            1: [target(WEB, 'web', 'https://www.example.com/', 'up', { days: 41, stale: true, outside: 'not_checkable', outsideError: 'blocked' })],
+        },
+        uptime: uptimeBoth(null), config: { external: ACTIVE },
+    }, extra));
+    s = await mounted(browser, privateOutside());
+    check('B11 not checkable from outside: the cell says so', [s.rows[0][4], s.rows[3][4]], ['Not checkable', 'Not checkable']);
+    check('B11 not checkable from outside: the server\'s outcome alone colours the dot', [s.rows[0][0], s.rows[3][0]], ['is-up', 'is-stale']);
+    check('B11 not checkable from outside: the answer still says the checks stopped', s.lines[0].cls, 'is-stale');
+    s = await mounted(browser, privateOutside({ width: 300, config: { variant: 'site', external: ACTIVE } }));
+    check('B11 not checkable from outside: the widget\'s dot from the server alone', s.lines[0].cls, 'is-stale');
+
+    // B11 part 2: neither side can check the website: its answer names both (one sentence); when the outside has no
+    // result for it (or one that says nothing), only this server
+    const nowhere = (more, extra) => scenario(Object.assign({
+        status: { 0: matomoBoth(), 1: [target(WEB, 'web', 'https://www.example.com/', 'not_checkable', Object.assign({ days: 41, error: 'dns' }, more))] },
+        uptime: uptimeBoth(null), config: { external: ACTIVE },
+    }, extra));
+    s = await mounted(browser, nowhere({ outside: 'not_checkable', outsideError: 'dns' }));
+    // 5.2.0 review L4: the server named as in the table headings
+    check('B11 part 2 neither side can check: the answer names both', s.lines[0].text.indexOf('This website: Not checkable from the Matomo server or from outside'), 0);
+    s = await mounted(browser, nowhere({ outside: 'not_checkable', outsideError: 'dns' }, { width: 300, config: { variant: 'site', external: ACTIVE } }));
+    check('B11 part 2 neither side can check: the widget too', s.lines[0].text.indexOf('Not checkable from the Matomo server or from outside'), 0);
+    s = await mounted(browser, nowhere({}));
+    check('B11 part 2 no result from outside yet: only this server', [s.lines[0].text.indexOf('This website: Not checkable from this server'),
+        s.lines[0].text.indexOf('or from outside')], [0, -1]);
+
+    s = await mounted(browser, scenario({ config: { external: PAUSED } }));
+    check('B10 paused (admins): the page as before plus one line with the link', [s.heads, s.outsideNote, s.outsideLink],
+        [['Address', 'Response', 'Uptime', 'Certificate'], 'Checks from outside are not active at the moment. Settings for the checks from outside',
+            'index.php?module=OutsideChecks&action=index']);
+    s = await mounted(browser, scenario({ config: { external: PAUSED, embedded: true } }));
+    check('B10 paused: never in an embed', s.outsideNote, null);
+
+    // outages from outside count only while their source delivers: paused or without a source, the page as before
+    const fromOutside = (day) => [{ idSite: 1, targetKey: WEB, kind: 'web', source: 'external', start: day + 'T06:12:00Z',
+        end: day + 'T06:15:00Z', cause: 'http_status', detail: 'HTTP 502' }];
+    s = await mounted(browser, scenario({ config: { external: PAUSED }, incidents: fromOutside('2026-11-26') }));
+    check('B10 paused: no outage from outside in the list', s.outages, []);
+    s = await mounted(browser, scenario({ date: '2026-11-25', incidents: fromOutside('2026-11-25') }));
+    check('B10 without a source: a past day counts no outage from outside', s.lines[0].text, 'Nov 25: no outage');
+    s = await mounted(browser, behindRouter({ date: '2026-11-25', incidents: fromOutside('2026-11-25') }));
+    check('B10 active: the past day counts it', s.lines[0].text.indexOf('Nov 25: 1 outage, 3 min') === 0, true);
+}
+
+/**
+ * 5.2.0 review (UI review B1 to B5, L8 review findings 5 to 8, L1 to L3): results from outside only where a group has
+ * any, the share of addresses a strip from outside covers, the widgets from both sides, why an address cannot be
+ * checked from outside, and the side named where no side can check an address.
+ */
+async function review520(browser) {
+    const ACTIVE = { active: true, name: 'Outside checks', reachedAt: '2026-11-26T09:58:00Z', settingsUrl: null };
+    const OUTSIDE_HELP = 'The checks from outside cannot reach such addresses either';
+    const matomoOutside = () => ['ui', 'tracker', 'js'].map((k) => target(k, k, MATOMO_URL + k, 'up', { days: 63, outside: 'up' }));
+    const matomoUptime = (outside) => ['ui', 'tracker', 'js'].map((k) => uptimeRow(k, k, 100))
+        .concat(outside ? ['ui', 'tracker', 'js'].map((k) => uptimeRow(k, k, 100, 100, 'external')) : []);
+
+    // B1: no result from outside for any group of the screen: exactly the page without the add-on
+    let s = await mounted(browser, scenario({ config: { external: ACTIVE } }));
+    const plain = await mounted(browser, scenario({ config: { external: null } }));
+    check('B1 nothing from outside here: the page as without a source', [s.heads, s.strips, s.rows, s.lines, s.colspans],
+        [plain.heads, plain.strips, plain.rows, plain.lines, plain.colspans]);
+    check('B1 ... which is the plain page', [s.heads, s.strips], [['Address', 'Response', 'Uptime', 'Certificate'], ['Matomo', 'This website']]);
+
+    // B1: Matomo checked from outside, the website not at all: it keeps its one strip and gets one muted cell
+    const half = (extra) => scenario(Object.assign({
+        status: { 0: matomoOutside(), 1: [target(WEB, 'web', 'https://www.example.com/', 'up', { days: 41 })] },
+        uptime: { 0: matomoUptime(true), 1: [uptimeRow(WEB, 'web', 97.917)] },
+        outsideMeasured: { matomo: true, website: false }, config: { external: ACTIVE },
+    }, extra));
+    s = await mounted(browser, half());
+    check('B1 a group without results from outside keeps its one strip', s.strips,
+        ['Matomo from the Matomo server', 'from outside', 'This website from the Matomo server']);
+    check('B1 its rows: one muted cell across the outside columns', s.rows[3],
+        ['is-up', 'www.example.com', '120 ms', '97.92%', 'Not checked from outside', '41 days']);
+    check('B1 the other group with both sides', s.rows[0], ['is-up', 'Interface', '120 ms', '100%', '118 ms', '100%', '63 days']);
+    s = await mounted(browser, half({ width: 390 }));
+    check('B1 narrow: one muted line for the group, its address without sides', [s.groupNotes, s.listShown.slice(-1)],
+        [['Not checked from outside'], ['www.example.com 120 ms 97.92%']]);
+
+    // L2: with both sides shown, every outage names its side, also one from the Matomo server alone
+    s = await mounted(browser, half({ incidents: [{ idSite: 1, targetKey: WEB, kind: 'web', start: '2026-11-26T08:00:00Z', end: '2026-11-26T08:10:00Z' }] }));
+    check('L2 the side of an outage from the Matomo server', s.outageSources, ['Matomo server']);
+
+    // B1, B5: the outside's note that it cannot check a private address shows in its cells, but draws no empty strip;
+    // neither side can check it: the note and Why? name both, as the answer line does
+    const marker = (more, extra) => scenario(Object.assign({
+        status: { 0: matomoOutside(), 1: [target('web:192.168.1.10', 'web', 'http://192.168.1.10/', 'not_checkable',
+            Object.assign({ error: 'blocked', outside: 'not_checkable', outsideError: 'blocked' }, more))] },
+        uptime: { 0: matomoUptime(true), 1: [] },
+        outsideMeasured: { matomo: true, website: false }, config: { external: ACTIVE },
+    }, extra));
+    s = await mounted(browser, marker(), 'why');
+    check('B1 not checkable from outside: its cells, no empty strip', [s.strips, s.rows[3]],
+        [['Matomo from the Matomo server', 'from outside', 'This website from the Matomo server'],
+            ['is-not_checkable', '192.168.1.10', 'Not checkable', '', 'Not checkable', '', '']]);
+    check('B5 the outside cell says why', s.cellTitles.slice(-2),
+        [null, 'Not checkable from outside: a private or reserved address, or a port that is not checked from outside']);
+    check('B5 neither side: the answer names both', s.lines[0].text.indexOf('This website: Not checkable from the Matomo server or from outside'), 0);
+    check('B5 neither side: the note names both too', s.nc.indexOf('1 address cannot be checked from the Matomo server or from outside and does not count as an outage. Why?'), 0);
+    check('B5 Why? gives both sides\' reasons', [s.why.indexOf('The Matomo server cannot reach this address itself'), s.why.indexOf(OUTSIDE_HELP) > 0], [0, true]);
+    for (const [error, title] of [['connect', 'Not checkable from outside: no connection'], ['http_status', 'Not checkable from outside: the address asks for a password or blocks automated requests'],
+        ['content', 'Not checkable from outside: the file is too large to check'], [null, 'Not checkable from outside']]) {
+        s = await mounted(browser, marker({ outsideError: error }));
+        check('B5 the reason from outside, ' + error, s.cellTitles.slice(-1), [title]);
+    }
+    // one of two only from this server: the note says "from this server", Why? both reasons
+    const two = scenario({
+        status: { 0: matomoOutside(), 1: [
+            target('web:192.168.1.10', 'web', 'http://192.168.1.10/', 'not_checkable', { error: 'blocked', outside: 'not_checkable', outsideError: 'blocked' }),
+            target('web:intranet.example.com', 'web', 'https://intranet.example.com/', 'not_checkable', { error: 'connect' })] },
+        uptime: { 0: matomoUptime(true), 1: [] }, outsideMeasured: { matomo: true, website: false }, config: { external: ACTIVE },
+    });
+    s = await mounted(browser, two, 'why');
+    check('B5 one of two from this server only: the note says from this server', s.nc.indexOf('2 addresses cannot be checked from this server'), 0);
+    check('B5 ... Why? with both reasons', [s.why.indexOf('The Matomo server cannot reach'), s.why.indexOf(OUTSIDE_HELP) > 0], [0, true]);
+    check('B2 no result from outside for an address: Not checked', s.rows[4][4], 'Not checked');
+
+    // B2: the strip from outside of Matomo stands for the container alone: it says so
+    const CONTAINER = 'ctr:Ab12Cd34';
+    const container = scenario({
+        status: { 0: matomoTargets(), 1: [target(WEB, 'web', 'https://www.example.com/', 'up', { days: 41 }),
+            target(CONTAINER, 'container', 'https://matomo.example.org/js/container_Ab12Cd34.js', 'up', { days: 63, outside: 'up' })] },
+        uptime: { 0: matomoUptime(false), 1: [uptimeRow(WEB, 'web', 97.917), uptimeRow(CONTAINER, 'container', 100),
+            uptimeRow(CONTAINER, 'container', 100, 100, 'external')] },
+        outsideMeasured: { matomo: true, website: false }, config: { external: ACTIVE },
+    });
+    s = await mounted(browser, container);
+    check('B2 the strip from outside names its share of the addresses', s.strips,
+        ['Matomo from the Matomo server', 'from outside, 1 of 4 addresses', 'This website from the Matomo server']);
+    check('B2 ... in its accessible name too', s.stripNames[1].indexOf('Matomo, from outside, 1 of 4 addresses') >= 0, true);
+    check('B2 an address without a result from outside: Not checked, not "Not checked yet"', s.rows[0],
+        ['is-up', 'Interface', '120 ms', '100%', 'Not checked', '', '63 days']);
+    check('B2 the container with both sides', s.rows[3][4], '118 ms');
+
+    // B2 with L8 finding 1: today an address the outside stopped checking (its state forgotten) no longer counts for the
+    // strip from outside, though it has hours from outside earlier today
+    const SHOP = 'web:shop.example.com';
+    s = await mounted(browser, scenario({
+        status: { 0: matomoTargets(), 1: [target(WEB, 'web', 'https://www.example.com/', 'up', { days: 41, outside: 'up' }),
+            target(SHOP, 'web', 'https://shop.example.com/', 'up', { days: 41 })] },
+        uptime: { 0: matomoUptime(false), 1: [uptimeRow(WEB, 'web', 100), uptimeRow(WEB, 'web', 100, 100, 'external'),
+            uptimeRow(SHOP, 'web', 100), uptimeRow(SHOP, 'web', 100, 40, 'external')] },
+        outsideMeasured: { matomo: false, website: true }, config: { external: ACTIVE },
+    }));
+    check('B2 today: an address no longer checked from outside is not in its share', s.strips,
+        ['Matomo from the Matomo server', 'This website from the Matomo server', 'from outside, 1 of 2 addresses']);
+
+    // B4: the website widget while the address is down from outside: the strip and the uptime from both sides
+    const widget = scenario({
+        width: 300,
+        status: { 0: matomoTargets(), 1: [target(WEB, 'web', 'https://www.example.com/', 'up', { days: 41, outside: 'down', outsideError: 'http_status', outsideStatus: 502 })] },
+        uptime: { 0: matomoUptime(false), 1: [uptimeRow(WEB, 'web', 100), uptimeRow(WEB, 'web', 90, 100, 'external')] },
+        outsideMeasured: true, outsideDown: { website: [9] }, config: { variant: 'site', external: ACTIVE },
+        incidents: [{ idSite: 1, targetKey: WEB, kind: 'web', source: 'external', start: '2026-11-26T09:00:00Z', end: null, cause: 'http_status', detail: 'HTTP 502' }],
+    });
+    s = await mounted(browser, widget);
+    check('B4 widget: the strip from both sides (down from outside in the last hour)', s.stripCells[0].slice(8, 11), ['up', 'partial', 'future']);
+    const uptime = s.figures.find((f) => f[0] === 'Uptime') || [];
+    check('B4 widget: the lower uptime, from outside', [uptime[1], uptime.indexOf('from outside') > 1], ['90%', true]);
+    check('B4 widget: the answer agrees', s.lines[0].cls, 'is-down');
+    s = await mounted(browser, Object.assign({}, widget, { status: { 0: matomoTargets(), 1: [target(WEB, 'web', 'https://www.example.com/', 'up', { days: 41 })] },
+        uptime: { 0: matomoUptime(false), 1: [uptimeRow(WEB, 'web', 100)] }, outsideMeasured: false, incidents: [] }));
+    const plainWidget = await mounted(browser, Object.assign({}, widget, { status: { 0: matomoTargets(), 1: [target(WEB, 'web', 'https://www.example.com/', 'up', { days: 41 })] },
+        uptime: { 0: matomoUptime(false), 1: [uptimeRow(WEB, 'web', 100)] }, outsideMeasured: false, incidents: [], config: { variant: 'site', external: null } }));
+    check('B1 widget without results from outside: as without a source', [s.figures, s.stripCells, s.listShown], [plainWidget.figures, plainWidget.stripCells, plainWidget.listShown]);
+
+    // L8 finding 5: the website widget whose one address the server never checks: no "first check" box
+    s = await mounted(browser, scenario({ width: 300, status: { 0: matomoTargets(), 1: [target('web:192.168.1.10', 'web', 'http://192.168.1.10/', 'not_checkable',
+        { unchecked: true, serverRefuses: true })] }, uptime: { 0: [], 1: [] }, config: { variant: 'site' } }));
+    check('L8 5 widget: refused by the server before its first check: not checkable, no first-check box',
+        [s.empty, (s.lines[0] || {}).text], [null, 'Not checkable from this server']);
+
+    // L8 finding 8: a past day's dot from that day's results from outside, also when the outside cannot check it now
+    s = await mounted(browser, scenario({ date: '2026-11-25',
+        status: { 0: matomoOutside(), 1: [target(WEB, 'web', 'https://www.example.com/', 'up', { days: 41, outside: 'not_checkable', outsideError: 'blocked' })] },
+        uptime: { 0: matomoUptime(true), 1: [uptimeRow(WEB, 'web', 100), uptimeRow(WEB, 'web', 98.264, 100, 'external')] },
+        outsideMeasured: true, config: { external: ACTIVE } }));
+    check('L8 8 past day: the dot follows that day from outside', s.rows[3][0], 'is-partial');
+}
+
+/** mounts the admin page on a new page; after 'show' the folded websites are shown again */
+async function admin(browser, data, after) {
+    const { page, context } = await open(browser, false);
+    try {
+        return await page.evaluate(async ({ data, after }) => {
+            const root = await window.fwumMountAdmin(data);
+            if (after === 'show' || after === 'why') {
+                const button = root.querySelectorAll('.fwum-nc .fwum-link-button')[after === 'why' ? 1 : 0];
+                if (button) {
+                    button.click();
+                }
+                await new Promise((r) => requestAnimationFrame(() => r()));
+            }
+            return window.fwumAdminSummary(root);
+        }, { data, after });
+    } finally {
+        await context.close();
+    }
+}
+
+/**
+ * F2 and the alert row: the admin overview with results checked from outside. The API combines both sides
+ * (getSitesOverview); the page folds what no side can check, without "from this server", and names an active source
+ * that sends alerts itself instead of "No alerts".
+ */
+async function adminPage(browser) {
+    const ACTIVE = { active: true, name: 'Outside checks', reachedAt: '2026-11-26T09:58:00Z', settingsUrl: null, alerts: false };
+    const ALERTING = Object.assign({}, ACTIVE, { alerts: true });
+    const site = (idSite, name, counts) => Object.assign({ idSite, name, timezone: 'UTC', targets: 1, off: 0, up: 0, down: 0,
+        notCheckable: 0, stale: 0, lastCheckedAt: CHECKED, certificateDaysLeft: null, certificateLevel: null, containersDown: [] }, counts);
+    const overview = [site(0, 'Matomo', { targets: 3, up: 3 }), site(1, 'Shop', { notCheckable: 1 }), site(2, 'Blog', { up: 1 })];
+    const NO_ALERTS = 'No alerts: Feinwerk Sentinel is not installed.';
+    const SENTINEL = 'Feinwerk Sentinel sends the alerts:';
+
+    let s = await admin(browser, { overview, config: { external: null } });
+    check('B11 finding 8, without a source: the intro says the checks run from this server', s.intro,
+        'Matomo and every website with check targets. The checks run from this server; Checks and alerts below shows how often.');
+    check('F2 without a source: the fold says from this server', s.fold.indexOf('Shop cannot be checked from this server and does not count as an outage.') === 0, true);
+    check('alert row without a source: No alerts', [s.alertClass, s.alertLines.length, s.alertLines[0].indexOf(NO_ALERTS) === 0],
+        ['is-warn', 1, true]);
+    s = await admin(browser, { overview, config: { external: null } }, 'show');
+    check('F2 without a source: the folded row, not checkable from this server', s.rows.slice(-1), [['Shop', 'Not checkable from this server']]);
+
+    s = await admin(browser, { overview, config: { external: ACTIVE } });
+    check('B11 finding 8, active: the intro names both sides', s.intro,
+        'Matomo and every website with check targets. The checks run from the Matomo server and from outside; Checks and alerts below shows how often.');
+    // 5.2.0 review B3: the outside has no result for Shop (it did not say it cannot check it): from this server
+    check('B3 active: folded, from this server, since the outside did not say so', s.fold.indexOf('Shop cannot be checked from this server and does not count as an outage.') === 0, true);
+    check('alert row: an active source that does not alert: still No alerts', [s.alertClass, s.alertLines[0].indexOf(NO_ALERTS) === 0], ['is-warn', true]);
+    s = await admin(browser, { overview, config: { external: ACTIVE } }, 'show');
+    check('B3 active: the folded row, from this server', s.rows.slice(-1), [['Shop', 'Not checkable from this server']]);
+    s = await admin(browser, { overview: [site(0, 'Matomo', { targets: 3, up: 3 }), site(1, 'Shop', { up: 1 })], config: { external: ACTIVE } });
+    check('F2 active: a website reachable from outside is a row, nothing folded', [s.fold, s.rows.map((r) => r[1])], [null, ['Reachable', 'Reachable']]);
+
+    // B3: no side can check Shop (the outside says so too): both named, and Why? gives both sides' reasons
+    const either = [site(0, 'Matomo', { targets: 3, up: 3 }), site(1, 'Shop', { notCheckable: 1, notCheckableOutside: 1 }), site(2, 'Blog', { up: 1 })];
+    s = await admin(browser, { overview: either, config: { external: ACTIVE } }, 'why');
+    check('B3 no side can check it: folded, both sides named', s.fold.indexOf('Shop cannot be checked from the Matomo server or from outside and does not count as an outage.'), 0);
+    check('B3 ... Why? with both sides\' reasons', [s.why.indexOf('The Matomo server cannot reach'), s.why.indexOf('The checks from outside cannot reach such addresses either') > 0], [0, true]);
+    s = await admin(browser, { overview: either, config: { external: ACTIVE } }, 'show');
+    check('B3 ... its row', s.rows.slice(-1), [['Shop', 'Not checkable from the Matomo server or from outside']]);
+    const mixed = [site(0, 'Matomo', { targets: 3, up: 3 }), site(1, 'Shop', { notCheckable: 1, notCheckableOutside: 1 }), site(2, 'Blog', { notCheckable: 1 })];
+    s = await admin(browser, { overview: mixed, config: { external: ACTIVE } }, 'why');
+    check('B3 one of them only from this server: from this server', s.fold.indexOf('Shop and Blog cannot be checked from this server and do not count as outages.'), 0);
+    check('B3 ... Why? without the outside sentence', s.why.indexOf('The checks from outside'), -1);
+
+    // L8 finding 6: the time of the latest results, not of the last contact (a push of settings reaches it too)
+    s = await admin(browser, { overview, config: { external: Object.assign({}, ACTIVE, { resultsAt: '2026-11-26T08:00:00Z' }) } });
+    check('L8 6: the time of the latest results', s.outsideRow, 'Also checked from outside: the latest results arrived 2 hours ago.');
+    s = await admin(browser, { overview, config: { external: Object.assign({}, ACTIVE, { resultsAt: null }) } });
+    check('L8 6: no results yet', s.outsideRow, 'Also checked from outside: no results have arrived yet.');
+
+    s = await admin(browser, { overview, config: { external: ALERTING } });
+    check('alert row: the active source alerts: its own name, no "No alerts"', [s.alertClass, s.alertLines],
+        ['is-ok', ['Outside checks sends alerts for outages.']]);
+    s = await admin(browser, { overview, config: { external: ALERTING, sentinel: 'active' } });
+    check('alert row: with Sentinel too, both lines and Sentinel\'s own words', [s.alertClass, s.alertLines[0], s.alertLines[1].indexOf(SENTINEL) === 0, s.alertLines.length],
+        ['is-ok', 'Outside checks sends alerts for outages.', true, 3]);
+    s = await admin(browser, { overview, config: { external: ALERTING, sentinel: 'old', sentinelVersion: '4.9.0' } });
+    check('alert row: an old Sentinel and an alerting source: no "No alerts"', [s.alertClass, s.alertLines], ['is-ok', ['Outside checks sends alerts for outages.']]);
+    s = await admin(browser, { overview, config: { external: Object.assign({}, ALERTING, { active: false }) } });
+    check('alert row: a paused source never counts as alerting', [s.alertClass, s.alertLines[0].indexOf(NO_ALERTS) === 0], ['is-warn', true]);
+    s = await admin(browser, { overview, config: { sentinel: 'active' } });
+    check('alert row: Sentinel alone as before', [s.alertClass, s.alertLines.length, s.alertLines[0].indexOf(SENTINEL) === 0], ['is-ok', 2, true]);
 }
 
 async function figuresAndReasons(browser) {
@@ -618,6 +1039,9 @@ async function cardItself(browser) {
     const browser = await chromium.launch({ executablePath: process.env.FW_BROWSER_CHROME, args });
     try {
         await answers(browser);
+        await outsideResults(browser);
+        await review520(browser);
+        await adminPage(browser);
         await figuresAndReasons(browser);
         await card(browser);
         await cardItself(browser);

@@ -11,7 +11,12 @@
   checked from this server fold into one line below the table (Peter's 3a, D4), like the uptime
   page's line for addresses; "Show" brings their rows back, pencil included. Narrower than a
   phone (B5) the table becomes stacked rows: name and pencil, the status, then certificate and
-  last check, muted and named.
+  last check, muted and named. While another plugin adds results checked from outside, the status
+  rows name it (delivering, with the time of its latest results, or not active) with the link to
+  its settings; without such a plugin nothing about it shows. While it delivers, the table
+  combines both sides (API getSitesOverview), so only websites no side can check are folded (named
+  "from this server" unless the outside said it cannot check them either, 5.2.0 review B3), and
+  when it sends alerts itself the alert row names it instead of "No alerts".
 -->
 <template>
   <div
@@ -19,7 +24,8 @@
     :lang="config.language || undefined"
   >
     <ContentBlock :content-title="translate('FeinwerkUptimeMonitor_MenuTitle')">
-      <p>{{ translate('FeinwerkUptimeMonitor_UiAdminIntro') }}</p>
+      <p>{{ translate(outside ? 'FeinwerkUptimeMonitor_UiAdminIntroOutside'
+        : 'FeinwerkUptimeMonitor_UiAdminIntro') }}</p>
       <div
         v-if="loading && !rows.length"
         class="fwum-loading"
@@ -190,7 +196,7 @@
             v-show="whyOpen"
             :id="`${uid}-why`"
             class="fwum-note fwum-nc__why"
-          >{{ translate('FeinwerkUptimeMonitor_UiAdminNotCheckableHelp') }}</p>
+          >{{ foldedWhy }}</p>
         </div>
       </div>
       <p
@@ -223,20 +229,24 @@
             </template>
           </div>
         </li>
-        <li :class="config.sentinel === 'active' ? 'is-ok' : 'is-warn'">
+        <li :class="alertsOk ? 'is-ok' : 'is-warn'">
           <span
-            :class="config.sentinel === 'active' ? 'icon-ok' : 'icon-warning'"
+            :class="alertsOk ? 'icon-ok' : 'icon-warning'"
             aria-hidden="true"
           />
-          <div v-if="config.sentinel === 'active'">
-            <p>{{ translate('FeinwerkUptimeMonitor_UiSentinelActive') }}</p>
-            <!-- P3 (Peter, 2026-11-25): the link on the words that name Sentinel's settings -->
-            <p class="fwum-muted">{{ sentinelFacts.before }}<a
-              v-if="config.sentinelSettings && sentinelFacts.link"
-              :href="config.sentinelSettings"
-            >{{ sentinelFacts.link }}</a><template
-              v-else
-            >{{ sentinelFacts.link }}</template>{{ sentinelFacts.after }}</p>
+          <div v-if="alertsOk">
+            <!-- the plugin that checks from outside sends alerts itself: never "No alerts" then -->
+            <p v-if="outsideAlerts">{{ outsideAlertsText }}</p>
+            <template v-if="config.sentinel === 'active'">
+              <p>{{ translate('FeinwerkUptimeMonitor_UiSentinelActive') }}</p>
+              <!-- P3 (Peter, 2026-11-25): the link on the words that name Sentinel's settings -->
+              <p class="fwum-muted">{{ sentinelFacts.before }}<a
+                v-if="config.sentinelSettings && sentinelFacts.link"
+                :href="config.sentinelSettings"
+              >{{ sentinelFacts.link }}</a><template
+                v-else
+              >{{ sentinelFacts.link }}</template>{{ sentinelFacts.after }}</p>
+            </template>
           </div>
           <div v-else-if="config.sentinel === 'old'">
             <p>
@@ -254,6 +264,25 @@
                 target="_blank"
                 rel="noopener"
               >{{ translate('FeinwerkUptimeMonitor_UiSentinelLink') }}</a>
+            </p>
+          </div>
+        </li>
+        <!-- results checked from outside: only while a plugin that adds them is there -->
+        <li
+          v-if="config.external"
+          :class="config.external.active ? 'is-ok' : 'is-warn'"
+        >
+          <span
+            :class="config.external.active ? 'icon-ok' : 'icon-warning'"
+            aria-hidden="true"
+          />
+          <div>
+            <p>
+              {{ outsideText }}
+              <a
+                v-if="config.external.settingsUrl"
+                :href="config.external.settingsUrl"
+              >{{ translate('FeinwerkUptimeMonitor_UiOutsideSettings') }}</a>
             </p>
           </div>
         </li>
@@ -334,16 +363,41 @@ export default defineComponent({
       const rest = this.sorted.filter((row) => !folded.includes(row.idSite));
       return this.showFolded ? [...rest, ...this.foldedRows] : rest;
     },
-    /** up to three websites by name (the answer without a click), more as a count */
+    /** B3: the outside said it cannot check any of the folded websites either */
+    foldedEither(): boolean {
+      return this.outside && this.foldedRows.length > 0
+        && this.foldedRows.every((row) => this.eitherSide(row));
+    },
+    /**
+     * up to three websites by name (the answer without a click), more as a count; "from this
+     * server" unless no side can check them (B3)
+     */
     foldedText(): string {
       const count = this.foldedRows.length;
+      const keys = this.foldedEither
+        ? ['UiAdminCannotCheckNamedOne', 'UiAdminCannotCheckNamedMany', 'UiAdminCannotCheckMany']
+        : ['UiAdminNotCheckableNamedOne', 'UiAdminNotCheckableNamedMany', 'UiAdminNotCheckableMany'];
       if (count <= 3) {
         const names = listOf(this.foldedRows.map((row) => row.name), this.config.language);
-        return count === 1
-          ? translate('FeinwerkUptimeMonitor_UiAdminNotCheckableNamedOne', names)
-          : translate('FeinwerkUptimeMonitor_UiAdminNotCheckableNamedMany', names);
+        return translate(`FeinwerkUptimeMonitor_${keys[count === 1 ? 0 : 1]}`, names);
       }
-      return translate('FeinwerkUptimeMonitor_UiAdminNotCheckableMany', String(count));
+      return translate(`FeinwerkUptimeMonitor_${keys[2]}`, String(count));
+    },
+    /** another plugin delivers results checked from outside: the overview combines both sides */
+    outside(): boolean {
+      return !!this.config.external && this.config.external.active;
+    },
+    /** that plugin sends alerts for outages itself */
+    outsideAlerts(): boolean {
+      return this.outside && !!this.config.external?.alerts;
+    },
+    /** someone sends alerts: Feinwerk Sentinel, or the plugin that checks from outside */
+    alertsOk(): boolean {
+      return this.config.sentinel === 'active' || this.outsideAlerts;
+    },
+    /** "<its own name> sends alerts for outages" */
+    outsideAlertsText(): string {
+      return translate('FeinwerkUptimeMonitor_UiOutsideAlerts', this.config.external?.name || '');
     },
     /** a system cron runs the checks (IntervalTracker on the server) */
     cronOk(): boolean {
@@ -361,6 +415,27 @@ export default defineComponent({
         .split('\u0001');
       const [link, after = ''] = rest.split('\u0002');
       return { before, link, after };
+    },
+    /** "Why?" of the folded websites: the server's reasons, and the outside's when it cannot too */
+    foldedWhy(): string {
+      const help = translate('FeinwerkUptimeMonitor_UiAdminNotCheckableHelp');
+      return this.foldedEither
+        ? `${help} ${translate('FeinwerkUptimeMonitor_UiNotCheckableOutsideHelp')}` : help;
+    },
+    /**
+     * checked from outside too, with the time of the latest results (L8 review 6: resultsAt, not
+     * reachedAt, which a push of settings moves too); or not active
+     */
+    outsideText(): string {
+      const source = this.config.external;
+      if (!source || !source.active || !source.reachedAt) {
+        return translate('FeinwerkUptimeMonitor_UiOutsidePaused');
+      }
+      if (!source.resultsAt) {
+        return translate('FeinwerkUptimeMonitor_UiOutsideActiveNoResults');
+      }
+      return translate('FeinwerkUptimeMonitor_UiOutsideActive',
+        ago(source.resultsAt, this.config.language, this.tick));
     },
     /** installed but deactivated, or not there at all */
     sentinelKey(): string {
@@ -429,9 +504,12 @@ export default defineComponent({
       this.panelName = row.name;
       this.panelSite = row.idSite;
     },
-    /** the same rule as the cards of the uptime page (format.ts statusOf) */
+    /**
+     * the same rule as the cards of the uptime page (format.ts statusOf); not checkable from either
+     * side (the outside says so too): both named, as the page's answer line does (B3)
+     */
     status(row: SiteOverview): { outcome: string; text: string } {
-      return statusOf({
+      const state = statusOf({
         total: row.targets,
         off: row.off,
         up: row.up,
@@ -439,6 +517,13 @@ export default defineComponent({
         stale: row.stale,
         notCheckable: row.notCheckable,
       });
+      return state.outcome === 'not_checkable' && this.outside && this.eitherSide(row)
+        ? { outcome: state.outcome, text: translate('FeinwerkUptimeMonitor_UiNotCheckableEither') }
+        : state;
+    },
+    /** B3: the outside cannot check any of the row's addresses that this server cannot check */
+    eitherSide(row: SiteOverview): boolean {
+      return row.notCheckable > 0 && (row.notCheckableOutside || 0) >= row.notCheckable;
     },
     certText(days: number | null): string {
       if (days === null) {

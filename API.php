@@ -49,21 +49,31 @@ class API extends \Piwik\Plugin\API
 
     /**
      * Current state of every check target of a website, or of Matomo itself with idSite 0: the latest result per
-     * source (checked from the Matomo server, and from outside when another plugin reports such results), the
-     * certificate expiry and, for idSite 0, the processing time of real tracking requests in the last hour.
+     * source (checked from the Matomo server, and from outside while another plugin delivers such results, see
+     * getExternalSources), the certificate expiry and, for idSite 0, the processing time of real tracking requests in
+     * the last hour.
      *
      * @param int $idSite website ID, or 0 for the Matomo instance (any user with view access to a website)
      * @return array {targets: list of {targetKey: string, kind: ui|tracker|js|web|container|proxy, url: string|null
      *               (Matomo's own addresses only for super users), urlSource: default|detected|manual, enabled: bool,
-     *               lastCheckedAt: ISO time|null, states: {local?: State, external?: State}, certificate:
-     *               {notAfter: Y-m-d, daysLeft: int, level: ok|warning|critical|expired}|null}, processing:
+     *               lastCheckedAt: ISO time|null, serverRefuses: bool (the Matomo server never checks this address: an IP
+     *               address outside what the setting "Allow private addresses" allows, a website's address on the
+     *               server's own loopback, or localhost and names without a dot while private addresses are not allowed;
+     *               it is not checkable from this server also before its first check, when states has no local yet; a
+     *               name that leads to a private address shows only with its check), states: {local?: State, external?:
+     *               State} (external only while a
+     *               source of getExternalSources is active and reached its service within 2 hours; older results from
+     *               outside are left out), certificate: {notAfter: Y-m-d, daysLeft: int, level:
+     *               ok|warning|critical|expired}|null (the server's certificate, else the one from outside under the
+     *               same condition)}, processing:
      *               {samples: int, p50Ms: int|null, p95Ms: int|null, maxMs: int|null, from: ISO time, to: ISO time}|null};
      *               State = {outcome: up|down|not_checkable, error: string|null (dns, connect, tls, timeout, blocked,
      *               protocol, proxy, http_status, content, redirect, maintenance, tracking_off, stale_container),
      *               note: protected|too_large|null (protected: behind a password or bot protection; too_large: a Tag
      *               Manager container larger than 4 MB, not read whole, so not checkable), httpStatus: int|null,
      *               responseMs: int|null, checkedAt: ISO time, stale: bool (older than two check intervals: the checks
-     *               stopped; not current)}
+     *               stopped; not current. From outside: older than 2 h 15 min, since such results arrive when the
+     *               other plugin pulls them)}
      */
     public function getStatus($idSite)
     {
@@ -112,7 +122,12 @@ class API extends \Piwik\Plugin\API
      * @param int $idSite website ID, or 0 for the Matomo instance
      * @param string $period day|week|month|year|range (Matomo's periods, in the website's timezone; UTC for idSite 0)
      * @param string $date a date (YYYY-MM-DD, today, yesterday) or for range "YYYY-MM-DD,YYYY-MM-DD"
-     * @param string $source all|local|external, default all
+     * @param string $source which results the cells sum: local (checked from the Matomo server), external (checked from
+     *                       outside, by another plugin) or all (default): both added up, so an hour measured from both
+     *                       sides counts its seconds twice (up to 7200 measured seconds per target and hour) and a cell
+     *                       is up only when every side found every target up for all its measured time; firstMeasured
+     *                       is then the first hour either side measured. The uptime page asks local and external apart
+     *                       (one strip each)
      * @param int $timezoneOf only with idSite 0: a website ID whose timezone the period follows; default 0 = UTC
      * @param string $group which targets the strip sums: all (default) every switched-on target of idSite; matomo
      *                      Matomo's own addresses plus the website's Tag Manager containers (their file is served by
@@ -212,7 +227,8 @@ class API extends \Piwik\Plugin\API
 
     /**
      * TLS certificates of a website's https targets (idSite 0: of Matomo's own addresses) with their expiry. Warning
-     * from the super user setting (default 14 days before), critical from 3 days before.
+     * from the super user setting (default 14 days before), critical from 3 days before. As read from the Matomo server,
+     * else from outside while another plugin delivers such results (see getStatus).
      *
      * @param int $idSite website ID, or 0 for the Matomo instance
      * @return array list of {targetKey: string, host: string|null (null for Matomo's own addresses unless super user),
@@ -421,18 +437,29 @@ class API extends \Piwik\Plugin\API
 
     /**
      * Overview for super users: one row for Matomo (idSite 0) and one per website with check targets, saying how many
-     * of its switched-on targets are up, down or cannot be checked from this server, and how many are switched off.
-     * Tag Manager containers count in Matomo's row: their file is served by the Matomo server.
+     * of its switched-on targets are up, down or cannot be checked, and how many are switched off. Tag Manager
+     * containers count in Matomo's row: their file is served by the Matomo server. Checked from the Matomo server;
+     * while another plugin delivers results checked from outside (an active source of getExternalSources), each target
+     * combines both sides as Visitors > Uptime does: down when either side finds it down, up when one side reaches it
+     * and none finds it down, not checkable only when no side can check it, stale only when no side has a current
+     * result. A result from outside that cannot check a target (e.g. a private address) counts for nothing: the
+     * server's result alone gives the target's state and last check.
      *
      * @return array list of {idSite: int (0 = Matomo), name: string, timezone: string (the website's, Matomo's names
      *               such as Europe/Berlin or UTC+2; UTC for Matomo), targets: int (switched on), off: int (switched
      *               off), up: int, down: int, notCheckable: int, stale: int (results older than two check intervals: the
-     *               checks stopped; counted neither as up nor as down), lastCheckedAt: ISO time|null,
-     *               certificateDaysLeft: int|null (soonest expiry; negative when expired), certificateLevel:
+     *               checks stopped; counted neither as up nor as down; from outside older than 2 h 15 min), each
+     *               switched-on target counted in at most one of up, down, notCheckable and stale (in none before its
+     *               first check, except an address the server never checks: notCheckable at once, see serverRefuses of
+     *               getStatus), lastCheckedAt: ISO time|null (the newest result of the row, of either side),
+     *               certificateDaysLeft: int|null (soonest expiry, per target the server's certificate, else the one
+     *               from outside; negative when expired), certificateLevel:
      *               ok|warning|critical|expired|null (the level of that soonest certificate: warning from the super user
      *               setting, by default 14 days before, critical from 3 days before), containersDown: list of
      *               {idSite: int, name: string} (in Matomo's row: the websites whose Tag Manager container is not
-     *               reachable; empty in the other rows)}
+     *               reachable; empty in the other rows), notCheckableOutside: int (how many of notCheckable cannot be
+     *               checked from outside either, by the current result of an active source of getExternalSources; 0
+     *               without one: then they cannot be checked from the Matomo server)}
      */
     public function getSitesOverview()
     {
@@ -484,8 +511,14 @@ class API extends \Piwik\Plugin\API
 
     /**
      * Whether results checked from outside, reported by another plugin, are coming in (empty without such a plugin).
+     * A source counts as delivering when active is true and reachedAt lies within the last 2 hours; only then do
+     * getStatus, getCertificates and getSitesOverview include its results.
      *
-     * @return array list of {name: string, active: bool, reachedAt: ISO time|null}
+     * @return array list of {name: string, active: bool (licensed and delivering), reachedAt: ISO time|null (when it
+     *               last reached its service, also to send settings), settingsUrl: string|null (its settings page,
+     *               relative to Matomo), alerts: bool (it sends alerts for outages itself; false when it does not say),
+     *               resultsAt: ISO time|null (when its latest results arrived; null before the first ones or when it
+     *               does not say)}
      */
     public function getExternalSources()
     {

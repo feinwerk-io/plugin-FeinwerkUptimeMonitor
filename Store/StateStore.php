@@ -61,15 +61,28 @@ final class StateStore
 
     /**
      * Forgets the latest state of targets whose address changed or that were removed (also their certificate date).
+     * With $source only that source's state, and with $keepOutcomes not a state of those outcomes.
      *
      * @param int[] $idTargets
+     * @param string|null $source self::LOCAL or self::EXTERNAL; null: every source
+     * @param string[] $keepOutcomes e.g. [Outcome::NOT_CHECKABLE]: such states stay
      */
-    public function forget(array $idTargets): void
+    public function forget(array $idTargets, ?string $source = null, array $keepOutcomes = []): void
     {
         if ($idTargets === []) {
             return;
         }
-        Db::query('DELETE FROM ' . Schema::table(Schema::STATE) . ' WHERE idtarget IN (' . Sql::placeholders($idTargets) . ')', $idTargets);
+        $sql = 'DELETE FROM ' . Schema::table(Schema::STATE) . ' WHERE idtarget IN (' . Sql::placeholders($idTargets) . ')';
+        $bind = $idTargets;
+        if ($source !== null) {
+            $sql .= ' AND source = ?';
+            $bind[] = $source;
+        }
+        if ($keepOutcomes !== []) {
+            $sql .= ' AND outcome NOT IN (' . Sql::placeholders($keepOutcomes) . ')';
+            $bind = array_merge($bind, array_values($keepOutcomes));
+        }
+        Db::query($sql, $bind);
     }
 
     /**

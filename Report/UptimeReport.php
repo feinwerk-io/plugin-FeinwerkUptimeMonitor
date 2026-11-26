@@ -12,9 +12,13 @@ namespace Piwik\Plugins\FeinwerkUptimeMonitor\Report;
 use Piwik\Date;
 use Piwik\Period\Factory as PeriodFactory;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Kind;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Outcome;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Target;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Thresholds;
+use Piwik\Plugins\FeinwerkUptimeMonitor\External\ExternalResults;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Http\AddressGuard;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Math\UptimeMath;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\CheckRunner;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\Freshness;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\IncidentStore;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\RollupStore;
@@ -35,9 +39,29 @@ final class UptimeReport
     /** the strips of getTimeline: every target, or grouped as the screens show them */
     public const GROUPS = ['all', 'matomo', 'website'];
     private const HOUR_ROWS_DAYS = 31;
+    /**
+     * One address checked from both sides, as the uptime page combines them (UptimePage.vue COMBINED): the first of
+     * these that either side has. Down when either side finds it down, reachable when one side reaches it and none
+     * finds it down, not checkable only when no side can check it. An address that cannot be checked from outside
+     * takes the server's outcome alone (counts()).
+     */
+    private const COMBINED = [Outcome::DOWN, Outcome::UP, Outcome::NOT_CHECKABLE, self::STALE];
+    private const STALE = 'stale';
+
+    /** whether results checked from outside count, read once per report (outsideActive()) */
+    private ?bool $outside = null;
 
     public function __construct(private ?\Closure $now = null)
     {
+    }
+
+    /**
+     * Whether results checked from outside count now: another plugin delivers them (ExternalResults::activeSource()).
+     * Without one, old results from outside give no state and no certificate (status(), overview()).
+     */
+    public function outsideActive(): bool
+    {
+        return $this->outside ??= ExternalResults::activeSource($this->now()) !== null;
     }
 
     public function now(): int
@@ -319,7 +343,8 @@ final class UptimeReport
     }
 
     /**
-     * Latest state of each target of a website, both sources.
+     * Latest state of each target of a website: from the Matomo server, and from outside only while a source of such
+     * results is active (outsideActive()). The certificate is the server's, else the one from outside.
      *
      * @return list<array>
      */
@@ -328,15 +353,19 @@ final class UptimeReport
         $targets = $this->targets($idSite);
         $states = (new StateStore())->forTargets(array_map(static fn(Target $t): int => $t->id, $targets));
         $staleAfter = Freshness::now($this->now());
+        // results checked from outside come with the other plugin's pulls: current between two of them
+        $staleBySource = [StateStore::EXTERNAL => max($staleAfter, ExternalResults::STALE_AFTER)];
+        $outside = $this->outsideActive();
         $settings = self::settings();
+        $guard = self::guard();
         $out = [];
         foreach ($targets as $target) {
             if ($target->kind === Kind::PROCESSING) {
                 continue;
             }
             $bySource = [];
-            $cert = null;
-            foreach ($states[$target->id] ?? [] as $source => $state) {
+            $sides = self::sides($states[$target->id] ?? [], $outside);
+            foreach ($sides as $source => $state) {
                 $bySource[$source] = [
                     'outcome' => $state['outcome'],
                     'error' => $state['error'],
@@ -345,10 +374,10 @@ final class UptimeReport
                     'responseMs' => $state['ms_total'],
                     'checkedAt' => self::iso((int) strtotime($state['checked_at'] . ' UTC')),
                     // older than two check intervals: no longer current, never shown as reachable
-                    'stale' => $this->now() - (int) strtotime($state['checked_at'] . ' UTC') > $staleAfter,
+                    'stale' => $this->now() - (int) strtotime($state['checked_at'] . ' UTC') > ($staleBySource[$source] ?? $staleAfter),
                 ];
-                $cert = $cert ?? $state['cert_not_after'];
             }
+            $cert = self::certOf($sides);
             $out[] = [
                 'targetKey' => $target->key,
                 'kind' => $target->kind,
@@ -356,6 +385,7 @@ final class UptimeReport
                 'urlSource' => $target->urlSource,
                 'enabled' => $target->enabled,
                 'lastCheckedAt' => $target->lastCheckedAt !== null ? self::iso((int) strtotime($target->lastCheckedAt . ' UTC')) : null,
+                'serverRefuses' => self::refuses($guard, $target),
                 'states' => $bySource,
                 'certificate' => $cert !== null ? $this->certificate($cert, $settings) : null,
             ];
@@ -390,16 +420,24 @@ final class UptimeReport
     /**
      * One row per website and one for Matomo (idSite 0): how many targets, how many are down or cannot be checked,
      * the last check, the soonest certificate expiry. Tag Manager containers count in Matomo's row, which names the
-     * websites whose container is down (containersDown). Four queries for all websites.
+     * websites whose container is down (containersDown). While results checked from outside count (outsideActive()),
+     * each target combines both sides as the uptime page does (COMBINED, counting()); the certificate is the server's,
+     * else the one from outside, and the last check the newer of both; notCheckableOutside counts the targets of
+     * notCheckable whose current result from outside is not checkable too. Four queries for all websites.
      *
-     * @return list<array{idSite: int, name: string, timezone: string, targets: int, off: int, up: int, down: int, notCheckable: int, stale: int, lastCheckedAt: ?string, certificateDaysLeft: ?int, containersDown: list<array{idSite: int, name: string}>}>
+     * @return list<array{idSite: int, name: string, timezone: string, targets: int, off: int, up: int, down: int, notCheckable: int, stale: int, lastCheckedAt: ?string, certificateDaysLeft: ?int, certificateLevel: ?string, containersDown: list<array{idSite: int, name: string}>, notCheckableOutside: int}>
      */
     public function overview(): array
     {
         $states = (new StateStore())->all();
-        $staleAfter = Freshness::now($this->now());
-        // the certificate thresholds once, not per target
+        $now = $this->now();
+        $staleAfter = Freshness::now($now);
+        // results checked from outside: current between two of the other plugin's pulls, as in status()
+        $staleOutside = max($staleAfter, ExternalResults::STALE_AFTER);
+        $outside = $this->outsideActive();
+        // the certificate thresholds and the guard once, not per target
         $settings = self::settings();
+        $guard = self::guard();
         $names = [0 => 'Matomo'];
         $zones = [0 => 'UTC'];
         foreach ((new \Piwik\Plugins\SitesManager\Model())->getAllSites() as $site) {
@@ -416,7 +454,7 @@ final class UptimeReport
             $row = $rows[$idRow] ?? ['idSite' => $idRow, 'name' => $names[$idRow],
                 'timezone' => $zones[$idRow] ?? 'UTC', 'targets' => 0,
                 'off' => 0, 'up' => 0, 'down' => 0, 'notCheckable' => 0, 'stale' => 0, 'lastCheckedAt' => null,
-                'certificateDaysLeft' => null, 'certificateLevel' => null, 'containersDown' => []];
+                'certificateDaysLeft' => null, 'certificateLevel' => null, 'containersDown' => [], 'notCheckableOutside' => 0];
             if (!$target->enabled) {
                 // listed so that a super user can switch it on again from the overview (a container: from its website)
                 $row['off']++;
@@ -424,25 +462,37 @@ final class UptimeReport
                 continue;
             }
             $row['targets']++;
-            $state = $states[$target->id][StateStore::LOCAL] ?? null;
-            if ($state !== null) {
-                $checkedTs = (int) strtotime($state['checked_at'] . ' UTC');
-                if ($this->now() - $checkedTs > $staleAfter) {
-                    // the checks stopped: not current, so neither up nor down
-                    $row['stale']++;
-                } else {
-                    $row['up'] += $state['outcome'] === 'up' ? 1 : 0;
-                    $row['down'] += $state['outcome'] === 'down' ? 1 : 0;
-                    if ($target->kind === Kind::CONTAINER && $state['outcome'] === 'down') {
-                        // Matomo's row says whose container fails: the fix may be in that website's Tag Manager
-                        $row['containersDown'][$target->idSite] = ['idSite' => $target->idSite, 'name' => $names[$target->idSite]];
-                    }
-                    $row['notCheckable'] += $state['outcome'] === 'not_checkable' ? 1 : 0;
+            $both = self::sides($states[$target->id] ?? [], $outside);
+            $sides = self::counting($both);
+            $local = self::outcomeOf($sides[StateStore::LOCAL] ?? null, $staleAfter, $now);
+            if ($local === null && self::refuses($guard, $target)) {
+                // the server never checks this address: not checkable from the moment it is set, with no check time
+                $local = Outcome::NOT_CHECKABLE;
+            }
+            if ($local !== null || $sides !== []) {
+                $outcome = self::combined([
+                    $local,
+                    self::outcomeOf($sides[StateStore::EXTERNAL] ?? null, $staleOutside, $now),
+                ]);
+                // stale: the checks stopped, not current, so neither up nor down
+                $row['stale'] += $outcome === self::STALE ? 1 : 0;
+                $row['up'] += $outcome === Outcome::UP ? 1 : 0;
+                $row['down'] += $outcome === Outcome::DOWN ? 1 : 0;
+                $row['notCheckable'] += $outcome === Outcome::NOT_CHECKABLE ? 1 : 0;
+                // UI review B3: the outside said it cannot check it either (counting() drops that side above)
+                $row['notCheckableOutside'] += $outcome === Outcome::NOT_CHECKABLE
+                    && self::outcomeOf($both[StateStore::EXTERNAL] ?? null, $staleOutside, $now) === Outcome::NOT_CHECKABLE ? 1 : 0;
+                if ($target->kind === Kind::CONTAINER && $outcome === Outcome::DOWN) {
+                    // Matomo's row says whose container fails: the fix may be in that website's Tag Manager
+                    $row['containersDown'][$target->idSite] = ['idSite' => $target->idSite, 'name' => $names[$target->idSite]];
                 }
-                $checked = self::iso($checkedTs);
-                $row['lastCheckedAt'] = $row['lastCheckedAt'] === null ? $checked : max($row['lastCheckedAt'], $checked);
-                if ($state['cert_not_after'] !== null) {
-                    $cert = $this->certificate($state['cert_not_after'], $settings);
+                foreach ($sides as $state) {
+                    $checked = self::iso((int) strtotime($state['checked_at'] . ' UTC'));
+                    $row['lastCheckedAt'] = $row['lastCheckedAt'] === null ? $checked : max($row['lastCheckedAt'], $checked);
+                }
+                $notAfter = self::certOf($sides);
+                if ($notAfter !== null) {
+                    $cert = $this->certificate($notAfter, $settings);
                     if ($row['certificateDaysLeft'] === null || $cert['daysLeft'] < $row['certificateDaysLeft']) {
                         // the soonest certificate and its level, as the uptime page colours it
                         $row['certificateDaysLeft'] = $cert['daysLeft'];
@@ -480,6 +530,96 @@ final class UptimeReport
             'from' => self::iso($now - 3600),
             'to' => self::iso($now),
         ];
+    }
+
+    /**
+     * The states of one target that count, the server's first: the one from outside only while results checked from
+     * outside count (outsideActive()), so old ones never show after the other plugin stopped.
+     *
+     * @param array<string, array> $states one target's states by source (StateStore)
+     * @return array<string, array>
+     */
+    private static function sides(array $states, bool $outside): array
+    {
+        $out = [];
+        if (isset($states[StateStore::LOCAL])) {
+            $out[StateStore::LOCAL] = $states[StateStore::LOCAL];
+        }
+        if ($outside && isset($states[StateStore::EXTERNAL])) {
+            $out[StateStore::EXTERNAL] = $states[StateStore::EXTERNAL];
+        }
+
+        return $out;
+    }
+
+    /**
+     * The sides that say something about an address: a result from outside that it cannot be checked from there (a
+     * private address, a port the outside does not check) counts for nothing, so it never hides that the server's
+     * checks stopped nor counts as a recent check; the uptime page does the same (UptimePage.vue row()).
+     *
+     * @param array<string, array> $sides sides()
+     * @return array<string, array>
+     */
+    private static function counting(array $sides): array
+    {
+        if (($sides[StateStore::EXTERNAL]['outcome'] ?? null) === Outcome::NOT_CHECKABLE) {
+            unset($sides[StateStore::EXTERNAL]);
+        }
+
+        return $sides;
+    }
+
+    /** The server's guard from the settings (no lookups here, refuses() only); null when they cannot be read. */
+    private static function guard(): ?AddressGuard
+    {
+        try {
+            return CheckRunner::guard();
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Whether the server never checks the target's address (AddressGuard::refusesWithoutLookup()): it reads not
+     * checkable from the moment it is set instead of "not checked yet" until the next run.
+     */
+    private static function refuses(?AddressGuard $guard, Target $target): bool
+    {
+        return $guard !== null && $guard->refusesWithoutLookup($target->url, $target->isInstanceAddress());
+    }
+
+    /** the certificate expiry of a target (Y-m-d): the server's, else the one from outside (sides() order), else null */
+    private static function certOf(array $sides): ?string
+    {
+        foreach ($sides as $state) {
+            if ($state['cert_not_after'] !== null) {
+                return (string) $state['cert_not_after'];
+            }
+        }
+
+        return null;
+    }
+
+    /** one side's current outcome: up|down|not_checkable, stale when older than $staleAfter seconds, null without one */
+    private static function outcomeOf(?array $state, int $staleAfter, int $now): ?string
+    {
+        if ($state === null) {
+            return null;
+        }
+
+        return $now - (int) strtotime($state['checked_at'] . ' UTC') > $staleAfter ? self::STALE : (string) $state['outcome'];
+    }
+
+    /** @param list<?string> $outcomes the sides' outcomes (outcomeOf()) */
+    private static function combined(array $outcomes): ?string
+    {
+        foreach (self::COMBINED as $outcome) {
+            if (in_array($outcome, $outcomes, true)) {
+                return $outcome;
+            }
+        }
+
+        return null;
     }
 
     /**

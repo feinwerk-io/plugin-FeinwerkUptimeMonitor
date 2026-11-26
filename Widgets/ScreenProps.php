@@ -13,6 +13,7 @@ use Piwik\Common;
 use Piwik\Container\StaticContainer;
 use Piwik\Piwik;
 use Piwik\Plugin\Manager;
+use Piwik\Plugins\FeinwerkUptimeMonitor\External\ExternalResults;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Feedback\PluginFeedback;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Promo\PromoLine;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Sentinel\SentinelVersion;
@@ -21,7 +22,8 @@ use Piwik\Translation\Translator;
 
 /**
  * What the Vue screens get from the server (spec 10): the website, the user's rights, the page language, whether
- * QueuedTracking and Feinwerk Sentinel are active. Data comes from the plugin's API.
+ * QueuedTracking and Feinwerk Sentinel are active, and whether results checked from outside come in. Data comes from the
+ * plugin's API.
  */
 final class ScreenProps
 {
@@ -65,6 +67,8 @@ final class ScreenProps
             'sentinelSettings' => $variant === 'admin'
                 ? 'index.php?' . SentinelVersion::instanceSettingsQuery(SentinelVersion::loaded(), self::anySite()) : null,
             'embedded' => $embedded,
+            // results checked from outside (another plugin, through ExternalResults): null without such a plugin
+            'external' => self::external($idSite, $variant),
             // the feedback row: under the uptime page only, never in dashboard widgets or Widgetize embeds
             'feedback' => $ownPage ? self::feedback() : null,
             // the kit's tip line below it, same place (docs/promotions.md, footer variant A)
@@ -89,6 +93,46 @@ final class ScreenProps
             }
 
             return PromoLine::current($idSite);
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * The plugin that adds results checked from outside, as the screens show it: active (delivering: licensed and it
+     * reached its service within two hours, ExternalResults::isActive) for everyone who sees the page; registered but
+     * not active (not set up yet, or stopped) only for admins of the website and super users, who get the link to its
+     * settings. Null without such a plugin: the screens as before. The first active source wins, else the first one.
+     * alerts: the active source sends alerts for outages itself (the admin page's alert row names it; false on the other
+     * screens, which never read it). resultsAt: when its latest results arrived (null: none yet, or it does not say;
+     * the admin page only, like alerts).
+     *
+     * @param string $variant page|matomo|site|admin
+     * @return array{active: bool, name: string, reachedAt: ?string, settingsUrl: ?string, alerts: bool, resultsAt: ?string}|null
+     */
+    private static function external(int $idSite, string $variant): ?array
+    {
+        try {
+            $sources = ExternalResults::sources();
+            if ($sources === []) {
+                return null;
+            }
+            // the seam's one rule, on the sources read once
+            $active = ExternalResults::activeOf($sources, time());
+            $admin = Piwik::hasUserSuperUserAccess() || ($idSite > 0 && Piwik::isUserHasAdminAccess($idSite));
+            if ($active === null && !$admin) {
+                return null;
+            }
+            $source = $active ?? $sources[0];
+
+            return [
+                'active' => $active !== null,
+                'name' => $source['name'],
+                'reachedAt' => $source['reachedAt'],
+                'settingsUrl' => $admin ? $source['settingsUrl'] : null,
+                'alerts' => $variant === 'admin' && $active !== null && $active['alerts'],
+                'resultsAt' => $variant === 'admin' ? ($source['resultsAt'] ?? null) : null,
+            ];
         } catch (\Throwable $e) {
             return null;
         }

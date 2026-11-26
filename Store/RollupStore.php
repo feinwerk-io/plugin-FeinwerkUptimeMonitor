@@ -273,12 +273,63 @@ final class RollupStore
         $this->write(Schema::DAY, 'day', $values);
     }
 
+    /**
+     * Recomputes the external day rows of these UTC days from the hour rows (Pro wrote hours of days that were already
+     * summed, e.g. after Matomo was down). One read for all days; contiguous days are read as one range.
+     *
+     * @param string[] $days UTC dates "Y-m-d"
+     * @param int[] $idTargets only these targets; empty: every target
+     */
+    public function rollExternalDaysFor(array $days, array $idTargets = []): void
+    {
+        $days = array_values(array_unique(array_filter($days, static fn($d): bool => is_string($d)
+            && preg_match('/^\d{4}-\d{2}-\d{2}$/', $d) === 1)));
+        if ($days === []) {
+            return;
+        }
+        sort($days, SORT_STRING);
+        $ranges = [];
+        foreach ($days as $day) {
+            $from = (int) strtotime($day . ' 00:00:00 UTC');
+            $last = count($ranges) - 1;
+            if ($last >= 0 && $ranges[$last][1] === $from) {
+                $ranges[$last][1] = $from + self::DAY;
+            } else {
+                $ranges[] = [$from, $from + self::DAY];
+            }
+        }
+        $where = [];
+        $bind = [StateStore::EXTERNAL];
+        foreach ($ranges as [$from, $to]) {
+            $where[] = '(hour >= ? AND hour < ?)';
+            $bind[] = gmdate('Y-m-d H:i:s', $from);
+            $bind[] = gmdate('Y-m-d H:i:s', $to);
+        }
+        $targets = '';
+        if ($idTargets !== []) {
+            $idTargets = array_values(array_unique(array_map('intval', $idTargets)));
+            $targets = ' AND idtarget IN (' . Sql::placeholders($idTargets) . ')';
+            $bind = array_merge($bind, $idTargets);
+        }
+        $this->sumExternalDays('source = ? AND (' . implode(' OR ', $where) . ')' . $targets, $bind);
+    }
+
     private function rollExternalDays(string $from, string $to): void
+    {
+        $this->sumExternalDays('source = ? AND hour >= ? AND hour < ?', [StateStore::EXTERNAL, $from, $to]);
+    }
+
+    /**
+     * Sums external hour rows into day rows (UTC days).
+     *
+     * @param string $where condition on the hour table, starting with the source
+     */
+    private function sumExternalDays(string $where, array $bind): void
     {
         $rows = Db::fetchAll(
             'SELECT idtarget, DATE(hour) AS day, samples, up_samples, measured_seconds, up_seconds, ms_p50, ms_p95, ms_max, cert_not_after FROM '
-            . Schema::table(Schema::HOUR) . ' WHERE source = ? AND hour >= ? AND hour < ? ORDER BY idtarget, hour',
-            [StateStore::EXTERNAL, $from, $to]
+            . Schema::table(Schema::HOUR) . ' WHERE ' . $where . ' ORDER BY idtarget, hour',
+            $bind
         );
         $days = [];
         foreach ($rows as $row) {

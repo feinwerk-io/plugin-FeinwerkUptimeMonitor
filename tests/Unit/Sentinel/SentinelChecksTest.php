@@ -166,6 +166,30 @@ class SentinelChecksTest extends TestCase
         $this->assertSame(CheckResult::NORMAL, self::results(self::check(CertificateExpiry::class, $data), 1)['web:1a2b3c4d']->state());
     }
 
+    /**
+     * A website this server cannot check has no certificate of its own; the one from outside counts only while those
+     * results come in: an old one could be renewed long since (no false "expired" after the other plugin stopped).
+     * With both, the server's certificate wins.
+     */
+    public function test_cert_fromOutside_onlyWhileOutsideResultsComeIn(): void
+    {
+        $data = self::data();
+        $data['states'][3] = ['external' => self::state(Outcome::UP, null, 200, '2026-03-01')];
+        $this->assertArrayNotHasKey('web:1a2b3c4d', self::results(self::check(CertificateExpiry::class, $data), 1),
+            'no source delivers: the old certificate from outside is not read');
+        $data['states'][3]['local'] = self::state(Outcome::NOT_CHECKABLE, Outcome::CONNECT);
+        $this->assertArrayNotHasKey('web:1a2b3c4d', self::results(self::check(CertificateExpiry::class, $data), 1));
+
+        $data['proActive'] = true;
+        $cert = self::results(self::check(CertificateExpiry::class, $data), 1)['web:1a2b3c4d'];
+        $this->assertSame('FeinwerkUptimeMonitor_AlarmU03Expired', $cert->messageKey(),
+            'while it delivers: the certificate from outside, also when this server has a result without one');
+
+        $data['states'][3]['local'] = self::state(Outcome::UP, null, 200, '2027-01-01');
+        $this->assertSame(CheckResult::NORMAL, self::results(self::check(CertificateExpiry::class, $data), 1)['web:1a2b3c4d']->state(),
+            'the server\'s own certificate first');
+    }
+
     public function test_cert_ofMatomosHost_isNotRepeatedPerWebsite(): void
     {
         $data = self::data();

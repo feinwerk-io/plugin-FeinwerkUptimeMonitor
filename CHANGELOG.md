@@ -1,5 +1,15 @@
 # Changelog
 
+## 5.2.0
+
+- An address the Matomo server does not check, such as 192.168.1.10 or 127.0.0.1 while private addresses are not
+  allowed in the settings, reads "Not checkable from this server" as soon as it is set, on Visitors > Uptime, in the
+  dashboard widgets and on Administration > Diagnostic > Uptime Monitor, instead of "Not checked yet" until the next
+  check. The API method `getStatus` says so for each address as `serverRefuses`.
+- On a past day the answer names the addresses of an outage in the same order as the outage list ("Matomo:
+  Interface, Tracker endpoint, and JavaScript tracker").
+- French: a colon, semicolon, question mark or exclamation mark no longer starts a new line on its own.
+
 ## 5.1.5
 
 - Visitors > Uptime today: a line that names an address that is not reachable is red, also when the other addresses

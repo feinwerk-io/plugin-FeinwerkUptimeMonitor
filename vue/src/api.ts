@@ -47,14 +47,24 @@ export const api = {
       idSite, ...period, targetKey, timezoneOf,
     });
   },
-  /** limit: 1 to 1000 per request; the page asks for more with "Show more" */
-  incidents(idSite: number, period: Period, timezoneOf = 0, limit = 100): Promise<Incident[]> {
+  /**
+   * limit: 1 to 1000 per request; the page asks for more with "Show more". source: local (checked
+   * from the Matomo server) or all (also from outside, while another plugin delivers such results)
+   */
+  incidents(
+    idSite: number,
+    period: Period,
+    timezoneOf = 0,
+    limit = 100,
+    source: 'local' | 'all' = 'local',
+  ): Promise<Incident[]> {
     return get('getIncidents', {
-      idSite, ...period, limit, timezoneOf,
+      idSite, ...period, limit, timezoneOf, source,
     });
   },
   /** the outages still open now ("since when" in the answer line), whatever period is viewed */
-  openIncidents(idSite: number, timezoneOf = 0): Promise<Incident[]> {
+  openIncidents(idSite: number, timezoneOf = 0, source: 'local' | 'all' = 'local'):
+    Promise<Incident[]> {
     return AjaxHelper.fetch<Incident[]>({
       method: `${MODULE}.getIncidents`,
       idSite,
@@ -63,19 +73,26 @@ export const api = {
       state: 'open',
       limit: 100,
       timezoneOf,
+      source,
     }, { createErrorNotification: false });
   },
   /**
-   * The hour strip: one cell per hour (a day) or per day, checked from the Matomo server, like
-   * the rest of the page. group matomo: Matomo's addresses and the website's containers; website:
-   * the website without its containers. A failing strip leaves the page as it is: no toast.
+   * The hour strip: one cell per hour (a day) or per day, checked from the Matomo server (source
+   * local) or from outside (external, while another plugin adds such results). group matomo:
+   * Matomo's addresses and the website's containers; website: the website without its
+   * containers. A failing strip leaves the page as it is: no toast.
    */
-  timeline(idSite: number, period: Period, group: 'matomo' | 'website'): Promise<Timeline> {
+  timeline(
+    idSite: number,
+    period: Period,
+    group: 'matomo' | 'website',
+    source: 'local' | 'external' = 'local',
+  ): Promise<Timeline> {
     return AjaxHelper.fetch<Timeline>({
       method: `${MODULE}.getTimeline`,
       idSite,
       ...period,
-      source: 'local',
+      source,
       group,
     }, { createErrorNotification: false });
   },

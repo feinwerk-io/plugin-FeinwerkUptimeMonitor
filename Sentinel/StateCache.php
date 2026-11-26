@@ -135,13 +135,7 @@ final class StateCache
             }
         }
 
-        $proActive = false;
-        foreach (ExternalResults::sources() as $source) {
-            $reached = isset($source['reachedAt']) ? strtotime((string) $source['reachedAt']) : false;
-            if (!empty($source['active']) && $reached !== false && $now - $reached < 7200) {
-                $proActive = true;
-            }
-        }
+        $proActive = ExternalResults::activeSource($now) !== null;
 
         return [
             'targets' => $bySite,

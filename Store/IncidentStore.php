@@ -96,18 +96,24 @@ final class IncidentStore
 
     /**
      * Ends the open outages of targets that are no longer checked (retired, switched off, removed): their outage is
-     * over for this plugin, not ongoing for ever.
+     * over for this plugin, not ongoing for ever. With $source only that source's outages (a changed address: the server
+     * starts again, an outage from outside ends when its source reports the end). Never before an outage's start (a
+     * source whose clock is ahead of Matomo's): such an outage ends at its start.
      *
      * @param int[] $idTargets
+     * @param string $at Y-m-d H:i:s UTC
+     * @param string|null $source StateStore::LOCAL or EXTERNAL; null: every source
      */
-    public function closeOpen(array $idTargets, string $at): void
+    public function closeOpen(array $idTargets, string $at, ?string $source = null): void
     {
         if ($idTargets === []) {
             return;
         }
         Db::query(
-            'UPDATE ' . self::table() . ' SET ended_at = ? WHERE ended_at IS NULL AND idtarget IN (' . Sql::placeholders($idTargets) . ')',
-            array_merge([$at], $idTargets)
+            'UPDATE ' . self::table() . ' SET ended_at = GREATEST(started_at, CAST(? AS DATETIME))'
+            . ' WHERE ended_at IS NULL AND idtarget IN (' . Sql::placeholders($idTargets) . ')'
+            . ($source !== null ? ' AND source = ?' : ''),
+            array_merge([$at], $idTargets, $source !== null ? [$source] : [])
         );
     }
 
@@ -184,7 +190,9 @@ final class IncidentStore
     }
 
     /**
-     * Upserts incidents written by Pro (exact start and end), keyed by target, source, kind and start.
+     * Upserts incidents written by Pro (exact start and end), keyed by target, source, kind and start. An outage that
+     * has ended here (closeOpen(): switched off, retired, no longer checked by its source) is never opened again by a
+     * row that still carries it open; a row with an end replaces the end set here.
      *
      * @param array<int, array{idtarget: int, source: string, kind: string, started_at: string, ended_at: ?string, cause: ?string, detail: ?string, down_samples: int}> $rows
      */
@@ -199,7 +207,8 @@ final class IncidentStore
             self::table(),
             ['idtarget', 'source', 'kind', 'started_at', 'ended_at', 'cause', 'detail', 'down_samples'],
             $values,
-            'ended_at = VALUES(ended_at), cause = VALUES(cause), detail = VALUES(detail), down_samples = VALUES(down_samples)'
+            'ended_at = IF(ended_at IS NOT NULL AND VALUES(ended_at) IS NULL, ended_at, VALUES(ended_at)),'
+            . ' cause = VALUES(cause), detail = VALUES(detail), down_samples = VALUES(down_samples)'
         );
     }
 }

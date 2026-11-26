@@ -11,7 +11,9 @@ namespace Piwik\Plugins\FeinwerkUptimeMonitor\tests\Integration;
 
 use Piwik\Category\CategoryList;
 use Piwik\NoAccessException;
+use Piwik\Piwik;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Controller;
+use Piwik\Plugins\FeinwerkUptimeMonitor\External\ExternalResults;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Widgets\GetSiteStatus;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Widgets\GetUptimePage;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Widgets\ScreenProps;
@@ -130,6 +132,101 @@ class ScreensTest extends IntegrationTestCase
         FakeAccess::clearAccess(false, [], [], 'nobody');
         $this->expectException(NoAccessException::class);
         (new GetUptimePage())->render();
+    }
+
+    /** A plugin that adds results checked from outside, registered as the seam's event asks (Pro's shape). */
+    private static function outsideSource(bool $active, int $reachedAgo = 60, ?bool $alerts = null): void
+    {
+        Piwik::addAction(ExternalResults::EVENT_SOURCES, static function (&$sources) use ($active, $reachedAgo, $alerts): void {
+            $sources[] = ['name' => 'Outside checks', 'active' => $active,
+                'reachedAt' => gmdate('Y-m-d\TH:i:s\Z', time() - $reachedAgo),
+                'settingsUrl' => 'index.php?module=OutsideChecks&action=index&idSite=1&period=day&date=yesterday']
+                + ($alerts !== null ? ['alerts' => $alerts] : []);
+        });
+    }
+
+    public function test_props_externalActive_withPro(): void
+    {
+        self::outsideSource(true);
+
+        $props = ScreenProps::for(1, 'page');
+        $this->assertTrue($props['external']['active']);
+        $this->assertSame('Outside checks', $props['external']['name']);
+        // PHPUnit 8 of Matomo 5 has no assertMatchesRegularExpression
+        $this->assertSame(1, preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', $props['external']['reachedAt']));
+        $this->assertSame('index.php?module=OutsideChecks&action=index&idSite=1&period=day&date=yesterday',
+            $props['external']['settingsUrl']);
+        $this->assertTrue(ScreenProps::for(0, 'admin')['external']['active'], 'the admin page names them too');
+        $this->assertFalse($props['external']['alerts'], 'a source that does not say it alerts: no alerts');
+
+        FakeAccess::clearAccess(false, [], [1], 'viewer');
+        $viewer = ScreenProps::for(1, 'site');
+        $this->assertTrue($viewer['external']['active'], 'viewers see the results checked from outside');
+        $this->assertNull($viewer['external']['settingsUrl'], 'but no link to settings they cannot open');
+    }
+
+    /** The admin page's alert row names an active source that sends alerts itself, never a paused one. */
+    public function test_props_externalAlerts_onlyWhileActive(): void
+    {
+        self::outsideSource(true, 60, true);
+        $this->assertTrue(ScreenProps::for(0, 'admin')['external']['alerts']);
+    }
+
+    /**
+     * L8 review finding 4 (screens only): the alert bit is for the admin page alone; finding 6: the time of the latest
+     * results (resultsAt), not of the last contact, which a push sets too.
+     */
+    public function test_props_externalAlertsOnTheAdminPageOnly_andTheTimeOfTheLatestResults(): void
+    {
+        Piwik::addAction(ExternalResults::EVENT_SOURCES, static function (&$sources): void {
+            $sources[] = ['name' => 'Outside checks', 'active' => true, 'reachedAt' => gmdate('Y-m-d\TH:i:s\Z', time() - 30),
+                'resultsAt' => '2026-03-17T11:05:00Z', 'alerts' => true];
+        });
+
+        $this->assertTrue(ScreenProps::for(0, 'admin')['external']['alerts']);
+        $this->assertSame('2026-03-17T11:05:00Z', ScreenProps::for(0, 'admin')['external']['resultsAt']);
+        $this->assertFalse(ScreenProps::for(1, 'page')['external']['alerts'], 'the page never reads it');
+        $this->assertFalse(ScreenProps::for(1, 'site')['external']['alerts']);
+        $this->assertNull(ScreenProps::for(1, 'page')['external']['resultsAt'], 'nor the time of the latest results');
+    }
+
+    public function test_props_externalAlerts_notWhenPaused(): void
+    {
+        self::outsideSource(true, 3 * 3600, true);
+        $this->assertSame([false, false], array_values(array_intersect_key(ScreenProps::for(0, 'admin')['external'],
+            ['active' => 1, 'alerts' => 1])), 'stopped more than 2 hours ago: neither active nor alerting');
+    }
+
+    public function test_props_externalPaused_onlyForAdmins(): void
+    {
+        self::outsideSource(false);
+
+        $this->assertSame(['active' => false, 'name' => 'Outside checks'],
+            array_intersect_key(ScreenProps::for(1, 'page')['external'], ['active' => 1, 'name' => 1]));
+        FakeAccess::clearAccess(false, [1], [1], 'admin');
+        $admin = ScreenProps::for(1, 'page')['external'];
+        $this->assertFalse($admin['active']);
+        $this->assertNotNull($admin['settingsUrl'], 'the website\'s admins get the link to the settings');
+
+        FakeAccess::clearAccess(false, [], [1], 'viewer');
+        $this->assertNull(ScreenProps::for(1, 'page')['external'], 'viewers: the page as without a source');
+    }
+
+    /** Active, but its last reach is older than two hours: no longer delivering, so paused (the Sentinel rule). */
+    public function test_props_externalActiveButNotReached_isPaused(): void
+    {
+        self::outsideSource(true, 3 * 3600);
+
+        $this->assertFalse(ScreenProps::for(1, 'page')['external']['active']);
+        FakeAccess::clearAccess(false, [], [1], 'viewer');
+        $this->assertNull(ScreenProps::for(1, 'page')['external']);
+    }
+
+    public function test_props_externalNull_withoutSource(): void
+    {
+        $this->assertNull(ScreenProps::for(1, 'page')['external']);
+        $this->assertNull(ScreenProps::for(1, 'matomo')['external']);
+        $this->assertNull(ScreenProps::for(0, 'admin')['external']);
     }
 
     public function test_admin_onlySuperUser_andPassesLanguageAndCronLine(): void
