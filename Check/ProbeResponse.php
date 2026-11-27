@@ -13,7 +13,9 @@ namespace Piwik\Plugins\FeinwerkUptimeMonitor\Check;
  * What the prober got back for one target. `status` is null when no HTTP answer arrived; `error` is one of the
  * transport errors of Outcome (or null); `timings` holds `dns`, `connect`, `tls`, `ttfb` and `total` in ms; `body` is
  * at most Prober::MAX_BODY bytes (MAX_BODY_LARGE for the interface and Tag Manager containers); `capped`: the answer
- * went on past that cap, so the body ends where the prober stopped reading, not where the answer ended.
+ * went on past that cap, so the body ends where the prober stopped reading, not where the answer ended. `headers`: the
+ * few response headers the classifier reads (Prober::KEPT_HEADERS), lower-case names, values trimmed and cut, from the
+ * final answer only.
  */
 final class ProbeResponse
 {
@@ -25,7 +27,9 @@ final class ProbeResponse
         public readonly array $timings,
         public readonly ?string $certNotAfter,
         public readonly int $redirects,
-        public readonly bool $capped = false
+        public readonly bool $capped = false,
+        /** @var array<string, string> */
+        public readonly array $headers = []
     ) {
     }
 }

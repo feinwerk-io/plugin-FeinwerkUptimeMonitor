@@ -72,7 +72,7 @@ final class ResponseClassifier
                 if ($status !== 200) {
                     return self::down(Outcome::HTTP_STATUS);
                 }
-                return str_contains($body, self::MARKER_TRACKER) ? self::up() : self::down(Outcome::CONTENT);
+                return str_contains($body, self::MARKER_TRACKER) || self::emptyTrackerAnswer($response) ? self::up() : self::down(Outcome::CONTENT);
             case Kind::JS:
             case Kind::PROXY:
                 if ($status >= 300 && $status < 400) {
@@ -87,7 +87,7 @@ final class ResponseClassifier
                 // Matomo's PHP tracking proxy answers with matomo.js; a web server or CDN forwarding the path to Matomo
                 // answers with Matomo's own page for a request without parameters: both mean the path reaches Matomo
                 $reached = str_contains($body, self::MARKER_JS)
-                    || ($target->kind === Kind::PROXY && str_contains($body, self::MARKER_TRACKER));
+                    || ($target->kind === Kind::PROXY && (str_contains($body, self::MARKER_TRACKER) || self::emptyTrackerAnswer($response)));
                 return $reached ? self::up() : self::down(Outcome::CONTENT);
             case Kind::CONTAINER:
                 return $this->container($target, $status, $body, $response->capped);
@@ -102,6 +102,18 @@ final class ResponseClassifier
                 }
                 return self::down(Outcome::HTTP_STATUS);
         }
+    }
+
+    /**
+     * Matomo's tracker with its note hidden: some hosts answer a GET of matomo.php without parameters with HTTP 200 and
+     * an empty body (a plugin or a server rule), while tracking works. Such an answer still carries the header Matomo's
+     * tracker sends on every answer (core Tracker\Response::init, 5.0.0 to 6.0.0: Access-Control-Allow-Credentials:
+     * true); an empty answer without it comes from something else and stays unexpected content.
+     */
+    private static function emptyTrackerAnswer(ProbeResponse $response): bool
+    {
+        return trim($response->body) === ''
+            && strtolower($response->headers['access-control-allow-credentials'] ?? '') === 'true';
     }
 
     /**

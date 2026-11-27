@@ -39,6 +39,13 @@ final class Prober
     public const MAX_BODY_LARGE = 4194304;
     public const MAX_REDIRECTS = 3;
 
+    /**
+     * the response headers kept for the classifier (lower case): Matomo's tracker sends Access-Control-Allow-Credentials
+     * on every answer (core Tracker\Response::init, 5.0.0 to 6.0.0), also where a host hides its note on matomo.php
+     */
+    public const KEPT_HEADERS = ['access-control-allow-credentials'];
+    private const MAX_HEADER_VALUE = 64;
+
     private const FOLLOWS_REDIRECTS = [Kind::WEB, Kind::UI];
     private const TLS_ERRORS = [35, 51, 53, 54, 58, 59, 60, 64, 66, 77, 80, 82, 83, 90, 91];
     private const CURLE_COULDNT_RESOLVE_PROXY = 5;
@@ -222,6 +229,7 @@ final class Prober
                 $sink = new \stdClass();
                 $sink->body = '';
                 $sink->capped = false;
+                $sink->headers = [];
                 $handle = $this->handle($state, $sink);
                 curl_multi_add_handle($multi, $handle);
                 $active[spl_object_id($handle)] = ['handle' => $handle, 'state' => $state, 'sink' => $sink];
@@ -264,6 +272,7 @@ final class Prober
             $sink = new \stdClass();
             $sink->body = '';
             $sink->capped = false;
+            $sink->headers = [];
             $handle = $this->handle($state, $sink);
             curl_exec($handle);
             $hop = $this->finished($handle, curl_errno($handle), $sink, $state, $finish);
@@ -341,6 +350,17 @@ final class Prober
                 $sink->body .= $chunk;
                 return strlen($chunk);
             },
+            CURLOPT_HEADERFUNCTION => static function ($curl, string $line) use ($sink): int {
+                if (strncasecmp($line, 'HTTP/', 5) === 0) {
+                    $sink->headers = []; // a new answer (a proxy's CONNECT, 1xx): only the final one's headers count
+                } elseif (($colon = strpos($line, ':')) !== false) {
+                    $name = strtolower(trim(substr($line, 0, $colon)));
+                    if (in_array($name, self::KEPT_HEADERS, true)) {
+                        $sink->headers[$name] = substr(trim(substr($line, $colon + 1)), 0, self::MAX_HEADER_VALUE);
+                    }
+                }
+                return strlen($line);
+            },
         ];
         if ($this->caInfo !== null && is_file($this->caInfo)) {
             $options[CURLOPT_CAINFO] = $this->caInfo;
@@ -403,7 +423,8 @@ final class Prober
             $timings,
             $cert,
             $state['hops'],
-            $error === null && $sink->capped
+            $error === null && $sink->capped,
+            $error === null ? $sink->headers : []
         );
     }
 

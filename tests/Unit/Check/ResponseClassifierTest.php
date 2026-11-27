@@ -88,6 +88,43 @@ class ResponseClassifierTest extends TestCase
         $this->assertResult($this->classify(Kind::JS, 200, self::TRACKER_PAGE), Outcome::DOWN, Outcome::CONTENT, null);
     }
 
+    /**
+     * A customer's host (2026-11-26): matomo.php and piwik.php answer HTTP 200 with an empty body and Matomo's tracker
+     * headers (Access-Control-Allow-Origin: *, Access-Control-Allow-Credentials: true, from core Tracker\Response::init),
+     * while tracking works; something on that host hides Matomo's note. Such an answer reaches Matomo's tracker.
+     */
+    public function test_tracker_emptyAnswerWithMatomosTrackerHeader_isUp(): void
+    {
+        $customer = ['access-control-allow-origin' => '*', 'access-control-allow-credentials' => 'true'];
+        foreach ([Kind::TRACKER, Kind::PROXY] as $kind) {
+            $this->assertResult($this->classifyWithHeaders($kind, 200, '', $customer), Outcome::UP, null);
+            $this->assertResult($this->classifyWithHeaders($kind, 200, " \r\n", $customer), Outcome::UP, null, null);
+            $this->assertResult($this->classifyWithHeaders($kind, 200, '', ['access-control-allow-credentials' => 'TRUE']), Outcome::UP, null);
+        }
+    }
+
+    /** An empty answer from anything else is still caught: no header, another value, another body, another status. */
+    public function test_tracker_emptyAnswerWithoutThatHeader_staysUnexpectedContent(): void
+    {
+        foreach ([Kind::TRACKER, Kind::PROXY] as $kind) {
+            $this->assertResult($this->classifyWithHeaders($kind, 200, '', []), Outcome::DOWN, Outcome::CONTENT);
+            $this->assertResult($this->classifyWithHeaders($kind, 200, '', ['access-control-allow-origin' => '*']), Outcome::DOWN, Outcome::CONTENT);
+            $this->assertResult($this->classifyWithHeaders($kind, 200, '', ['access-control-allow-credentials' => 'false']), Outcome::DOWN, Outcome::CONTENT);
+            $this->assertResult($this->classifyWithHeaders($kind, 200, '<html>hosting default page</html>', ['access-control-allow-credentials' => 'true']),
+                Outcome::DOWN, Outcome::CONTENT, null);
+        }
+        $this->assertResult($this->classifyWithHeaders(Kind::TRACKER, 500, '', ['access-control-allow-credentials' => 'true']), Outcome::DOWN, Outcome::HTTP_STATUS);
+        $this->assertResult($this->classifyWithHeaders(Kind::JS, 200, '', ['access-control-allow-credentials' => 'true']), Outcome::DOWN, Outcome::CONTENT, null);
+    }
+
+    private function classifyWithHeaders(string $kind, int $status, string $body, array $headers): CheckResult
+    {
+        $target = new Target(7, $kind === Kind::PROXY ? 1 : 0, $kind, $kind, 'https://matomo.example.com/matomo.php', 'default', ['matomoHost' => 'matomo.example.com'], '2026-03-01 00:00:00');
+        $response = new ProbeResponse($status, $body, null, 'https://matomo.example.com/matomo.php', ['total' => 5], null, 0, false, $headers);
+
+        return (new ResponseClassifier())->classify($target, $response, self::NOW);
+    }
+
     public function test_detectedProxy_neverUp_failuresAreNotCheckable(): void
     {
         $target = new Target(7, 1, 'proxy', Kind::PROXY, 'https://shop.example/matomo.php', 'detected', ['matomoHost' => 'm.example']);

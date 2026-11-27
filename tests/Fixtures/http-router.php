@@ -32,6 +32,14 @@ switch ($path) {
         }
         $send(200, "This resource is part of Matomo. Keep full control of your data with the leading free and open source <a href='https://matomo.org'>web analytics</a>.<br>\n");
         break;
+    case '/empty/matomo.php':
+        // a customer's host (2026-11-26): Matomo's tracker headers, an empty body
+        $send(200, '', ['Content-Type: text/html; charset=UTF-8', 'Access-Control-Allow-Origin: *', 'Access-Control-Allow-Credentials: true',
+            'Vary: Origin,Accept-Encoding']);
+        break;
+    case '/empty/other.php':
+        $send(200, '', ['Content-Type: text/html; charset=UTF-8']);
+        break;
     case '/off/matomo.php':
         $send(503, '');
         break;

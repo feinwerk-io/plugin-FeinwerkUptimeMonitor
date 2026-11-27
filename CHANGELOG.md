@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.3.2
+
+- The tracker endpoint counts as reachable when Matomo answers it with an empty page (some servers hide Matomo's note on
+  matomo.php), instead of reporting unexpected content.
+
 ## 5.3.1
 
 - Checks now also run on servers whose PHP has curl_multi_exec disabled; where outgoing requests are not allowed at

@@ -283,6 +283,23 @@ class ProberTest extends TestCase
         $this->assertSame(['gethostbynamel', 'dns_get_record'], $prober->missingFunctions(), 'named on the admin page');
     }
 
+    /**
+     * The headers the classifier reads come with the answer (lower-case names), from the final answer only; an empty
+     * matomo.php with Matomo's tracker header is up, without it unexpected content (a customer's host, 2026-11-26).
+     */
+    public function test_trackerHeaders_comeWithTheAnswer(): void
+    {
+        $responses = static::prober()->probeAll([self::target(1, Kind::TRACKER, '/empty/matomo.php'), self::target(2, Kind::TRACKER, '/empty/other.php'),
+            self::target(3, Kind::WEB, '/r1')], microtime(true) + 30);
+        $this->assertSame([200, '', 'true'], [$responses[1]->status, $responses[1]->body, $responses[1]->headers['access-control-allow-credentials'] ?? null]);
+        $this->assertArrayNotHasKey('access-control-allow-credentials', $responses[2]->headers);
+        $this->assertSame([], $responses[3]->headers, 'only the headers the classifier reads');
+        $classifier = new \Piwik\Plugins\FeinwerkUptimeMonitor\Check\ResponseClassifier();
+        $this->assertSame(Outcome::UP, $classifier->classify(self::target(1, Kind::TRACKER, '/empty/matomo.php'), $responses[1], '2026-03-14 10:00:00')->outcome);
+        $other = $classifier->classify(self::target(2, Kind::TRACKER, '/empty/other.php'), $responses[2], '2026-03-14 10:00:00');
+        $this->assertSame([Outcome::DOWN, Outcome::CONTENT], [$other->outcome, $other->error]);
+    }
+
     public function test_consume_handsOverEachResultAndKeepsNothing(): void
     {
         $seen = [];
