@@ -158,6 +158,7 @@ class ApiTest extends IntegrationTestCase
         $this->assertArrayHasKey('samples', self::api('getStatus', ['idSite' => 0])['processing']);
         // UI review of 5.4.0, L7: PHP's curl extension is installed here
         $this->assertFalse($status['curlExtensionMissing']);
+        $this->assertSame('curl_multi', $status['transport'], 'every curl function here');
     }
 
     /** Review L8 #9: anonymous visitors of a public dashboard read their website, never Matomo's own health. */

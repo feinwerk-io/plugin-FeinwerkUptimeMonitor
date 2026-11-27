@@ -15,10 +15,13 @@
 //   chain     a certificate of the same CA, sent together with the CA's own (self-signed) certificate, as many intranet
 //             servers send their chain
 //   wrongname a certificate of the same CA for another host name (elsewhere.invalid)
+//   oldchain  the internal certificate, sent together with an unrelated expired one (as servers that still send an
+//             expired cross-signed certificate)
 // Writes the certificates, key.pem and other.pem (an unrelated certificate: a CA file that trusts none of them) into the
-// given directory, prints "self internal expired chain wrongname" as ports on its first line, and answers every request
+// given directory, prints "self internal expired chain wrongname oldchain" as ports on its first line, and answers every request
 // with 200 "ok",
-// one at a time; /hop answers 302 to /. Each accepted connection adds a byte to accepts-<name> (the handshakes a client
+// one at a time; /hop answers 302 to /, /silent answers nothing, /drip half of its body slowly (both then wait for the
+// client to go away, at most 4 s). Each accepted connection adds a byte to accepts-<name> (the handshakes a client
 // started); a file delay-<name> holds milliseconds to wait before the handshake.
 //
 //   php tls-server.php <directory>
@@ -52,6 +55,7 @@ file_put_contents($dir . '/expired.pem', $pem($expired));
 file_put_contents($dir . '/ca.pem', $pem($ca));
 file_put_contents($dir . '/internal.pem', $pem(openssl_csr_sign($csr('localhost', 'leaf'), $ca, $caKey, 30, $options('leaf'), random_int(1, PHP_INT_MAX))));
 file_put_contents($dir . '/chain.pem', file_get_contents($dir . '/internal.pem') . $pem($ca));
+file_put_contents($dir . '/oldchain.pem', file_get_contents($dir . '/internal.pem') . $pem($expired));
 file_put_contents($dir . '/wrongname.pem', $pem(openssl_csr_sign($csr('elsewhere.invalid', 'elsewhere'), $ca, $caKey, 30, $options('elsewhere'), random_int(1, PHP_INT_MAX))));
 file_put_contents($dir . '/server.pem', $pem(openssl_csr_sign($csr('localhost', 'self'), null, $key, 30, $options('self'), random_int(1, PHP_INT_MAX))));
 file_put_contents($dir . '/key.pem', $keyPem);
@@ -60,7 +64,8 @@ file_put_contents($dir . '/other.pem', $pem(openssl_csr_sign(openssl_csr_new(['c
 
 $servers = [];
 $ports = [];
-foreach (['self' => 'server.pem', 'internal' => 'internal.pem', 'expired' => 'expired.pem', 'chain' => 'chain.pem', 'wrongname' => 'wrongname.pem'] as $name => $file) {
+foreach (['self' => 'server.pem', 'internal' => 'internal.pem', 'expired' => 'expired.pem', 'chain' => 'chain.pem', 'wrongname' => 'wrongname.pem',
+    'oldchain' => 'oldchain.pem'] as $name => $file) {
     $context = stream_context_create(['ssl' => ['local_cert' => $dir . '/' . $file, 'local_pk' => $dir . '/key.pem',
         'verify_peer' => false, 'verify_peer_name' => false]]);
     $server = stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr, STREAM_SERVER_BIND | STREAM_SERVER_LISTEN, $context);
@@ -78,6 +83,22 @@ while (time() <= $made + 1) {
 }
 echo implode(' ', $ports), "\n";
 fflush(STDOUT);
+
+// waits up to $seconds; true as soon as the client has closed the connection
+$gone = static function ($connection, float $seconds): bool {
+    $until = microtime(true) + $seconds;
+    while (($left = $until - microtime(true)) > 0) {
+        $read = [$connection];
+        $write = $except = null;
+        if (@stream_select($read, $write, $except, 0, (int) ($left * 1000000)) > 0) {
+            $data = @fread($connection, 1024);
+            if ($data === '' || $data === false) {
+                return true;
+            }
+        }
+    }
+    return false;
+};
 
 while (true) {
     $ready = array_values($servers);
@@ -105,6 +126,21 @@ while (true) {
         $request = '';
         while (strpos($request, "\r\n\r\n") === false && ($line = fgets($connection)) !== false) {
             $request .= $line;
+        }
+        $path = explode(' ', (string) strtok($request, "\r\n"))[1] ?? '';
+        if ($path === '/silent' || $path === '/drip') {
+            // /drip: a head, then one byte of the body every 300 ms, five of the ten; both then fall silent until the
+            // client goes away (at most 4 s), as a server that keeps a check waiting. Never longer than that: the next
+            // connection waits for this one
+            if ($path === '/drip') {
+                @fwrite($connection, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 10\r\n\r\n");
+                for ($i = 0; $i < 5 && !$gone($connection, 0.3); $i++) {
+                    @fwrite($connection, 'x');
+                }
+            }
+            $gone($connection, 4.0);
+            fclose($connection);
+            continue;
         }
         fwrite($connection, strncmp($request, 'GET /hop', 8) === 0
             ? "HTTP/1.1 302 Found\r\nLocation: /\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"

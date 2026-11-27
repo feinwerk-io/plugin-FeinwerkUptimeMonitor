@@ -276,6 +276,11 @@ export interface ScreenConfig {
   /** admin page: those functions are missing because PHP's curl extension is not installed */
   curlMissing?: boolean | null;
   /**
+   * admin page: how the server's PHP sends the checks (getStatus transport): curl_multi,
+   * curl_exec, streams or none; a neutral line for curl_exec and streams
+   */
+  transport?: string | null;
+  /**
    * Matomo's internet features are off ([General] enable_internet_features = 0) without the
    * opt-in: no check is sent, every address reads not checkable (note internet_off)
    */

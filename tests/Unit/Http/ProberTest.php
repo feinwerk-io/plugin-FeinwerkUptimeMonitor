@@ -20,6 +20,7 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Prober;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\UrlGuard;
 use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\DisabledFunctions;
 use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\HttpFixtureServer;
+use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\RawHttpFixtureServer;
 
 /**
  * Real HTTP against the local fixture server (tests/Fixtures/http-router.php), no network.
@@ -41,6 +42,7 @@ class ProberTest extends TestCase
     public static function tearDownAfterClass(): void
     {
         HttpFixtureServer::stop();
+        RawHttpFixtureServer::stop();
     }
 
     protected static function target(int $id, string $kind, string $path): Target
@@ -49,11 +51,28 @@ class ProberTest extends TestCase
     }
 
     /**
+     * The PHP functions of the way under test (here every one: curl_multi); the subclasses take the other ways away.
+     * Every test that builds a prober of its own takes them from here, so that it runs on the subclass's way too.
+     *
+     * @param string[] $alsoDisabled functions a test takes away on top
+     */
+    protected static function capabilities(array $alsoDisabled = []): Capabilities
+    {
+        return new Capabilities(DisabledFunctions::except($alsoDisabled));
+    }
+
+    /** The reference way for the comparisons of the subclasses: curl_multi, every function there. */
+    protected static function curlMultiProber(int $connectMs = 2000, int $totalMs = 5000): Prober
+    {
+        return new Prober(new AddressGuard(true), [], 'FeinwerkUptimeMonitor-Test', $connectMs, $totalMs, 8, null, new Capabilities());
+    }
+
+    /**
      * @param array $proxy Matomo's [proxy] settings (empty: none)
      */
     protected static function prober(?UrlGuard $guard = null, int $connectMs = 2000, int $totalMs = 5000, int $parallel = 8, array $proxy = []): Prober
     {
-        return new Prober($guard ?? new AddressGuard(true), $proxy, 'FeinwerkUptimeMonitor-Test', $connectMs, $totalMs, $parallel);
+        return new Prober($guard ?? new AddressGuard(true), $proxy, 'FeinwerkUptimeMonitor-Test', $connectMs, $totalMs, $parallel, null, static::capabilities());
     }
 
     public function test_ok_hasStatusBodyAndTimings(): void
@@ -175,6 +194,25 @@ class ProberTest extends TestCase
     }
 
     /**
+     * Several approved addresses and a dead first one (a firewall that drops): it gets half of the connect time, as curl
+     * gives each attempt half of what is left, and the next address still answers.
+     */
+    public function test_aDeadFirstAddress_leavesConnectTimeForTheNext(): void
+    {
+        // TEST-NET-1 (RFC 5737): no host answers there, and where the network drops the packets a connect waits
+        $start = microtime(true);
+        $socket = @stream_socket_client('tcp://192.0.2.1:81', $errno, $errstr, 0.3);
+        if ($socket === false && microtime(true) - $start < 0.2) {
+            $this->markTestSkipped('this network refuses 192.0.2.1 at once: nothing to wait for');
+        }
+        $guard = new AddressGuard(true, static fn(string $host): array => $host === 'dead-first.test' ? ['192.0.2.1', '127.0.0.1'] : []);
+        $target = new Target(1, 0, 'web1', Kind::WEB, 'http://dead-first.test:' . HttpFixtureServer::port() . '/ok', 'default');
+        $r = static::prober($guard, 1000, 3000)->probeAll([$target], microtime(true) + 30)[1];
+        $this->assertSame([200, null], [$r->status, $r->error]);
+        $this->assertGreaterThanOrEqual(400, $r->timings['connect'], 'the wait for the dead address counts as connect time');
+    }
+
+    /**
      * Audit T2: libcurl before 7.59.0 takes one address per CURLOPT_RESOLVE entry and drops a list (the pin name then
      * goes to DNS: every name with A and AAAA records read as a DNS failure). There the pin is one address, IPv4 first.
      */
@@ -278,6 +316,24 @@ class ProberTest extends TestCase
         $this->assertFalse($prober->usesProxyFor('intranet.example'));
         $this->assertTrue($prober->usesProxyFor('www.shop.example'));
         $this->assertFalse(static::prober()->usesProxyFor('www.shop.example'));
+    }
+
+    /**
+     * Through Matomo's [proxy], http goes as the absolute URI with the guard's host, the Host header and the proxy's
+     * credentials (Basic), as the proxy received it.
+     */
+    public function test_throughMatomosProxy_httpCarriesTheAbsoluteUriAndTheCredentials(): void
+    {
+        RawHttpFixtureServer::start();
+        $proxy = RawHttpFixtureServer::asProxy() + ['username' => 'u', 'password' => 'p'];
+        $r = static::prober(new AddressGuard(true, static fn(string $host): array => []), 2000, 5000, 8, $proxy)
+            ->probeAll([new Target(1, 1, 'web1', Kind::WEB, 'http://Proxied.test/echo?x=1', 'default')], microtime(true) + 30)[1];
+        $this->assertSame(404, $r->status, 'the fixture answers absolute URIs with 404');
+        $requests = RawHttpFixtureServer::requests();
+        $lines = explode("\r\n", (string) end($requests));
+        $this->assertSame('GET http://proxied.test/echo?x=1 HTTP/1.1', $lines[0]);
+        $this->assertContains('Host: proxied.test', $lines);
+        $this->assertContains('Proxy-Authorization: Basic ' . base64_encode('u:p'), $lines);
     }
 
     public function test_unreachableProxy_isAProxyError(): void
@@ -399,7 +455,7 @@ class ProberTest extends TestCase
             return ['127.0.0.1'];
         }, true);
         $targets = [self::target(1, Kind::WEB, '/ok'), new Target(2, 0, 'web2', Kind::WEB, 'http://shop.test:' . HttpFixtureServer::port() . '/ok', 'default')];
-        foreach ([new Capabilities(), new Capabilities(DisabledFunctions::except(['curl_init']))] as $capabilities) {
+        foreach ([static::capabilities(), static::capabilities(array_merge(DisabledFunctions::CURL, ['stream_socket_client']))] as $capabilities) {
             $prober = new Prober($guard, [], 'FeinwerkUptimeMonitor-Test', 2000, 5000, 8, null, $capabilities->withInternet(false));
             $responses = $prober->probeAll($targets, microtime(true) + 30);
             $this->assertSame([1, 2], array_keys($responses));
@@ -568,7 +624,7 @@ class ProberTest extends TestCase
     {
         $port = HttpFixtureServer::port();
         $proxy = ['host' => '127.0.0.1', 'port' => (string) $port];
-        foreach (['intl' => new Capabilities(), 'no intl' => new Capabilities(DisabledFunctions::except(['idn_to_ascii']))] as $way => $capabilities) {
+        foreach (['intl' => static::capabilities(), 'no intl' => static::capabilities(['idn_to_ascii'])] as $way => $capabilities) {
             $checked = [];
             $guard = new AddressGuard(true, static function (string $host) use (&$checked): array {
                 $checked[] = $host;

@@ -11,16 +11,17 @@ namespace Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures;
 
 /**
  * Local HTTPS servers (tests/Fixtures/tls-server.php) whose certificates only the test's own CA files trust: for the
- * prober's choice of CA file without the network. Five ports: self (a self-signed certificate), internal (a certificate
+ * prober's choice of CA file without the network. Six ports: self (a self-signed certificate), internal (a certificate
  * of an internal CA, internalCa()), expired (an expired certificate of that CA), chain (a certificate of that CA sent
- * with the CA's own) and wrongname (a certificate of that CA for another host name); accepts() counts the handshakes a
- * client started on a port, delay() slows them down.
+ * with the CA's own), wrongname (a certificate of that CA for another host name) and oldchain (the internal
+ * certificate sent with an unrelated expired one); accepts() counts the handshakes a client started on a port, delay()
+ * slows them down.
  */
 final class TlsFixtureServer
 {
     /** @var resource|null */
     private static $process;
-    /** @var array<string, int> port by name: self, internal, expired, chain, wrongname */
+    /** @var array<string, int> port by name: self, internal, expired, chain, wrongname, oldchain */
     private static array $ports = [];
     private static string $dir = '';
 
@@ -51,7 +52,7 @@ final class TlsFixtureServer
             usleep(20000);
         }
         $ports = array_map('intval', explode(' ', trim($line)));
-        $names = ['self', 'internal', 'expired', 'chain', 'wrongname'];
+        $names = ['self', 'internal', 'expired', 'chain', 'wrongname', 'oldchain'];
         self::$ports = count($ports) === count($names) ? array_combine($names, $ports) : [];
         if (self::$ports === [] || min(self::$ports) <= 0 || !is_file(self::$dir . '/server.pem')) {
             self::stop();
@@ -75,7 +76,7 @@ final class TlsFixtureServer
         }
     }
 
-    /** https://localhost:PORT/ of a port (self, internal, expired, chain or wrongname; all but wrongname name localhost) */
+    /** https://localhost:PORT/ of a port (self, internal, expired, chain, wrongname, oldchain; all but wrongname name localhost) */
     public static function url(string $name = 'self', string $path = '/'): string
     {
         return 'https://localhost:' . self::$ports[$name] . $path;

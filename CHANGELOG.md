@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.5.0
+
+- Checks also run on servers without PHP's curl extension, and where php.ini disables both `curl_exec` and
+  `curl_multi_exec`: they then go out through PHP's own network functions, one after the other, with the same checks
+  of certificates, redirects and private addresses (HTTPS addresses there need PHP's openssl extension). Before, every
+  address read "not checkable" on such servers. Administration > Diagnostic > Uptime Monitor says to super users
+  when the checks run one after the other, and `getStatus` names the way (`transport`).
+
 ## 5.4.0
 
 - When Matomo's internet features are switched off (`enable_internet_features = 0` in `[General]`), the checks send

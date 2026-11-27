@@ -15,7 +15,6 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Target;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\AddressGuard;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Capabilities;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Prober;
-use Piwik\Plugins\FeinwerkUptimeMonitor\Http\UrlGuard;
 use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\DisabledFunctions;
 
 /**
@@ -27,21 +26,16 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\DisabledFunctions;
  */
 class SequentialProberTest extends ProberTest
 {
-    private static function sharedHost(array $alsoDisabled = []): Capabilities
+    protected static function capabilities(array $alsoDisabled = []): Capabilities
     {
         return new Capabilities(DisabledFunctions::except(array_merge(DisabledFunctions::SHARED_HOST, $alsoDisabled)));
-    }
-
-    protected static function prober(?UrlGuard $guard = null, int $connectMs = 2000, int $totalMs = 5000, int $parallel = 8, array $proxy = []): Prober
-    {
-        return new Prober($guard ?? new AddressGuard(true), $proxy, 'FeinwerkUptimeMonitor-Test', $connectMs, $totalMs, $parallel, null, self::sharedHost());
     }
 
     public function test_usesTheSequentialWay(): void
     {
         $this->assertSame(Capabilities::SEQUENTIAL, static::prober()->transport());
         $this->assertSame(Capabilities::SEQUENTIAL, static::prober(null, 2000, 5000, 8, self::UNREACHABLE_PROXY)->transport(), 'with a proxy too');
-        $this->assertSame(Capabilities::MULTI, parent::prober()->transport());
+        $this->assertSame(Capabilities::MULTI, self::curlMultiProber()->transport());
     }
 
     public function test_parallel_eightAtOnce(): void
@@ -97,7 +91,7 @@ class SequentialProberTest extends ProberTest
             return $out;
         };
         // the fixture server speaks plain HTTP: the certificate date is null on both ways
-        $multi = $shape(parent::prober(null, 1000, 3000)->probeAll($targets, microtime(true) + 60));
+        $multi = $shape(self::curlMultiProber(1000, 3000)->probeAll($targets, microtime(true) + 60));
         $sequential = $shape(static::prober(null, 1000, 3000)->probeAll($targets, microtime(true) + 60));
         $this->assertCount(15, $multi);
         $this->assertSame($multi, $sequential);
@@ -106,9 +100,9 @@ class SequentialProberTest extends ProberTest
 
     public function test_noWayToSendRequests_everyTargetIsNotCheckable_neverAnError(): void
     {
-        $prober = new Prober(new AddressGuard(true), [], 'ua', 2000, 5000, 8, null, self::sharedHost(['curl_exec']));
+        $prober = new Prober(new AddressGuard(true), [], 'ua', 2000, 5000, 8, null, self::capabilities(['curl_exec', 'stream_socket_client']));
         $this->assertNull($prober->transport());
-        $this->assertSame(['curl_exec', 'curl_multi_exec'], $prober->missingFunctions());
+        $this->assertSame(['curl_exec', 'curl_multi_exec', 'stream_socket_client'], $prober->missingFunctions());
 
         $responses = $prober->probeAll([self::target(1, Kind::WEB, '/ok'), self::target(2, Kind::TRACKER, '/matomo.php')], microtime(true) + 30);
         $this->assertSame([1, 2], array_keys($responses));

@@ -80,6 +80,13 @@ class API extends \Piwik\Plugin\API
      *               targets with note php_disabled cannot be checked; empty once a run has them all),
      *               curlExtensionMissing: bool (super users only, false for everyone else: PHP's curl extension is not
      *               installed, so the curl functions are missing because of that rather than disable_functions),
+     *               transport: curl_multi|curl_exec|streams|none|null (super users only, null for everyone else: how this
+     *               server's PHP sends the checks. curl_multi: several side by side, the usual way; curl_exec: one after
+     *               the other, where php.ini disables curl_multi_exec; streams: one after the other through PHP's own
+     *               network functions, where the curl extension is missing or curl_exec and curl_multi_exec are both
+     *               disabled, with the same checks (https needs PHP's openssl functions there); none: no way, every
+     *               target is not checkable with note php_disabled, see disabledPhpFunctions. Read from PHP now, also
+     *               while internetFeaturesOff),
      *               internetFeaturesOff: bool (true while Matomo's [General] enable_internet_features = 0 and the opt-in
      *               [FeinwerkUptimeMonitor] checkWithInternetFeaturesOff = 1 is not set: no check goes out, no lookup, no
      *               request, and each target's next result is not checkable with note internet_off)};
@@ -109,6 +116,7 @@ class API extends \Piwik\Plugin\API
             // the server's PHP configuration: super users only
             'disabledPhpFunctions' => Piwik::hasUserSuperUserAccess() ? CheckRunner::disabledPhpFunctions() : [],
             'curlExtensionMissing' => Piwik::hasUserSuperUserAccess() && CheckRunner::capabilities()->curlMissing(),
+            'transport' => Piwik::hasUserSuperUserAccess() ? CheckRunner::capabilities()->transportName() : null,
             // why every address reads not checkable: for every viewer
             'internetFeaturesOff' => !InternetAccess::checksAllowed(),
         ];

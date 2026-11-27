@@ -53,6 +53,8 @@ final class ScreenProps
             'disabledPhpFunctions' => $variant === 'admin' ? self::disabledPhpFunctions() : null,
             // the admin page: those functions are missing because PHP's curl extension is not installed (UI review L7)
             'curlMissing' => $variant === 'admin' ? self::curlMissing() : null,
+            // the admin page: how the checks are sent (robustness part 2), a neutral line unless curl_multi
+            'transport' => $variant === 'admin' ? self::transport() : null,
             // Matomo's internet features are off without the opt-in (Peter's 2a): no check goes out, every screen says why
             'internetOff' => self::internetOff(),
             // the admin page: Matomo's own addresses answer only after the redirect to https (audit D2)
@@ -184,6 +186,16 @@ final class ScreenProps
             return CheckRunner::capabilities()->curlMissing();
         } catch (\Throwable $e) {
             return false;
+        }
+    }
+
+    /** Capabilities::transportName() of the checks, null when it cannot be read */
+    private static function transport(): ?string
+    {
+        try {
+            return CheckRunner::capabilities()->transportName();
+        } catch (\Throwable $e) {
+            return null;
         }
     }
 

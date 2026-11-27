@@ -147,6 +147,8 @@
         "UiAdminNotCheckableNamedOneFromServer": "%s cannot be checked from the Matomo server and does not count as an outage.",
         "UiAdminPhpDisabled": "The latest checks could not run: PHP on the Matomo server does not allow the outgoing requests they need. Missing PHP functions: %s.",
         "UiAdminPhpDisabledHint": "For the server administrator: remove these functions from disable_functions in php.ini.",
+        "UiAdminTransportCurlExec": "The checks run one after the other through PHP's curl_exec, as PHP on the Matomo server does not allow curl_multi_exec. They work as usual; a run with many addresses takes longer.",
+        "UiAdminTransportStreams": "The checks run through PHP's own network functions, as PHP's curl extension is not available on the Matomo server. They work as usual; a run with many addresses takes longer.",
         "UiAdopt": "Adopt",
         "UiAllOff": "No address is checked",
         "UiAllOffMatomo": "No address of Matomo itself is checked. Super users switch them on under Administration, Diagnostic, Uptime Monitor.",

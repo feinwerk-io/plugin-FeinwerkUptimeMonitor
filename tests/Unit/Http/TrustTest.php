@@ -15,9 +15,12 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Outcome;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Target;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\AddressGuard;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Capabilities;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Http\GuardDecision;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Prober;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\TrustFile;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Http\UrlGuard;
 use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\DisabledFunctions;
+use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\RawHttpFixtureServer;
 use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\TlsFixtureServer;
 
 /**
@@ -26,7 +29,12 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\TlsFixtureServer;
  * server whose own trust store is missing or old still checks HTTPS. A verification that fails with Matomo's bundle for
  * a trust anchor problem is tried once more with the server's trust store (an internal CA or a self-signed certificate
  * installed only there); an expired or misnamed certificate is not; there is never a way without verification. Against a local HTTPS server whose certificate only the test's CA file trusts; in a child PHP,
- * curl.cainfo stands for the server's trust store.
+ * curl.cainfo stands for the server's trust store (openssl.cafile on the stream way). Every case on the three ways:
+ * curl_multi, curl_exec and PHP's streams (a host without curl).
+ *
+ * The streams get no OpenSSL verify result from PHP: after a failed verification with the bundle they read the
+ * certificate chain once more without verifying (a diagnosis that sends nothing), so they open one connection more than
+ * curl there; an expired certificate still gets no second try.
  *
  * @group FeinwerkUptimeMonitor
  */
@@ -43,6 +51,7 @@ class TrustTest extends TestCase
     public static function tearDownAfterClass(): void
     {
         TlsFixtureServer::stop();
+        RawHttpFixtureServer::stop();
     }
 
     protected function setUp(): void
@@ -52,13 +61,28 @@ class TrustTest extends TestCase
         }
     }
 
-    /** @return array<string, array{Capabilities}> */
+    private const WAYS = ['multi', 'sequential', 'stream'];
+
+    /** @return array<string, array{Capabilities, string}> */
     public static function transports(): array
     {
         return [
-            'curl_multi' => [new Capabilities()],
-            'curl_exec' => [new Capabilities(DisabledFunctions::except(['curl_multi_exec']))],
+            'curl_multi' => [new Capabilities(), 'multi'],
+            'curl_exec' => [new Capabilities(DisabledFunctions::except(['curl_multi_exec'])), 'sequential'],
+            'streams' => [new Capabilities(DisabledFunctions::except(DisabledFunctions::CURL)), 'stream'],
         ];
+    }
+
+    /** the server's trust store of a child PHP: curl.cainfo for curl, openssl.cafile for the streams */
+    private static function trustStore(string $file): array
+    {
+        return ['curl.cainfo' => $file, 'openssl.cafile' => $file];
+    }
+
+    /** the handshakes of a check: on the stream way one more after a failed verification with the bundle (the diagnosis) */
+    private static function handshakes(string $way, int $curl, int $stream): int
+    {
+        return $way === 'stream' ? $stream : $curl;
     }
 
     private static function probe(?string $caFile, bool $systemRetry, Capabilities $capabilities, string $port = 'self')
@@ -78,7 +102,7 @@ class TrustTest extends TestCase
      */
     private static function runInChild(string $caFile, string $trustStore, string $transport, int $totalMs, array $urls): array
     {
-        $answer = DisabledFunctions::runChild([], array_merge(['tlsrun', $caFile, '1', $transport, (string) $totalMs], $urls), ['curl.cainfo' => $trustStore]);
+        $answer = DisabledFunctions::runChild([], array_merge(['tlsrun', $caFile, '1', $transport, (string) $totalMs], $urls), self::trustStore($trustStore));
         self::assertTrue($answer['ok'], (string) ($answer['error'] ?? ''));
 
         return $answer['results'];
@@ -101,6 +125,96 @@ class TrustTest extends TestCase
     {
         $r = self::probe(TlsFixtureServer::trustingCa(), false, $capabilities);
         $this->assertSame([200, null, 'ok'], [$r->status, $r->error, $r->body]);
+        $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}$/', (string) $r->certNotAfter, "the certificate's expiry date");
+    }
+
+    /** The handshake's time is the tls timing (a server that waits 300 ms before it), on every way. */
+    public function test_theHandshakeTime_isTheTlsTiming(): void
+    {
+        TlsFixtureServer::delay('internal', 300);
+        try {
+            foreach (self::transports() as $way => [$capabilities]) {
+                $t = self::probe(TlsFixtureServer::internalCa(), false, $capabilities, 'internal')->timings;
+                $this->assertGreaterThanOrEqual(250, $t['tls'], $way);
+                $this->assertLessThan(900, $t['tls'], $way);
+                $this->assertGreaterThanOrEqual($t['connect'] + $t['tls'], $t['ttfb'] + 1, "$way: the first byte after the handshake");
+            }
+        } finally {
+            TlsFixtureServer::delay('internal', 0);
+        }
+    }
+
+    /** An intranet Matomo addressed by its IP: the certificate's IP address entry verifies, on every way. */
+    public function test_anAddressByIp_verifiesTheCertificatesIpEntry(): void
+    {
+        $url = str_replace('//localhost:', '//127.0.0.1:', TlsFixtureServer::url('internal'));
+        foreach (self::transports() as $way => [$capabilities]) {
+            $prober = new Prober(new AddressGuard(true, null, true), [], 'FeinwerkUptimeMonitor-Test', 2000, 5000, 8, TlsFixtureServer::internalCa(), $capabilities);
+            $r = $prober->probeAll([new Target(1, 0, 'web1', Kind::WEB, $url, 'default')], microtime(true) + 30)[1];
+            $this->assertSame([200, null, 'ok'], [$r->status, $r->error, $r->body], $way);
+        }
+    }
+
+    /**
+     * Host, SNI and the certificate's name carry the guard's host, never the URL's own: here the guard answers for an
+     * alias with localhost, the name in the certificate.
+     *
+     * @dataProvider transports
+     */
+    public function test_theNameVerified_isTheGuardsHost(Capabilities $capabilities): void
+    {
+        $guard = new class implements UrlGuard {
+            public function check(string $url, bool $instanceTarget = false): GuardDecision
+            {
+                return new GuardDecision(true, '127.0.0.1', null, 'localhost', (int) parse_url($url, PHP_URL_PORT), 'https', ['127.0.0.1']);
+            }
+
+            public function checkWithoutResolving(string $url, bool $instanceTarget = false): GuardDecision
+            {
+                return new GuardDecision(true, null, null, 'localhost', (int) parse_url($url, PHP_URL_PORT), 'https');
+            }
+        };
+        $url = str_replace('//localhost:', '//alias.test:', TlsFixtureServer::url('internal'));
+        $prober = new Prober($guard, [], 'FeinwerkUptimeMonitor-Test', 2000, 5000, 8, TlsFixtureServer::internalCa(), $capabilities);
+        $r = $prober->probeAll([new Target(1, 1, 'web1', Kind::WEB, $url, 'default')], microtime(true) + 30)[1];
+        $this->assertSame([200, null, 'ok'], [$r->status, $r->error, $r->body], 'verified for localhost, not for alias.test');
+    }
+
+    /**
+     * Through Matomo's proxy, https goes through CONNECT to the guard's host and port, with the proxy's credentials; the
+     * certificate is verified end to end. A proxy that refuses the tunnel is the proxy's failure.
+     *
+     * @dataProvider transports
+     */
+    public function test_throughMatomosProxy_httpsTunnelsToTheGuardsHost(Capabilities $capabilities, string $way): void
+    {
+        RawHttpFixtureServer::start();
+        $guard = new class implements UrlGuard {
+            public function check(string $url, bool $instanceTarget = false): GuardDecision
+            {
+                return $this->checkWithoutResolving($url, $instanceTarget);
+            }
+
+            public function checkWithoutResolving(string $url, bool $instanceTarget = false): GuardDecision
+            {
+                $host = parse_url($url, PHP_URL_HOST) === 'alias.test' ? 'localhost' : 'denied.test';
+                return new GuardDecision(true, null, null, $host, (int) parse_url($url, PHP_URL_PORT), 'https');
+            }
+        };
+        $proxy = RawHttpFixtureServer::asProxy() + ['username' => 'u', 'password' => 'p'];
+        $port = (int) parse_url(TlsFixtureServer::url('internal'), PHP_URL_PORT);
+        $prober = new Prober($guard, $proxy, 'FeinwerkUptimeMonitor-Test', 2000, 5000, 8, TlsFixtureServer::internalCa(), $capabilities);
+        $responses = $prober->probeAll([new Target(1, 1, 'web1', Kind::WEB, "https://alias.test:$port/", 'default'),
+            new Target(2, 1, 'web2', Kind::WEB, "https://other.test:$port/", 'default')], microtime(true) + 30);
+        $this->assertSame([200, null, 'ok'], [$responses[1]->status, $responses[1]->error, $responses[1]->body], $way);
+        $this->assertSame([null, Outcome::PROXY], [$responses[2]->status, $responses[2]->error], "$way: the proxy refused the tunnel");
+        $connects = array_values(array_filter(RawHttpFixtureServer::requests(), static fn(string $head): bool => strncmp($head, 'CONNECT ', 8) === 0));
+        [$tunnel, $refused] = array_slice($connects, -2);
+        $lines = explode("\r\n", $tunnel);
+        $this->assertSame("CONNECT localhost:$port HTTP/1.1", $lines[0], $way);
+        $this->assertContains("Host: localhost:$port", $lines, $way);
+        $this->assertContains('Proxy-Authorization: Basic ' . base64_encode('u:p'), $lines, $way);
+        $this->assertStringStartsWith("CONNECT denied.test:$port HTTP/1.1", $refused, $way);
     }
 
     /** @dataProvider transports */
@@ -117,8 +231,8 @@ class TrustTest extends TestCase
     /** The audit's case: the server's trust store is missing (curl error 77); Matomo's file still verifies. */
     public function test_withoutTheServersTrustStore_theGivenCaFileStillVerifies(): void
     {
-        $missing = ['curl.cainfo' => self::NO_FILE];
-        foreach (['multi', 'sequential'] as $transport) {
+        $missing = self::trustStore(self::NO_FILE);
+        foreach (self::WAYS as $transport) {
             $this->assertSame(['status' => 200, 'error' => null, 'body' => 'ok'], self::probeInChild(TlsFixtureServer::trustingCa(), false, $missing, $transport), $transport);
             $this->assertSame(Outcome::TLS, self::probeInChild('-', false, $missing, $transport)['error'], "$transport: without a CA file of its own");
         }
@@ -127,16 +241,18 @@ class TrustTest extends TestCase
     /** An internal CA only in the server's trust store: the bundle fails, the second try with the trust store passes. */
     public function test_theBundleFailing_isTriedOnceMoreWithTheServersTrustStore(): void
     {
-        $internal = ['curl.cainfo' => TlsFixtureServer::internalCa()];
+        $internal = self::trustStore(TlsFixtureServer::internalCa());
         $url = TlsFixtureServer::url('internal');
-        foreach (['multi', 'sequential'] as $transport) {
+        foreach (self::WAYS as $transport) {
             $answer = DisabledFunctions::runChild([], ['tls', $url, TlsFixtureServer::otherCa(), '1', $transport], $internal);
             $this->assertSame(['status' => 200, 'error' => null, 'body' => 'ok'], $answer['results'], $transport);
             $answer = DisabledFunctions::runChild([], ['tls', $url, TlsFixtureServer::otherCa(), '0', $transport], $internal);
             $this->assertSame(Outcome::TLS, $answer['results']['error'], "$transport: no second try for a file set in custom_cacert_pem");
         }
-        $answer = DisabledFunctions::runChild([], ['tls', $url, TlsFixtureServer::otherCa(), '1', 'multi'], ['curl.cainfo' => self::NO_FILE]);
-        $this->assertSame(Outcome::TLS, $answer['results']['error'], 'neither trusts it');
+        foreach (['multi', 'stream'] as $transport) {
+            $answer = DisabledFunctions::runChild([], ['tls', $url, TlsFixtureServer::otherCa(), '1', $transport], self::trustStore(self::NO_FILE));
+            $this->assertSame(Outcome::TLS, $answer['results']['error'], "$transport: neither trusts it");
+        }
     }
 
     /**
@@ -146,12 +262,12 @@ class TrustTest extends TestCase
      */
     public function test_aSelfSignedCertificateInTheServersTrustStore_readsUp(): void
     {
-        foreach (['multi', 'sequential'] as $transport) {
+        foreach (self::WAYS as $transport) {
             $before = TlsFixtureServer::accepts('self');
             $answer = DisabledFunctions::runChild([], ['tls', TlsFixtureServer::url('self'), TlsFixtureServer::otherCa(), '1', $transport],
-                ['curl.cainfo' => TlsFixtureServer::trustingCa()]);
+                self::trustStore(TlsFixtureServer::trustingCa()));
             $this->assertSame(['status' => 200, 'error' => null, 'body' => 'ok'], $answer['results'], $transport);
-            $this->assertSame(2, TlsFixtureServer::accepts('self') - $before, "$transport: the bundle, then the trust store");
+            $this->assertSame(self::handshakes($transport, 2, 3), TlsFixtureServer::accepts('self') - $before, "$transport: the bundle, then the trust store");
         }
     }
 
@@ -161,12 +277,12 @@ class TrustTest extends TestCase
      */
     public function test_aPrivateCaRootSentWithItsLeaf_inTheServersTrustStore_readsUp(): void
     {
-        foreach (['multi', 'sequential'] as $transport) {
+        foreach (self::WAYS as $transport) {
             $before = TlsFixtureServer::accepts('chain');
             $answer = DisabledFunctions::runChild([], ['tls', TlsFixtureServer::url('chain'), TlsFixtureServer::otherCa(), '1', $transport],
-                ['curl.cainfo' => TlsFixtureServer::internalCa()]);
+                self::trustStore(TlsFixtureServer::internalCa()));
             $this->assertSame(['status' => 200, 'error' => null, 'body' => 'ok'], $answer['results'], $transport);
-            $this->assertSame(2, TlsFixtureServer::accepts('chain') - $before, "$transport: the bundle, then the trust store");
+            $this->assertSame(self::handshakes($transport, 2, 3), TlsFixtureServer::accepts('chain') - $before, "$transport: the bundle, then the trust store");
         }
     }
 
@@ -176,12 +292,12 @@ class TrustTest extends TestCase
      *
      * @dataProvider transports
      */
-    public function test_aTrustAnchorNoStoreKnows_isTriedOnceMore_andReadsTls(Capabilities $capabilities): void
+    public function test_aTrustAnchorNoStoreKnows_isTriedOnceMore_andReadsTls(Capabilities $capabilities, string $way): void
     {
         foreach (['self', 'internal', 'chain'] as $port) {
             $before = TlsFixtureServer::accepts($port);
             $this->assertSame(Outcome::TLS, self::probe(TlsFixtureServer::otherCa(), true, $capabilities, $port)->error, $port);
-            $this->assertSame(2, TlsFixtureServer::accepts($port) - $before, "$port: the bundle, then the trust store");
+            $this->assertSame(self::handshakes($way, 2, 3), TlsFixtureServer::accepts($port) - $before, "$port: the bundle, then the trust store");
         }
     }
 
@@ -191,11 +307,59 @@ class TrustTest extends TestCase
      *
      * @dataProvider transports
      */
-    public function test_anExpiredCertificate_readsTlsWithoutASecondFetch(Capabilities $capabilities): void
+    public function test_anExpiredCertificate_readsTlsWithoutASecondFetch(Capabilities $capabilities, string $way): void
     {
         $before = TlsFixtureServer::accepts('expired');
-        $this->assertSame(Outcome::TLS, self::probe(TlsFixtureServer::internalCa(), true, $capabilities, 'expired')->error);
-        $this->assertSame(1, TlsFixtureServer::accepts('expired') - $before, 'one handshake');
+        $r = self::probe(TlsFixtureServer::internalCa(), true, $capabilities, 'expired');
+        $this->assertSame(Outcome::TLS, $r->error);
+        $this->assertSame(self::handshakes($way, 1, 2), TlsFixtureServer::accepts('expired') - $before, 'one verifying handshake (the streams: and the diagnosis)');
+        if ($way === 'stream') {
+            $this->assertSame(gmdate('Y-m-d'), $r->certNotAfter, 'the diagnosis read the date: expired today');
+        }
+    }
+
+    /**
+     * Review of part 2: a server that sends an expired certificate along with its valid one (as many still sent the old
+     * cross-signed root) is no expired certificate: the leaf decides, the strict second try with the trust store follows
+     * and verifies.
+     */
+    public function test_anExpiredCertificateSentAlong_stillGetsTheSecondTry(): void
+    {
+        foreach (self::WAYS as $transport) {
+            $answer = DisabledFunctions::runChild([], ['tls', TlsFixtureServer::url('oldchain'), TlsFixtureServer::otherCa(), '1', $transport],
+                self::trustStore(TlsFixtureServer::internalCa()));
+            $this->assertSame(['status' => 200, 'error' => null, 'body' => 'ok'], $answer['results'], $transport);
+        }
+    }
+
+    /**
+     * Review of part 2: bytes a broken proxy sends right after its CONNECT answer are never taken for the target's
+     * answer: the check reads proxy. (curl reads the answer byte by byte and hands such bytes to TLS, which fails.)
+     */
+    public function test_bytesAfterTheProxysConnectAnswer_readAsAProxyFailure(): void
+    {
+        RawHttpFixtureServer::start();
+        $guard = new class implements UrlGuard {
+            public function check(string $url, bool $instanceTarget = false): GuardDecision
+            {
+                return $this->checkWithoutResolving($url, $instanceTarget);
+            }
+
+            public function checkWithoutResolving(string $url, bool $instanceTarget = false): GuardDecision
+            {
+                return new GuardDecision(true, null, null, 'localhost', (int) parse_url($url, PHP_URL_PORT), 'https');
+            }
+        };
+        RawHttpFixtureServer::connectExtra("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfake!");
+        try {
+            [$capabilities] = self::transports()['streams'];
+            $prober = new Prober($guard, RawHttpFixtureServer::asProxy(), 'FeinwerkUptimeMonitor-Test', 2000, 5000, 8, TlsFixtureServer::internalCa(), $capabilities);
+            $r = $prober->probeAll([new Target(1, 1, 'web1', Kind::WEB, 'https://alias.test:' . parse_url(TlsFixtureServer::url('internal'), PHP_URL_PORT) . '/', 'default')],
+                microtime(true) + 30)[1];
+            $this->assertSame([null, Outcome::PROXY, ''], [$r->status, $r->error, $r->body]);
+        } finally {
+            RawHttpFixtureServer::connectExtra('');
+        }
     }
 
     /**
@@ -207,7 +371,7 @@ class TrustTest extends TestCase
     {
         $before = TlsFixtureServer::accepts('wrongname');
         $this->assertSame(Outcome::TLS, self::probe(TlsFixtureServer::internalCa(), true, $capabilities, 'wrongname')->error);
-        $this->assertSame(1, TlsFixtureServer::accepts('wrongname') - $before, 'one handshake');
+        $this->assertSame(1, TlsFixtureServer::accepts('wrongname') - $before, 'one handshake, on every way');
     }
 
     /**
@@ -217,13 +381,15 @@ class TrustTest extends TestCase
      */
     public function test_theSecondTry_verifiesPeerAndHostStrictly(): void
     {
-        foreach (['multi', 'sequential'] as $transport) {
+        foreach (self::WAYS as $transport) {
             foreach (['expired', 'wrongname'] as $port) {
                 $before = TlsFixtureServer::accepts($port);
                 $answer = DisabledFunctions::runChild([], ['tls', TlsFixtureServer::url($port), TlsFixtureServer::otherCa(), '1', $transport],
-                    ['curl.cainfo' => TlsFixtureServer::internalCa()]);
+                    self::trustStore(TlsFixtureServer::internalCa()));
                 $this->assertSame([null, Outcome::TLS], [$answer['results']['status'], $answer['results']['error']], "$transport, $port");
-                $this->assertSame(2, TlsFixtureServer::accepts($port) - $before, "$transport, $port: the bundle, then the trust store");
+                // the streams see the expired date in their diagnosis and leave out the trust store
+                $this->assertSame(self::handshakes($transport, 2, $port === 'expired' ? 2 : 3), TlsFixtureServer::accepts($port) - $before,
+                    "$transport, $port: the bundle, then the trust store");
             }
         }
     }
@@ -236,12 +402,12 @@ class TrustTest extends TestCase
     {
         $stores = ['internal' => TlsFixtureServer::internalCa(), 'self' => TlsFixtureServer::trustingCa()];
         foreach ($stores as $port => $trustStore) {
-            foreach (['multi', 'sequential'] as $transport) {
+            foreach (self::WAYS as $transport) {
                 $before = TlsFixtureServer::accepts($port);
                 $results = self::runInChild(TlsFixtureServer::otherCa(), $trustStore, $transport, 5000,
                     [TlsFixtureServer::url($port, '/hop'), TlsFixtureServer::url($port)]);
                 $this->assertSame([[200, null, 1], [200, null, 0]], array_map(static fn(array $r): array => [$r['status'], $r['error'], $r['redirects']], $results), "$port, $transport");
-                $this->assertSame(4, TlsFixtureServer::accepts($port) - $before,
+                $this->assertSame(self::handshakes($transport, 4, 5), TlsFixtureServer::accepts($port) - $before,
                     "$port, $transport: the bundle once and the trust store, then the hop and the next check with the trust store only");
             }
         }
@@ -253,7 +419,7 @@ class TrustTest extends TestCase
      */
     public function test_anotherPortOfThatHost_stillStartsWithTheBundle(): void
     {
-        foreach (['multi', 'sequential'] as $transport) {
+        foreach (self::WAYS as $transport) {
             $results = self::runInChild(TlsFixtureServer::internalCa(), TlsFixtureServer::trustingCa(), $transport, 5000,
                 [TlsFixtureServer::url('self'), TlsFixtureServer::url('internal')]);
             $this->assertSame([[200, null], [200, null]], array_map(static fn(array $r): array => [$r['status'], $r['error']], $results),
@@ -269,14 +435,15 @@ class TrustTest extends TestCase
     {
         TlsFixtureServer::delay('internal', 400);
         try {
-            foreach (['multi', 'sequential'] as $transport) {
+            foreach (self::WAYS as $transport) {
                 [$r] = self::runInChild(TlsFixtureServer::otherCa(), TlsFixtureServer::internalCa(), $transport, 5000, [TlsFixtureServer::url('internal')]);
                 $this->assertSame([200, null], [$r['status'], $r['error']], $transport);
                 $this->assertGreaterThanOrEqual(400, $r['total'], "$transport: the handshake that answered");
                 $this->assertLessThan(800, $r['total'], "$transport: without the failed one before it");
-                // 600 ms in all: the failed try leaves less than the 400 ms the second handshake waits, so it runs out
-                // of time instead of answering. libcurl's connect timeout covers the handshake; some libcurl builds
-                // (CI's) then report no connect time, which reads as connect rather than timeout
+                // 600 ms in all: the failed try leaves less than the 400 ms the second handshake (the streams: their
+                // diagnosis) waits, so it runs out of time instead of answering. libcurl's connect timeout covers the
+                // handshake; some libcurl builds (CI's) then report no connect time, which reads as connect rather than
+                // timeout
                 [$r] = self::runInChild(TlsFixtureServer::otherCa(), TlsFixtureServer::internalCa(), $transport, 600, [TlsFixtureServer::url('internal')]);
                 $this->assertNull($r['status'], "$transport: within the check's time");
                 $this->assertContains($r['error'], [Outcome::TIMEOUT, Outcome::CONNECT], "$transport: the time ran out");
@@ -316,7 +483,8 @@ class TrustTest extends TestCase
      * The second try with the server's trust store is part of the check, not a new one: it runs also when the run's
      * deadline passed during the first try (a new check would not start then), so the address keeps its result.
      */
-    public function test_theSecondTry_runsAfterTheDeadlineToo(): void
+    /** @dataProvider transports */
+    public function test_theSecondTry_runsAfterTheDeadlineToo(Capabilities $capabilities, string $way): void
     {
         $slow = true;
         $guard = new AddressGuard(true, static function (string $host) use (&$slow): array {
@@ -326,12 +494,12 @@ class TrustTest extends TestCase
             }
             return $host === 'localhost' ? ['127.0.0.1'] : [];
         }, true);
-        $prober = new Prober($guard, [], 'FeinwerkUptimeMonitor-Test', 2000, 5000, 8, TlsFixtureServer::otherCa(), new Capabilities(), true);
+        $prober = new Prober($guard, [], 'FeinwerkUptimeMonitor-Test', 2000, 5000, 8, TlsFixtureServer::otherCa(), $capabilities, true);
         $before = TlsFixtureServer::accepts('internal');
         $responses = $prober->probeAll([new Target(1, 1, 'web1', Kind::WEB, TlsFixtureServer::url('internal'), 'default')], microtime(true) + 0.3);
         $this->assertArrayHasKey(1, $responses, 'a result, not "not measured"');
         $this->assertSame(Outcome::TLS, $responses[1]->error);
-        $this->assertSame(2, TlsFixtureServer::accepts('internal') - $before, 'the second try ran');
+        $this->assertSame(self::handshakes($way, 2, 3), TlsFixtureServer::accepts('internal') - $before, 'the second try ran');
     }
 
     public function test_theCaFile_followsMatomosOrder(): void

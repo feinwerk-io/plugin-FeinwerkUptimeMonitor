@@ -27,9 +27,11 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Target;
  *
  * Side by side through curl_multi where PHP has all its functions; where a host disabled one (often curl_multi_exec,
  * through php.ini disable_functions) the same transfers run one after the other through curl_exec, one target per
- * batch, so each starts only before the deadline. Without either, no request is sent and every check ends as
- * Outcome::PHP_DISABLED (not checkable), never as an error (Capabilities). While Matomo's internet features are off
- * (without the opt-in, Runner\InternetAccess) nothing is looked up or sent either: Outcome::INTERNET_OFF.
+ * batch, so each starts only before the deadline. Where curl is missing or both its ways are disabled, PHP's own streams
+ * carry them, one after the other too (StreamTransport, with the same guarantees). Without any way, no request is sent
+ * and every check ends as Outcome::PHP_DISABLED (not checkable), never as an error (Capabilities); so does an https
+ * address on the stream way of a PHP without its TLS functions. While Matomo's internet features are off (without the
+ * opt-in, Runner\InternetAccess) nothing is looked up or sent either: Outcome::INTERNET_OFF.
  */
 final class Prober
 {
@@ -67,6 +69,7 @@ final class Prober
      * @var array<string, true>
      */
     private array $systemHosts = [];
+    private ?StreamTransport $streams = null;
 
     /**
      * @param array $proxy Matomo's [proxy] settings: host, port, username, password, exclude (empty: no proxy)
@@ -94,8 +97,8 @@ final class Prober
     }
 
     /**
-     * How the requests go out: Capabilities::MULTI (side by side), SEQUENTIAL (one after the other) or null (none: every
-     * check is not checkable, note php_disabled).
+     * How the requests go out: Capabilities::MULTI (side by side), SEQUENTIAL (curl_exec, one after the other), STREAM
+     * (PHP's streams, one after the other) or null (none: every check is not checkable, note php_disabled).
      */
     public function transport(): ?string
     {
@@ -156,7 +159,9 @@ final class Prober
         // request can go out from this PHP
         $nothingSent = !$this->capabilities->internetAllowed() ? Outcome::INTERNET_OFF : ($transport === null ? Outcome::PHP_DISABLED : null);
         // one after the other: one target per batch, so that each one starts only before the deadline
-        $batch = $transport === Capabilities::SEQUENTIAL ? 1 : max(1, $this->parallel * 2);
+        $batch = $transport === Capabilities::MULTI ? max(1, $this->parallel * 2) : 1;
+        // the streams of a PHP without its TLS functions check http addresses only
+        $noHttps = $transport === Capabilities::STREAM && !$this->capabilities->canStreamTls();
         while ($queue !== [] && microtime(true) < $deadline) {
             if ($beforeBatch !== null) {
                 $beforeBatch(); // e.g. keep the run's lock alive
@@ -170,8 +175,12 @@ final class Prober
                 continue;
             }
             while ($pending !== []) {
-                $ready = $this->resolve($pending, $finish, $deadline);
-                $pending = $transport === Capabilities::MULTI ? $this->transfer($ready, $finish) : $this->transferEach($ready, $finish);
+                $ready = $this->resolve($pending, $finish, $deadline, $noHttps);
+                $pending = match ($transport) {
+                    Capabilities::MULTI => $this->transfer($ready, $finish),
+                    Capabilities::SEQUENTIAL => $this->transferEach($ready, $finish),
+                    default => $this->transferStreams($ready, $finish),
+                };
             }
         }
 
@@ -209,9 +218,10 @@ final class Prober
     /**
      * Runs the guard for each state (no transfer is running meanwhile).
      *
+     * @param bool $noHttps https addresses cannot be sent (the stream way without PHP's TLS functions)
      * @return list<array> states ready for transfer
      */
-    private function resolve(array $states, \Closure $finish, float $deadline): array
+    private function resolve(array $states, \Closure $finish, float $deadline, bool $noHttps = false): array
     {
         $ready = [];
         foreach ($states as $state) {
@@ -228,6 +238,11 @@ final class Prober
             // a check starts only before the deadline; its redirect hops belong to it and run on
             if ($state['hops'] === 0 && microtime(true) >= $deadline) {
                 continue; // slow DNS ate the budget: not measured in this run
+            }
+            if ($noHttps && strncasecmp($state['url'], 'https:', 6) === 0) {
+                // not checkable from this PHP, nothing looked up or sent (the functions are named, missingFunctions())
+                $finish($state, self::failure($state, Outcome::PHP_DISABLED));
+                continue;
             }
             $host = (string) parse_url($state['url'], PHP_URL_HOST);
             $proxied = $this->usesProxyFor($host);
@@ -341,6 +356,55 @@ final class Prober
     }
 
     /**
+     * The same transfers one after the other through PHP's streams (a host without curl): connected to the approved
+     * addresses only, with the guard's host in Host, SNI and a proxy's CONNECT, the same CA file and second try, body
+     * caps, headers and timings (StreamTransport); finishes them or returns their next redirect hops.
+     *
+     * @return list<array> redirect hops to resolve and transfer next
+     */
+    private function transferStreams(array $states, \Closure $finish): array
+    {
+        $this->streams ??= new StreamTransport($this->capabilities, $this->userAgent, $this->proxy);
+        $next = [];
+        foreach ($states as $state) {
+            $state = $this->withTrust($state);
+            /** @var GuardDecision $decision */
+            $decision = $state['decision'];
+            $remaining = max(1, $this->totalTimeoutMs - $state['used']);
+            // the guard's ASCII host, as on the curl ways
+            $url = self::withHost($state['url'], $decision->host);
+            $fetched = $this->streams->fetch($url, $decision, (bool) $state['proxied'], $state['bundle'] ? $this->caInfo : null,
+                $this->systemRetry && $state['bundle'], min($this->connectTimeoutMs, $remaining), $remaining, self::capOf($state['target']));
+            $ok = $fetched->error === null;
+            $https = strncasecmp($state['url'], 'https:', 6) === 0;
+            $response = new ProbeResponse(
+                $ok ? $fetched->status : null,
+                $ok ? $fetched->body : '',
+                $fetched->error,
+                $state['url'],
+                self::timings((int) $state['dns'], $fetched->connectMs, $fetched->tlsMs, $fetched->ttfbMs, $fetched->totalMs + $state['spent']),
+                $state['cert'] ?? ($https ? $fetched->certNotAfter : null),
+                $state['hops'],
+                $ok && $fetched->capped,
+                $ok ? $fetched->headers : []
+            );
+            $redirect = $fetched->location !== null ? RedirectUrl::resolve($url, $fetched->location) : '';
+            $hop = $this->advance($state, $response, $fetched->trustAnchorProblem, $redirect, $finish, $fetched->lostMs);
+            if ($hop !== null) {
+                $next[] = $hop;
+            }
+        }
+
+        return $next;
+    }
+
+    /** the body cap of a target: the Matomo interface and Tag Manager containers need their whole file */
+    private static function capOf(Target $target): int
+    {
+        return in_array($target->kind, [Kind::UI, Kind::CONTAINER], true) ? self::MAX_BODY_LARGE : self::MAX_BODY;
+    }
+
+    /**
      * Which CA file the transfer of a state verifies with, decided when it starts: 'bundle' true for $caInfo, false for
      * the server's trust store (none set; also for the second try, and for a host whose certificate the bundle could
      * not verify for a trust anchor problem earlier in this run).
@@ -360,28 +424,42 @@ final class Prober
     }
 
     /**
-     * A transfer is done: finishes the state, or returns its second try with the server's trust store or its next
-     * redirect hop (websites and the Matomo interface, up to MAX_REDIRECTS).
+     * A curl transfer is done: what curl measured, read for advance().
      *
      * @param \CurlHandle $handle
      */
     private function finished($handle, int $result, \stdClass $sink, array $state, \Closure $finish): ?array
     {
         $response = $this->response($handle, $result, $sink, $state);
-        if ($this->systemRetry && $state['bundle']
-            && TrustFile::secondTry($result, (int) curl_getinfo($handle, CURLINFO_SSL_VERIFYRESULT), $this->capabilities->tlsLibrary())
-        ) {
+        $secondTry = TrustFile::secondTry($result, (int) curl_getinfo($handle, CURLINFO_SSL_VERIFYRESULT), $this->capabilities->tlsLibrary());
+        $redirect = curl_getinfo($handle, CURLINFO_REDIRECT_URL);
+
+        return $this->advance($state, $response, $secondTry, is_string($redirect) ? $redirect : '', $finish);
+    }
+
+    /**
+     * What follows a transfer, the same for every transport: the second try with the server's trust store (when the
+     * transfer verified with Matomo's bundle and failed for a trust anchor problem), the next redirect hop (websites
+     * and the Matomo interface, up to MAX_REDIRECTS; every kind one hop to its own address with https), or the result.
+     *
+     * @param bool $trustAnchorProblem the certificate did not verify with the CA file for a trust anchor problem
+     *                                 (TrustFile::secondTry() for curl), or the CA file could not be loaded
+     * @param string $redirect the absolute URL of the answer's Location ('' without one)
+     * @param int $lostMs time of this transfer that its timings do not report but the 10 seconds count
+     */
+    private function advance(array $state, ProbeResponse $response, bool $trustAnchorProblem, string $redirect, \Closure $finish, int $lostMs = 0): ?array
+    {
+        if ($this->systemRetry && $state['bundle'] && $trustAnchorProblem) {
             // the same hop once more, verified by the server's trust store instead of Matomo's bundle, and the host's
             // later transfers of this run start there. The 10 seconds go on (this attempt's time is used), the
             // reported times are the second try's alone (L8 review of 5.4.0, SHOULD 2)
             $this->systemHosts[self::hostPort($state['decision'])] = true;
 
-            return ['system' => true, 'used' => $state['used'] + $response->timings['total'] - $state['spent']] + $state;
+            return ['system' => true, 'used' => $state['used'] + $response->timings['total'] - $state['spent'] + $lostMs] + $state;
         }
-        $redirect = curl_getinfo($handle, CURLINFO_REDIRECT_URL);
 
         if ($response->error === null && $response->status >= 300 && $response->status < 400
-            && is_string($redirect) && $redirect !== ''
+            && $redirect !== ''
             && ((in_array($state['target']->kind, self::FOLLOWS_REDIRECTS, true) && $state['hops'] < self::MAX_REDIRECTS)
                 // every kind: one hop to the same address with https (Matomo stored as http behind a TLS proxy, D2)
                 || ($state['hops'] === 0 && ResponseClassifier::isHttpsUpgrade(self::withHost($state['url'], $state['decision']->host), $redirect)))
@@ -410,7 +488,7 @@ final class Prober
         $decision = $state['decision'];
         $remaining = max(1, $this->totalTimeoutMs - $state['used']);
         $handle = curl_init();
-        $cap = in_array($state['target']->kind, [Kind::UI, Kind::CONTAINER], true) ? self::MAX_BODY_LARGE : self::MAX_BODY;
+        $cap = self::capOf($state['target']);
         $options = [
             // the guard's ASCII host, never the URL's own: libcurl converts internationalised names by its own rules
             // (libidn2), which can differ from PHP's intl. So the name checked is the name fetched: by Matomo's proxy, in
@@ -497,7 +575,9 @@ final class Prober
         $info = curl_getinfo($handle);
         $ms = static fn($seconds): int => (int) round(((float) $seconds) * 1000);
         $connected = (float) ($info['connect_time'] ?? 0);
-        $appconnect = (float) ($info['appconnect_time'] ?? 0);
+        // PHP's array of curl_getinfo() has no appconnect_time, only appconnect_time_us (the TLS time was always 0)
+        $appconnect = isset($info['appconnect_time_us']) ? $info['appconnect_time_us'] / 1000000
+            : (float) curl_getinfo($handle, CURLINFO_APPCONNECT_TIME);
         $tls = $appconnect > 0 ? max(0, $ms($appconnect) - $ms($connected)) : 0;
         $timings = self::timings((int) $state['dns'], max(0, $ms($connected) - $ms($info['namelookup_time'] ?? 0)), $tls,
             $ms($info['starttransfer_time'] ?? 0), $ms($info['total_time'] ?? 0) + $state['spent']);

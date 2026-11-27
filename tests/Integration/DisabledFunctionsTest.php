@@ -118,9 +118,37 @@ class DisabledFunctionsTest extends IntegrationTestCase
         $this->assertSame([Outcome::UP, 200, null], [$web['outcome'], $web['httpStatus'], $web['note']]);
     }
 
+    /**
+     * Robustness part 2: without curl (here every curl function disabled) the checks go out through PHP's streams, and
+     * getStatus and the admin page say so to super users, as a neutral line: no PHP function is missing.
+     */
+    public function test_checkNow_withoutCurl_checksThroughTheStreams_andSaysSo(): void
+    {
+        self::$disabled = DisabledFunctions::CURL;
+        $web = self::checkNow(1)[DefaultTargets::webKey(self::$base . '/page-proxy')];
+        $this->assertSame([Outcome::UP, 200, null], [$web['outcome'], $web['httpStatus'], $web['note']]);
+        $status = API::getInstance()->getStatus(1);
+        $this->assertSame(['streams', []], [$status['transport'], $status['disabledPhpFunctions']]);
+        $this->assertSame('streams', ScreenProps::for(0, 'admin')['transport']);
+        $this->assertNull(ScreenProps::for(1, 'page')['transport'], 'the admin page only');
+
+        FakeAccess::clearAccess(false, [1], [1], 'admin');
+        $this->assertNull(API::getInstance()->getStatus(1)['transport'], 'super users only: it is about the server');
+    }
+
+    /** Each way by its name: curl_exec where curl_multi_exec is disabled, none where nothing can send. */
+    public function test_getStatus_namesTheWayTheChecksTake(): void
+    {
+        foreach (['curl_multi' => [], 'curl_exec' => DisabledFunctions::SHARED_HOST,
+            'none' => array_merge(DisabledFunctions::CURL, ['stream_select'])] as $way => $disabled) {
+            self::$disabled = $disabled;
+            $this->assertSame($way, API::getInstance()->getStatus(0)['transport'], $way);
+        }
+    }
+
     public function test_checkNow_withoutAnyWayToSendRequests_isNotCheckable_neverAnError(): void
     {
-        self::$disabled = array_merge(DisabledFunctions::SHARED_HOST, ['curl_exec']);
+        self::$disabled = array_merge(DisabledFunctions::SHARED_HOST, ['curl_exec', 'stream_socket_client']);
         $results = self::checkNow(1);
         $this->assertNotEmpty($results);
         foreach ($results as $key => $result) {
@@ -148,11 +176,11 @@ class DisabledFunctionsTest extends IntegrationTestCase
     public function test_theMissingFunctions_areNamedUntilARunHasThemAgain(): void
     {
         $this->assertSame([], API::getInstance()->getStatus(1)['disabledPhpFunctions'], 'before any run');
-        self::$disabled = array_merge(DisabledFunctions::SHARED_HOST, ['curl_exec']);
+        self::$disabled = array_merge(DisabledFunctions::SHARED_HOST, ['curl_exec', 'stream_socket_client']);
         self::checkNow(1);
-        $this->assertSame(['curl_exec', 'curl_multi_exec'], API::getInstance()->getStatus(1)['disabledPhpFunctions']);
-        $this->assertSame(['curl_exec', 'curl_multi_exec'], API::getInstance()->getStatus(0)['disabledPhpFunctions']);
-        $this->assertSame(['curl_exec', 'curl_multi_exec'], ScreenProps::for(0, 'admin')['disabledPhpFunctions']);
+        $this->assertSame(['curl_exec', 'curl_multi_exec', 'stream_socket_client'], API::getInstance()->getStatus(1)['disabledPhpFunctions']);
+        $this->assertSame(['curl_exec', 'curl_multi_exec', 'stream_socket_client'], API::getInstance()->getStatus(0)['disabledPhpFunctions']);
+        $this->assertSame(['curl_exec', 'curl_multi_exec', 'stream_socket_client'], ScreenProps::for(0, 'admin')['disabledPhpFunctions']);
         $this->assertNull(ScreenProps::for(1, 'page')['disabledPhpFunctions'], 'the admin page only');
 
         FakeAccess::clearAccess(false, [1], [1], 'admin');
@@ -227,7 +255,7 @@ class DisabledFunctionsTest extends IntegrationTestCase
             (new IncidentStore())->apply([$down]);
         }
 
-        self::$disabled = array_merge(DisabledFunctions::SHARED_HOST, ['curl_exec']);
+        self::$disabled = array_merge(DisabledFunctions::SHARED_HOST, ['curl_exec', 'stream_socket_client']);
         $this->assertSame(Outcome::PHP_DISABLED, self::checkNow(1)[$key]['note']);
 
         $outage = array_values(array_filter(

@@ -41,7 +41,9 @@ Documentation: [plugins.feinwerk.io](https://plugins.feinwerk.io/en/plugins/Fein
 
 - Matomo 5.0 or later (Matomo 5 and Matomo 6), PHP 8.1 or later
 - Versions: one version 5.x of this plugin for Matomo 5 and Matomo 6
-- PHP's curl extension (Matomo uses it as well). Matomo's own cron job (`core:archive`) or browser-triggered
+- PHP's curl extension is recommended (Matomo uses it as well), not required: without it, or where php.ini disables
+  both `curl_exec` and `curl_multi_exec`, the checks go out through PHP's own network functions, one after the other
+  (HTTPS addresses then need PHP's openssl extension). Matomo's own cron job (`core:archive`) or browser-triggered
   archiving runs the hourly checks.
 
 ## Installation
@@ -210,7 +212,9 @@ of `getSitesOverview` the level of its soonest certificate (`certificateLevel`: 
 address while private addresses are not allowed in the settings): such an address is not checkable from the moment it
 is set. For super users it also names the PHP functions the latest check run did not find (`disabledPhpFunctions`, for
 example `curl_exec` on a server whose php.ini lists it under `disable_functions`): until they are allowed again, the
-addresses with the note `php_disabled` cannot be checked. `internetFeaturesOff` is true while Matomo's internet
+addresses with the note `php_disabled` cannot be checked. `transport` names for super users how the server's PHP sends
+the checks: `curl_multi` (side by side), `curl_exec` (one after the other, where `curl_multi_exec` is disabled),
+`streams` (PHP's own network functions, where curl is missing or both curl ways are disabled) or `none`. `internetFeaturesOff` is true while Matomo's internet
 features are switched off and `checkWithInternetFeaturesOff` is not set: no checks are sent, and the addresses carry
 the note `internet_off`. An outage that is open when the checks stop sending (notes `internet_off`, `php_disabled` or
 `needs_intl`) ends at its last failed check in `getIncidents`, not at the time of a check that sent nothing.

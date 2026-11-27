@@ -25,13 +25,15 @@
   a hint for the server administrator; the fold then has no "Why?" and no "Allow private
   addresses", which are not the reason. The same while Matomo's internet features are off (Peter's
   2a, with the opt-in), and a hint when Matomo's own addresses answer only after the redirect to
-  https (audit D2). UI review of 5.4.0 (Peter, "go" to P1 to P4): those server rows are one list
-  with the dividers of "Checks and alerts", and each line for config/config.ini.php is a chip with
-  Copy, as the cron line (P2); the line alone, never a section header, which would replace the
-  section already in the file; the tracker address field is named and linked as the settings page
-  names it (L6); while Matomo's internet features are off the cron row is neutral and says the
-  checks send nothing (L8), and the target panel says so too (L9). Quick UI review before 5.4.0, L3:
-  each chip's Copy is named with its line and says "Copied" in a polite region (CopyChip.vue).
+  https (audit D2). Robustness part 2: a neutral row when the checks go out one after the other
+  through curl_exec or through PHP's streams (no curl). UI review of 5.4.0 (Peter, "go" to P1 to
+  P4): those server rows are one list with the dividers of "Checks and alerts", and each line for
+  config/config.ini.php is a chip with Copy, as the cron line (P2); the line alone, never a
+  section header, which would replace the section already in the file; the tracker address field
+  is named and linked as the settings page names it (L6); while Matomo's internet features are off
+  the cron row is neutral and says the checks send nothing (L8), and the target panel says so too
+  (L9). Quick UI review before 5.4.0, L3: each chip's Copy is named with its line and says
+  "Copied" in a polite region (CopyChip.vue).
 -->
 <template>
   <div
@@ -43,7 +45,7 @@
         : 'FeinwerkUptimeMonitor_UiAdminIntro') }}</p>
       <!-- P2 (UI review of 5.4.0): the server's rows in one list, as "Checks and alerts" below -->
       <ul
-        v-if="phpDisabled.length || config.internetOff || config.httpsRedirect"
+        v-if="phpDisabled.length || config.internetOff || config.httpsRedirect || transportText"
         class="fwum-checks fwum-admin__server"
       >
         <!-- 5.3.1: the server's PHP disables functions the checks need: the reason, once -->
@@ -81,6 +83,19 @@
               class="fwum-chip"
               :line="internetLine"
             />
+          </div>
+        </li>
+        <!-- robustness part 2: the checks work, through curl_exec or PHP's streams: an info row -->
+        <li
+          v-if="transportText"
+          class="fwum-admin__transport is-info"
+        >
+          <span
+            class="icon-info"
+            aria-hidden="true"
+          />
+          <div>
+            <p>{{ transportText }}</p>
           </div>
         </li>
         <!-- audit D2: Matomo's address stored as http behind a proxy that handles https; UI review
@@ -486,6 +501,20 @@ export default defineComponent({
         return translate(`FeinwerkUptimeMonitor_${keys[count === 1 ? 0 : 1]}`, names);
       }
       return translate(`FeinwerkUptimeMonitor_${keys[2]}`, String(count));
+    },
+    /**
+     * how the checks are sent when it is not curl_multi side by side: one after the other through
+     * curl_exec, or through PHP's own streams; nothing while Matomo's internet features are off
+     * (nothing is sent) or while the php row names missing functions (no way works, or the
+     * streams cannot send https): "they work as usual" would not be true there
+     */
+    transportText(): string {
+      const keys: Record<string, string> = {
+        curl_exec: 'FeinwerkUptimeMonitor_UiAdminTransportCurlExec',
+        streams: 'FeinwerkUptimeMonitor_UiAdminTransportStreams',
+      };
+      const key = keys[this.config.transport || ''];
+      return key && !this.config.internetOff && !this.phpDisabled.length ? translate(key) : '';
     },
     /** the PHP functions the latest check run did not find (the server's php.ini disables them) */
     phpDisabled(): string[] {

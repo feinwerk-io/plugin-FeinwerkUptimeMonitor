@@ -16,10 +16,12 @@
 //   php -d disable_functions=random_int disabled-child.php sample
 //   php -d disable_functions=sleep disabled-child.php pause
 //   php -d max_execution_time=30 -d disable_functions=set_time_limit disabled-child.php timelimit
+//   php -n disabled-child.php functions curl_init [...]
 //   php -d disable_functions=idn_to_ascii disabled-child.php idn https://müller.de/
-//   php -d curl.cainfo=/nonexistent/ca.pem disabled-child.php tls https://localhost:PORT/ <ca file|-> <retry 0|1> <multi|sequential>
-//   php -d curl.cainfo=<ca file> disabled-child.php tlsrun <ca file|-> <retry 0|1> <multi|sequential> <total ms> <url> [<url> ...]
-//       (each URL in its own probeAll() of one prober, as a run's first checks and its retry phase)
+//   php -d curl.cainfo=/nonexistent/ca.pem disabled-child.php tls https://localhost:PORT/ <ca file|-> <retry 0|1> <multi|sequential|stream>
+//   php -d curl.cainfo=<ca file> disabled-child.php tlsrun <ca file|-> <retry 0|1> <multi|sequential|stream> <total ms> <url> [<url> ...]
+//       (each URL in its own probeAll() of one prober, as a run's first checks and its retry phase; on the stream way
+//       openssl.cafile stands for the server's trust store)
 
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Kind;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Target;
@@ -29,6 +31,7 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Http\CertificateReader;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Prober;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\Runtime;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Tracker\TimingSampler;
+use Piwik\Plugins\FeinwerkUptimeMonitor\tests\Fixtures\DisabledFunctions;
 
 // the plugin's classes only, without composer (the Matomo test job has no vendor/ of the plugin)
 spl_autoload_register(static function (string $class): void {
@@ -42,6 +45,11 @@ spl_autoload_register(static function (string $class): void {
 });
 
 $mode = $argv[1] ?? '';
+// the way of the tls modes: multi (every function), sequential (no curl_multi_exec), stream (no curl at all)
+$transport = static function (string $way): Capabilities {
+    $disabled = ['multi' => [], 'sequential' => ['curl_multi_exec'], 'stream' => DisabledFunctions::CURL][$way] ?? [];
+    return new Capabilities(DisabledFunctions::except($disabled));
+};
 try {
     if ($mode === 'probe') {
         $base = (string) ($argv[2] ?? '');
@@ -80,16 +88,14 @@ try {
     } elseif ($mode === 'tls') {
         // the prober against tests/Fixtures/tls-server.php; this PHP's curl.cainfo stands for the server's trust store
         $caFile = (string) ($argv[3] ?? '-');
-        $capabilities = ($argv[5] ?? 'multi') === 'sequential'
-            ? new Capabilities(static fn(string $name): bool => $name !== 'curl_multi_exec' && function_exists($name)) : new Capabilities();
+        $capabilities = $transport(($argv[5] ?? 'multi'));
         $guard = new AddressGuard(true, static fn(string $host): array => $host === 'localhost' ? ['127.0.0.1'] : [], true);
         $prober = new Prober($guard, [], 'FeinwerkUptimeMonitor-Test', 2000, 5000, 8, $caFile === '-' ? null : $caFile, $capabilities, ($argv[4] ?? '0') === '1');
         $r = $prober->probeAll([new Target(1, 1, 'web1', Kind::WEB, (string) ($argv[2] ?? ''), 'default')], microtime(true) + 30)[1];
         echo json_encode(['ok' => true, 'results' => ['status' => $r->status, 'error' => $r->error, 'body' => $r->body]]);
     } elseif ($mode === 'tlsrun') {
         $caFile = (string) ($argv[2] ?? '-');
-        $capabilities = ($argv[4] ?? 'multi') === 'sequential'
-            ? new Capabilities(static fn(string $name): bool => $name !== 'curl_multi_exec' && function_exists($name)) : new Capabilities();
+        $capabilities = $transport(($argv[4] ?? 'multi'));
         $guard = new AddressGuard(true, static fn(string $host): array => $host === 'localhost' ? ['127.0.0.1'] : [], true);
         $prober = new Prober($guard, [], 'FeinwerkUptimeMonitor-Test', 2000, (int) ($argv[5] ?? 5000), 8, $caFile === '-' ? null : $caFile,
             $capabilities, ($argv[3] ?? '0') === '1');
@@ -106,6 +112,13 @@ try {
         $decision = $guard->check((string) ($argv[2] ?? ''));
         echo json_encode(['ok' => true, 'results' => ['allowed' => $decision->allowed, 'reason' => $decision->reason, 'host' => $decision->host,
             'refusedWithoutLookup' => $guard->refusesWithoutLookup((string) ($argv[2] ?? ''))]]);
+    } elseif ($mode === 'functions') {
+        // whether this PHP has the given functions (e.g. curl compiled in where php -n should have none)
+        $exists = [];
+        foreach (array_slice($argv, 2) as $name) {
+            $exists[$name] = function_exists($name);
+        }
+        echo json_encode(['ok' => true, 'results' => $exists]);
     } elseif ($mode === 'timelimit') {
         echo json_encode(['ok' => true, 'results' => Runtime::raiseTimeLimit(new Capabilities(), 180)]);
     } else {

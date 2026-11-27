@@ -79,22 +79,101 @@ class CapabilitiesTest extends TestCase
         }
     }
 
-    public function test_curlExecMissingToo_isNoTransport_namingTheMissingFunctions(): void
+    /**
+     * Robustness part 2: curl_exec disabled too, or no curl at all (the extension missing, or every curl function in
+     * disable_functions): the checks go out through PHP's own streams, and nothing is missing to report.
+     */
+    public function test_withoutAnyCurlWay_theStreamsCarryTheChecks(): void
     {
-        $capabilities = self::without(array_merge(DisabledFunctions::SHARED_HOST, ['curl_exec']));
-        $this->assertNull($capabilities->transport());
-        $this->assertSame(['curl_exec', 'curl_multi_exec'], $capabilities->missingForTransport());
+        foreach ([array_merge(DisabledFunctions::SHARED_HOST, ['curl_exec']), ['curl_init'], ['curl_setopt_array'], ['curl_getinfo'],
+            ['curl_errno', 'curl_multi_select']] as $disabled) {
+            $capabilities = self::without($disabled);
+            $this->assertSame(Capabilities::STREAM, $capabilities->transport(), implode(',', $disabled));
+            $this->assertSame([], $capabilities->missingForTransport(), implode(',', $disabled) . ': the checks run');
+        }
     }
 
-    public function test_aFunctionBothWaysNeed_isNoTransport(): void
+    /** curl first: the streams only where neither curl way works */
+    public function test_curl_staysFirst(): void
     {
-        foreach (['curl_init', 'curl_setopt_array', 'curl_getinfo'] as $function) {
-            $capabilities = self::without([$function]);
+        $this->assertSame(['curl_multi', 'curl_exec', 'streams', 'none'], [self::without([])->transportName(),
+            self::without(['curl_multi_exec'])->transportName(), self::without(['curl_init'])->transportName(),
+            self::without(['curl_init', 'stream_select'])->transportName()], "the API's names");
+        $this->assertSame(Capabilities::MULTI, self::without(['stream_socket_client', 'stream_select'])->transport());
+        $this->assertSame(Capabilities::SEQUENTIAL, self::without(['curl_multi_exec', 'stream_socket_client'])->transport());
+    }
+
+    public function test_noWayAtAll_isNoTransport_namingEveryWaysMissingFunctions(): void
+    {
+        $capabilities = self::without(array_merge(DisabledFunctions::SHARED_HOST, ['curl_exec', 'stream_socket_client']));
+        $this->assertNull($capabilities->transport());
+        $this->assertSame(['curl_exec', 'curl_multi_exec', 'stream_socket_client'], $capabilities->missingForTransport());
+    }
+
+    /** Never a half stream way: each function it calls must be there. */
+    public function test_anyStreamFunctionMissing_withoutCurl_isNoTransport(): void
+    {
+        foreach (['stream_socket_client', 'stream_context_create', 'stream_set_blocking', 'stream_select', 'stream_set_timeout',
+            'stream_get_meta_data', 'restore_error_handler'] as $function) {
+            $capabilities = self::without(['curl_init', $function]);
             $this->assertNull($capabilities->transport(), $function);
+            $this->assertSame(['curl_init', $function], $capabilities->missingForTransport(), $function);
+        }
+    }
+
+    /**
+     * HTTPS through the streams needs PHP's openssl functions; without them the streams still check http addresses, and
+     * the functions are named (an https address is not checkable, note php_disabled).
+     */
+    public function test_streams_withoutTheTlsFunctions_checkHttpOnly_namingThem(): void
+    {
+        $this->assertTrue(self::without(['curl_init'])->canStreamTls());
+        foreach (['stream_socket_enable_crypto', 'stream_context_get_params', 'openssl_x509_parse'] as $function) {
+            $capabilities = self::without(['curl_init', $function]);
+            $this->assertSame(Capabilities::STREAM, $capabilities->transport(), $function);
+            $this->assertFalse($capabilities->canStreamTls(), $function);
             $this->assertSame([$function], $capabilities->missingForTransport(), $function);
         }
-        $this->assertSame(Capabilities::MULTI, self::without(['curl_errno'])->transport(), 'only the sequential way reads curl_errno');
-        $this->assertNull(self::without(['curl_errno', 'curl_multi_select'])->transport());
+        $this->assertSame([], self::without(['openssl_x509_parse'])->missingForTransport(), 'curl does TLS itself');
+        $this->assertSame(['curl_init', 'stream_select', 'stream_socket_enable_crypto'],
+            self::without(['curl_init', 'stream_select', 'stream_socket_enable_crypto'])->missingForTransport(), 'no way: every one');
+    }
+
+    /**
+     * Every stream, openssl, zlib or socket function the stream transport calls is checked: taking any one of them away
+     * (on a host without curl) takes away the stream way, its https or its decoding, so it is never called missing.
+     */
+    public function test_everyFunctionTheStreamTransportCalls_isChecked(): void
+    {
+        $called = [];
+        $tokens = \PhpToken::tokenize((string) file_get_contents(dirname(__DIR__, 3) . '/Http/StreamTransport.php'));
+        foreach ($tokens as $i => $token) {
+            if (!$token->is(T_STRING) || !preg_match('/^(stream_|openssl_|inflate_|deflate_|gz|zlib_|fsockopen|socket_|pfsockopen)/', $token->text)) {
+                continue;
+            }
+            $next = $tokens[$i + 1] ?? null;
+            $previous = null;
+            for ($j = $i - 1; $j >= 0 && $tokens[$j]->isIgnorable(); $j--) {
+            }
+            $previous = $tokens[$j] ?? null;
+            if ($next !== null && $next->text === '(' && !($previous !== null && in_array($previous->text, ['->', '::', 'function', '?->'], true))) {
+                $called[$token->text] = true;
+            }
+        }
+        $this->assertGreaterThanOrEqual(8, count($called), 'the scan finds the calls: ' . implode(', ', array_keys($called)));
+        foreach (array_keys($called) as $function) {
+            $capabilities = self::without(array_merge(DisabledFunctions::CURL, [$function]));
+            $this->assertTrue($capabilities->transport() !== Capabilities::STREAM || !$capabilities->canStreamTls() || !$capabilities->canInflate(),
+                "$function is called by StreamTransport but not checked");
+        }
+    }
+
+    /** gzip and deflate answers are asked for only where zlib's incremental inflate is there */
+    public function test_inflate_onlyWithBothFunctions(): void
+    {
+        $this->assertTrue(self::without([])->canInflate());
+        $this->assertFalse(self::without(['inflate_init'])->canInflate());
+        $this->assertFalse(self::without(['inflate_add'])->canInflate());
     }
 
     public function test_default_isPhpsOwnFunctionExists(): void

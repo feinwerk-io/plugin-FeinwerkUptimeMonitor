@@ -281,6 +281,10 @@ function pageSetup(en, nowIso) {
             foldControls: Array.from(root.querySelectorAll('.fwum-nc > p button, .fwum-nc > p a')).map(clean),
             // robustness release, part 1: Matomo's internet features off, and Matomo's address stored as http
             internet: Array.from(root.querySelectorAll('.fwum-admin__internet p')).map(clean),
+            // robustness release, part 2: how the checks are sent when it is not curl_multi (an info row)
+            transport: Array.from(root.querySelectorAll('.fwum-admin__transport p')).map(clean),
+            transportClass: (() => { const li = root.querySelector('li.fwum-admin__transport'); return li ? Array.from(li.classList)
+                .filter((c) => c.indexOf('is-') === 0).join(' ') + ' ' + li.querySelector('[class^="icon-"]').className : null; })(),
             https: Array.from(root.querySelectorAll('.fwum-admin__https p')).map(clean),
             // UI review of 5.4.0, B4: the https hint in the info style, not the warning one (P2: the class of its row)
             httpsClass: (() => { const li = root.querySelector('li.fwum-admin__https'); return li ? Array.from(li.classList)
@@ -1797,6 +1801,26 @@ async function adminPage(browser) {
     check('php: the fold without Why? and without Allow private addresses', [s.foldControls, s.why], [['Show'], null]);
     s = await admin(browser, { overview: blocked, config: { disabledPhpFunctions: [] } });
     check('php: nothing missing: no reason, the fold as before', [s.php, s.foldControls], [[], ['Show', 'Why?', 'Allow private addresses']]);
+
+    // robustness part 2 (getStatus transport): the checks go out one after the other through curl_exec, or through PHP's
+    // streams where curl is missing: they work, so a neutral info row, not a warning; nothing for curl_multi, for no way
+    // at all (the php row names the functions) and while Matomo's internet features are off (nothing is sent)
+    const fine = [site(0, 'Matomo', { targets: 3, up: 3 }), site(1, 'Shop', { up: 1 })];
+    s = await admin(browser, { overview: fine, config: { transport: 'streams' } });
+    check('transport: streams, one info row', [s.transport, s.transportClass, s.serverOrder], [[
+        'The checks run through PHP\'s own network functions, as PHP\'s curl extension is not available on the Matomo server. They work as usual; a run with many addresses takes longer.'],
+    'is-info icon-info', ['transport']]);
+    s = await admin(browser, { overview: fine, config: { transport: 'curl_exec' } });
+    check('transport: curl_exec, one info row', [s.transport, s.transportClass], [[
+        'The checks run one after the other through PHP\'s curl_exec, as PHP on the Matomo server does not allow curl_multi_exec. They work as usual; a run with many addresses takes longer.'],
+    'is-info icon-info']);
+    // the streams without PHP's TLS functions: the php row names them, and no row says the checks work as usual
+    s = await admin(browser, { overview: fine, config: { transport: 'streams', disabledPhpFunctions: ['stream_socket_enable_crypto'] } });
+    check('transport: not beside the php row', [s.transport, s.serverOrder], [[], ['php']]);
+    for (const config of [{ transport: 'curl_multi' }, { transport: 'none' }, { transport: 'streams', internetOff: true }, {}]) {
+        s = await admin(browser, { overview: fine, config });
+        check('transport: no row for ' + JSON.stringify(config), s.transport, []);
+    }
 
     // 3a and the side of a one-sided failure (getSitesOverview downFromServerOnly, downFromOutsideOnly)
     const sided = [site(0, 'Matomo', { targets: 4, up: 3, down: 1, downFromServerOnly: 1, containersDown: [{ idSite: 1, name: 'Shop' }] }),

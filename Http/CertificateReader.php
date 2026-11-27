@@ -30,11 +30,46 @@ final class CertificateReader
     }
 
     /**
-     * @param array $parsed openssl_x509_parse() of the leaf certificate
+     * @param array $parsed openssl_x509_parse() of the leaf certificate: its date string first (validTo_time_t overflows
+     *                      on a 32-bit PHP from 2038 on, audit T7), else the timestamp
      */
     public static function fromParsedX509(array $parsed): ?string
     {
+        $time = self::asn1Time((string) ($parsed['validTo'] ?? ''));
+        if ($time !== null) {
+            return substr($time, 0, 4) . '-' . substr($time, 4, 2) . '-' . substr($time, 6, 2);
+        }
+
         return isset($parsed['validTo_time_t']) ? gmdate('Y-m-d', (int) $parsed['validTo_time_t']) : null;
+    }
+
+    /**
+     * Whether a certificate is valid at a moment, from its date strings (no timestamps: 32-bit safe); null when they
+     * cannot be read.
+     *
+     * @param array $parsed openssl_x509_parse() of the certificate
+     * @param string $now the moment, UTC YmdHis (gmdate('YmdHis'))
+     */
+    public static function isCurrent(array $parsed, string $now): ?bool
+    {
+        $from = self::asn1Time((string) ($parsed['validFrom'] ?? ''));
+        $to = self::asn1Time((string) ($parsed['validTo'] ?? ''));
+        if ($from === null || $to === null) {
+            return null;
+        }
+
+        return strcmp($from, $now) <= 0 && strcmp($now, $to) <= 0;
+    }
+
+    /** an ASN.1 time as openssl_x509_parse() gives it (UTCTime YYMMDDHHMMSSZ, GeneralizedTime YYYYMMDDHHMMSSZ) as UTC YmdHis */
+    private static function asn1Time(string $value): ?string
+    {
+        if (preg_match('/^(\d{2})(\d{10})Z$/', $value, $m)) {
+            // RFC 5280: UTCTime years 50 to 99 are 19xx
+            return ((int) $m[1] >= 50 ? '19' : '20') . $m[1] . $m[2];
+        }
+
+        return preg_match('/^(\d{14})Z$/', $value, $m) ? $m[1] : null;
     }
 
     /**

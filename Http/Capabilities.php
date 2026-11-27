@@ -23,6 +23,8 @@ final class Capabilities
     public const MULTI = 'multi';
     /** curl_exec: the same transfers one after the other */
     public const SEQUENTIAL = 'sequential';
+    /** PHP's own streams (StreamTransport), one after the other: where neither curl way works */
+    public const STREAM = 'stream';
 
     /** needed both ways: the handle, its options and what curl measured */
     private const CURL = ['curl_init', 'curl_setopt_array', 'curl_getinfo'];
@@ -30,6 +32,21 @@ final class Capabilities
     private const CURL_MULTI = ['curl_multi_init', 'curl_multi_add_handle', 'curl_multi_exec', 'curl_multi_select',
         'curl_multi_info_read', 'curl_multi_remove_handle', 'curl_multi_close'];
     private const CURL_SEQUENTIAL = ['curl_exec', 'curl_errno'];
+    /**
+     * every stream function StreamTransport calls for http (connect to the approved address, the handshake without
+     * blocking, reads bounded by the remaining time), and restore_error_handler, which takes its handler for PHP's
+     * warnings off again (Matomo never calls it, so a host may disable it); fwrite, fread, feof, fclose and
+     * set_error_handler are not checked: Matomo itself needs them
+     */
+    private const STREAMS = ['stream_socket_client', 'stream_context_create', 'stream_set_blocking', 'stream_select',
+        'stream_set_timeout', 'stream_get_meta_data', 'restore_error_handler'];
+    /**
+     * https through the streams: the TLS handshake and the peer certificate (openssl_x509_parse also stands for PHP's
+     * openssl extension, without which stream_socket_enable_crypto exists but cannot encrypt)
+     */
+    private const STREAM_TLS = ['stream_socket_enable_crypto', 'stream_context_get_params', 'openssl_x509_parse'];
+    /** zlib's incremental inflate: only with it the streams ask for gzip and deflate answers */
+    private const INFLATE = ['inflate_init', 'inflate_add'];
     /** name lookups of the guard: one of them is enough (gethostbynamel IPv4 only, dns_get_record also IPv6) */
     private const DNS = ['gethostbynamel', 'dns_get_record'];
     /** the guard's address ranges */
@@ -104,19 +121,42 @@ final class Capabilities
     }
 
     /**
-     * How the prober sends its requests: multi when every function of that way is there, else sequential, else null
-     * (no requests at all: every check is not checkable, note php_disabled).
+     * How the prober sends its requests: multi when every function of that way is there, else sequential, else stream
+     * (PHP's own streams, where curl is missing or both its ways are disabled), else null (no requests at all: every
+     * check is not checkable, note php_disabled).
      */
     public function transport(): ?string
     {
-        if ($this->missing(self::CURL) !== []) {
-            return null;
-        }
-        if ($this->missing(self::CURL_MULTI) === []) {
-            return self::MULTI;
+        if ($this->missing(self::CURL) === []) {
+            if ($this->missing(self::CURL_MULTI) === []) {
+                return self::MULTI;
+            }
+            if ($this->missing(self::CURL_SEQUENTIAL) === []) {
+                return self::SEQUENTIAL;
+            }
         }
 
-        return $this->missing(self::CURL_SEQUENTIAL) === [] ? self::SEQUENTIAL : null;
+        return $this->missing(self::STREAMS) === [] ? self::STREAM : null;
+    }
+
+    /**
+     * The way the checks are sent, as the API names it (getStatus transport): curl_multi, curl_exec, streams or none.
+     */
+    public function transportName(): string
+    {
+        return [self::MULTI => 'curl_multi', self::SEQUENTIAL => 'curl_exec', self::STREAM => 'streams'][$this->transport() ?? ''] ?? 'none';
+    }
+
+    /** Whether the streams can check https addresses (STREAM_TLS); curl does TLS itself. */
+    public function canStreamTls(): bool
+    {
+        return $this->missing(self::STREAM_TLS) === [];
+    }
+
+    /** Whether gzip and deflate answers can be decoded piece by piece (zlib's inflate_init and inflate_add). */
+    public function canInflate(): bool
+    {
+        return $this->missing(self::INFLATE) === [];
     }
 
     /**
@@ -129,18 +169,23 @@ final class Capabilities
     }
 
     /**
-     * The missing functions that keep the prober from sending any request (both ways' missing ones, as the
-     * administrator would need them back); empty while one way works.
+     * The missing functions that keep the prober from sending requests: every way's missing ones while none works (as
+     * the administrator would need one of them back), on the stream way those its https requests need (http addresses
+     * are checked, https ones are not); empty while the checks run.
      *
      * @return string[]
      */
     public function missingForTransport(): array
     {
-        if ($this->transport() !== null) {
+        $transport = $this->transport();
+        if ($transport === self::STREAM) {
+            return $this->missing(self::STREAM_TLS);
+        }
+        if ($transport !== null) {
             return [];
         }
 
-        return $this->missing(array_merge(self::CURL, self::CURL_SEQUENTIAL, self::CURL_MULTI));
+        return $this->missing(array_merge(self::CURL, self::CURL_SEQUENTIAL, self::CURL_MULTI, self::STREAMS, self::STREAM_TLS));
     }
 
     /** Whether a host name can be looked up (gethostbynamel or dns_get_record). */

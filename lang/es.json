@@ -147,6 +147,8 @@
         "UiAdminNotCheckableNamedOneFromServer": "%s no se puede comprobar desde el servidor de Matomo y no cuenta como interrupción.",
         "UiAdminPhpDisabled": "Las últimas comprobaciones no han podido ejecutarse: PHP en el servidor de Matomo no permite las solicitudes salientes que necesitan. Funciones de PHP que faltan: %s.",
         "UiAdminPhpDisabledHint": "Para el administrador del servidor: quite estas funciones de disable_functions en php.ini.",
+        "UiAdminTransportCurlExec": "Las comprobaciones se ejecutan una tras otra mediante curl_exec de PHP, porque PHP en el servidor de Matomo no permite curl_multi_exec. Funcionan con normalidad; una ejecución con muchas direcciones tarda más.",
+        "UiAdminTransportStreams": "Las comprobaciones se realizan con las funciones de red propias de PHP, porque la extensión curl de PHP no está disponible en el servidor de Matomo. Funcionan con normalidad; una ejecución con muchas direcciones tarda más.",
         "UiAdopt": "Aceptar",
         "UiAllOff": "No se comprueba ninguna dirección",
         "UiAllOffMatomo": "No se comprueba ninguna dirección del propio Matomo. Los superusuarios las activan en Administración, Diagnóstico, Uptime Monitor.",

@@ -28,6 +28,19 @@ final class DisabledFunctions
     ];
 
     /**
+     * Every function of PHP's curl extension (PHP 8.1 to 8.5): a host without curl, through disable_functions where the
+     * extension cannot be left out of the test's PHP.
+     */
+    public const CURL = [
+        'curl_close', 'curl_copy_handle', 'curl_errno', 'curl_error', 'curl_escape', 'curl_unescape', 'curl_multi_setopt',
+        'curl_exec', 'curl_file_create', 'curl_getinfo', 'curl_init', 'curl_upkeep', 'curl_multi_add_handle',
+        'curl_multi_close', 'curl_multi_errno', 'curl_multi_exec', 'curl_multi_getcontent', 'curl_multi_info_read',
+        'curl_multi_init', 'curl_multi_remove_handle', 'curl_multi_select', 'curl_multi_strerror', 'curl_pause', 'curl_reset',
+        'curl_setopt_array', 'curl_setopt', 'curl_share_close', 'curl_share_errno', 'curl_share_init', 'curl_share_setopt',
+        'curl_share_strerror', 'curl_strerror', 'curl_version', 'curl_multi_get_handles', 'curl_share_init_persistent',
+    ];
+
+    /**
      * A function_exists() that says false for the given names, true for every function PHP has.
      *
      * @param string[] $disabled
@@ -45,15 +58,17 @@ final class DisabledFunctions
      * @param string[] $disabled
      * @param string[] $args
      * @param array<string, string> $ini more php.ini settings for the child (-d)
+     * @param bool $bare without php.ini and its extensions (php -n): only what is compiled into PHP
      * @return array{ok: bool, error?: string, results?: mixed}
      */
-    public static function runChild(array $disabled, array $args, array $ini = []): array
+    public static function runChild(array $disabled, array $args, array $ini = [], bool $bare = false): array
     {
         $settings = [];
         foreach ($ini as $name => $value) {
             array_push($settings, '-d', $name . '=' . $value);
         }
-        $command = array_merge([PHP_BINARY, '-d', 'disable_functions=' . implode(',', $disabled)], $settings, [__DIR__ . '/disabled-child.php'], $args);
+        $command = array_merge([PHP_BINARY], $bare ? ['-n'] : [], ['-d', 'disable_functions=' . implode(',', $disabled)], $settings,
+            [__DIR__ . '/disabled-child.php'], $args);
         $process = proc_open($command, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
         if (!is_resource($process)) {
             throw new \RuntimeException('could not start the child PHP');
