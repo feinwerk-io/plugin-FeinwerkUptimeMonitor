@@ -52,6 +52,10 @@ export interface Processing {
 export interface Status {
   targets: TargetStatus[];
   processing: Processing | null;
+  /** super users only (empty for others): the PHP functions the latest check run did not find */
+  disabledPhpFunctions?: string[];
+  /** super users only: those functions are missing because PHP's curl extension is not installed */
+  curlExtensionMissing?: boolean;
 }
 
 export interface UptimeRow {
@@ -93,6 +97,12 @@ export interface Timeline {
   /** with grain day: days in the website's timezone (local) or UTC days (long periods, old data) */
   days?: 'local' | 'utc' | null;
   cells: TimelineCell[];
+  /**
+   * the end of the last cell (ISO): the period's end, with UTC days the end of the last one; a
+   * day of a clock change at the period's end has 23 or 25 hours (review of the 5.4.0 fixes, SHOULD
+   * 1). Missing: the last cell is taken as a whole hour or day
+   */
+  end?: string;
   /** the first measured hour of the strip's addresses at any time (null: never); D3 */
   firstMeasured?: string | null;
 }
@@ -118,6 +128,11 @@ export interface AddressRow {
    * line)
    */
   text: string;
+  /**
+   * polish before 5.4.0: its words with the reason, as the Response's tooltip, while the group's
+   * answer line names that reason and text leaves it out; undefined otherwise
+   */
+  textTitle?: string;
   title: string;
   uptime: string;
   cert: string;
@@ -131,6 +146,11 @@ export interface AddressRow {
   dayOutcome: string;
   /** not checkable because the file is larger than the 4 MB the check reads (note too_large) */
   tooLarge: boolean;
+  /**
+   * the note of the Matomo server's current result when it cannot check the address (php_disabled,
+   * internet_off: nothing was sent; needs_intl: the name needs PHP's intl), else null
+   */
+  serverNote?: string | null;
   /** checked from the Matomo server alone (with results from outside, outcome combines both) */
   serverOutcome?: string;
   /** what failed, for the answer line; with results from outside, where (when one side fails) */
@@ -253,6 +273,15 @@ export interface ScreenConfig {
    * reason why its results cannot be checked; empty or null while the checks run
    */
   disabledPhpFunctions?: string[] | null;
+  /** admin page: those functions are missing because PHP's curl extension is not installed */
+  curlMissing?: boolean | null;
+  /**
+   * Matomo's internet features are off ([General] enable_internet_features = 0) without the
+   * opt-in: no check is sent, every address reads not checkable (note internet_off)
+   */
+  internetOff?: boolean;
+  /** admin page: Matomo's own addresses answer only after the redirect to https (https_redirect) */
+  httpsRedirect?: boolean | null;
   /** anonymous viewers get no data about Matomo itself (API idSite 0) */
   isAnonymous?: boolean;
   /** the kit's tip line (Promo\PromoLine::current()): admins only, never embedded */

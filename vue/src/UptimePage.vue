@@ -22,7 +22,12 @@
   (Peter, 2026-11-26, "alle wie empfohlen"): the outage list answers once (D1, outages.ts); on
   phones both names and uptimes above a strip and its lane (D2); in the widgets a side that cannot
   check an address adds no line (D3); "the Matomo server" in the answer, the note and the cells
-  while results from outside show (W2).
+  while results from outside show (W2). UI review of 5.4.0 (Peter, "go" to P1 to P4): an answer
+  line of a group nothing can be checked in names the short reason in its detail (P1), each address
+  its own in its Response cell (P3); a past day keeps the current state in its muted Now line, and
+  the line of what cannot be checked and the internet and PHP lines show today only (P4). Polish
+  before 5.4.0: where the answer line names that reason for the whole group, its cells say only
+  "Not checkable" and keep the reason in their tooltip.
 -->
 <template>
   <div
@@ -402,6 +407,7 @@
                 :show-cert="!group.cert"
                 :past="!!past"
                 :outside="group.outside"
+                :measured="hasUptime"
               />
             </template>
           </div>
@@ -502,11 +508,14 @@
                     <td
                       v-if="!past"
                       class="column fwum-targets__text"
+                      :title="row.textTitle || undefined"
                     >{{ keepHyphens(row.text) }}</td>
+                    <!-- quick UI review before 5.4.0, R1: "Not measured" on a past day, as the
+                         two-sided cells -->
                     <td
                       v-if="hasUptime"
                       class="column"
-                    >{{ row.uptime }}</td>
+                    >{{ uptimeOrNone(row.uptime) }}</td>
                   </template>
                   <!-- D2 (Peter, 2026-11-26, "Ansonsten alle wie empfohlen umsetzen"): a row the
                        sides disagree on keeps its values for its sub-rows below -->
@@ -574,7 +583,7 @@
                     v-if="hasWords(side)"
                     class="fwum-line"
                     :class="failureTone(side, row)"
-                  >{{ keepHyphens(side.text) }}</span></td>
+                  >{{ keepHyphens(sideWords(side)) }}</span></td>
                   <td
                     v-if="hasUptime"
                     class="column"
@@ -617,13 +626,18 @@
           >{{ translate('FeinwerkUptimeMonitor_UiOutsideSettings') }}</a>
         </p>
 
+        <!-- P4 (UI review of 5.4.0): the current state's notes show today only; a past day keeps
+             them inside its muted Now line -->
         <div
-          v-if="notCheckableCount"
+          v-if="notCheckableCount && !past"
           class="fwum-nc"
         >
           <p class="fwum-note">
             {{ notCheckableText }}
+            <!-- nothing sent (the server's PHP, Matomo's internet features): no firewall reason
+                 and no link, as on the admin page -->
             <button
+              v-if="whyAvailable"
               type="button"
               class="fwum-link-button"
               :aria-expanded="whyOpen ? 'true' : 'false'"
@@ -631,7 +645,7 @@
               @click="whyOpen = !whyOpen"
             >{{ translate('FeinwerkUptimeMonitor_UiWhy') }}</button>
             <a
-              v-if="notCheckableUnreached && config.isSuperUser && !config.embedded
+              v-if="notCheckableExplained && config.isSuperUser && !config.embedded
                 && !config.allowPrivate"
               :href="settingsUrl"
             >{{ translate('FeinwerkUptimeMonitor_UiAllowPrivate') }}</a>
@@ -639,10 +653,49 @@
           <!-- next to the link "Allow private addresses" the settings sentence would repeat it; a
                container larger than 4 MB has its own reason, without firewall or settings -->
           <p
+            v-if="whyAvailable"
             v-show="whyOpen"
             :id="`${uid}-why`"
             class="fwum-note fwum-nc__why"
           >{{ whyText }}</p>
+        </div>
+
+        <!-- Peter's 2a: Matomo's internet features are off, so no check is sent (after the
+             line of what cannot be checked: its reason); super users get the opt-in (config
+             file only) on the page, not in the widgets -->
+        <div
+          v-if="config.internetOff && !past"
+          class="fwum-internet-note"
+        >
+          <!-- UI review of 5.4.0, L3: the server's configuration for super users only -->
+          <p class="fwum-note">{{ translate(serverConfigShown
+            ? 'FeinwerkUptimeMonitor_UiInternetOff'
+            : 'FeinwerkUptimeMonitor_UiInternetOffNeutral') }}</p>
+          <!-- quick UI review before 5.4.0, L2: the hint ends with the line as the admin page's
+               chip (one form for one line) -->
+          <template v-if="serverHintsShown">
+            <p class="fwum-note fwum-muted">{{
+              translate('FeinwerkUptimeMonitor_UiAdminInternetOffHint') }}</p>
+            <CopyChip
+              class="fwum-chip"
+              :line="internetLine"
+            />
+          </template>
+        </div>
+
+        <!-- UI review of 5.4.0, B1: the server's PHP cannot send the checks; super users read
+             why (the admin page's lines), and on the page what to do -->
+        <div
+          v-if="phpDisabledShown.length && !past"
+          class="fwum-internet-note fwum-php-note"
+        >
+          <p class="fwum-note">{{ translate('FeinwerkUptimeMonitor_UiAdminPhpDisabled',
+                                            phpDisabledShown.join(', ')) }}</p>
+          <p
+            v-if="serverHintsShown"
+            class="fwum-note fwum-muted"
+          >{{ translate(curlMissing ? 'FeinwerkUptimeMonitor_UiAdminCurlMissingHint'
+            : 'FeinwerkUptimeMonitor_UiAdminPhpDisabledHint') }}</p>
         </div>
 
         <!-- the website widget: its container counts with Matomo, but the alarm (U02) goes to the
@@ -696,6 +749,7 @@
         v-if="panelOpen"
         :id-site="config.idSite"
         :site-name="config.siteName || ''"
+        :notice="panelNotice"
         @close="onPanelClose"
       />
     </template>
@@ -720,17 +774,18 @@ import {
   TargetStatus, Timeline, UptimeRow,
 } from './types';
 import {
-  ago, breakParts, calendarDay, causeText, clockOrDate, dateTime, dayKey, duration, errorText,
-  hostOf, keepBrackets, keepHyphens, keepUnits, listOf, milliseconds, percent, sharePercent,
-  shiftDay, sidedStatusOf, targetLabel,
+  addressTitle, ago, breakParts, calendarDay, causeText, clockOrDate, dateTime, dayKey, duration,
+  errorText, hostOf, keepBrackets, keepHyphens, keepUnits, listOf, milliseconds, percent,
+  sharePercent, shiftDay, sidedStatusOf, targetLabel,
 } from './format';
 import { combineTimelines, stripTotals } from './timeline';
 import {
-  aloneDown, aside, combined, keepServer, Line, responseLines, serverOnlyDown, Side, sideTone,
-  SIDES_MARGIN_SECONDS, speaks, split, toneOf, uncounted, uptimeLines,
+  aloneDown, aside, combined, keepServer, Line, namedCause, responseLines, serverOnlyDown, Side,
+  sideTone, sideWords, SIDES_MARGIN_SECONDS, speaks, split, toneOf, uncounted, uptimeLines,
 } from './sides';
 import { observeNarrow } from './narrow';
 import { ownsDashboardCard, watchDashboardCard } from './cardPlace';
+import { INTERNET_LINE } from './configLines';
 import {
   groupOf, KIND_ORDER, onlyFromOutside, OutageRow, outageRows, outagesInPeriod, outageTotals,
 } from './outages';
@@ -742,6 +797,7 @@ import PromoLine from './PromoLine.vue';
 import PromoCard from './PromoCard.vue';
 import HourStrip from './HourStrip.vue';
 import TargetList from './TargetList.vue';
+import CopyChip from './CopyChip.vue';
 
 type Row = AddressRow;
 
@@ -761,6 +817,8 @@ interface Group {
   cert: { text: string; level: string } | null;
   /** 5.2.0 review B1: its addresses show results from outside (it has some) */
   outside: boolean;
+  /** UI review of 5.4.0, P1: the short reason its addresses cannot be checked, if they share one */
+  reason: string;
 }
 
 interface AnswerLine {
@@ -832,8 +890,12 @@ interface Vantage {
   /** '' when not current */
   checkedAt: string;
   tooLarge: boolean;
+  /** the note of a current result that cannot check the address, else null */
+  note: string | null;
   /** B5: why the outside cannot check it (its cell's tooltip); '' otherwise */
   title: string;
+  /** UI review of 5.4.0, P3: the server's short reason it sends nothing for it (shortReason); '' */
+  reason: string;
 }
 
 /** 5.2.0 review B1: what a group has from outside */
@@ -881,6 +943,13 @@ const CONTAINER = 'container';
 const ORDER = KIND_ORDER;
 /** the answer line names the worst group first */
 const SEVERITY = ['down', 'partial', 'stale', 'not_checkable', 'none', 'off', 'up'];
+/**
+ * notes of a result that sent nothing (Outcome::NOTHING_SENT): the server's PHP, Matomo's internet
+ * features, a name only PHP's intl converts. Such a result is no check (UI review of 5.4.0, B2).
+ */
+const NOTHING_SENT = ['php_disabled', 'internet_off', 'needs_intl'];
+/** notes of a result that cannot be checked for a reason of its own, not a firewall or setting */
+const NOT_EXPLAINED = NOTHING_SENT;
 const OUTAGES_FIRST = 20;
 const OUTAGES_STEP = 50;
 const INCIDENT_LIMIT = 100;
@@ -888,7 +957,15 @@ const INCIDENT_LIMIT_MAX = 1000;
 
 export default defineComponent({
   components: {
-    Sparkline, OutageList, TargetPanel, FeedbackBar, PromoLine, PromoCard, HourStrip, TargetList,
+    Sparkline,
+    OutageList,
+    TargetPanel,
+    FeedbackBar,
+    PromoLine,
+    PromoCard,
+    HourStrip,
+    TargetList,
+    CopyChip,
   },
   props: {
     config: { type: Object as PropType<ScreenConfig>, required: true },
@@ -1009,9 +1086,43 @@ export default defineComponent({
       return this.config.variant !== 'matomo';
     },
     canCheck(): boolean {
-      // the Matomo widget checks Matomo's own addresses: super users only
+      // the Matomo widget checks Matomo's own addresses: super users only; while Matomo's internet
+      // features are off a check sends nothing either (UI review of 5.4.0, B2)
       const allowed = this.config.variant === 'matomo' ? this.config.isSuperUser : this.config.isAdmin;
-      return allowed && !this.config.embedded;
+      return allowed && !this.config.embedded && !this.config.internetOff;
+    },
+    /** the server's configuration (settings, PHP functions): super users, never in an embed (L3) */
+    serverConfigShown(): boolean {
+      return !!this.config.isSuperUser && !this.config.embedded;
+    },
+    /** what the server administrator can do: on the page only, not in widgets (UI review, L4) */
+    serverHintsShown(): boolean {
+      return this.serverConfigShown && this.isPage && !this.config.inWidget;
+    },
+    /** B1: the PHP functions the checks miss, while an address here reads php_disabled */
+    phpDisabledShown(): string[] {
+      if (!this.serverConfigShown
+        || !this.notCheckableRows.some((r) => r.serverNote === 'php_disabled')) {
+        return [];
+      }
+      const names = [...(this.matomo?.disabledPhpFunctions || []),
+        ...(this.site?.disabledPhpFunctions || [])];
+      return names.filter((name, i) => names.indexOf(name) === i);
+    },
+    /**
+     * UI review of 5.4.0, L9: why the target panel finds nothing while Matomo's internet features
+     * are off: the internet line, for super users with the setting (L3)
+     */
+    panelNotice(): string {
+      if (!this.config.internetOff) {
+        return '';
+      }
+      return translate(this.serverConfigShown ? 'FeinwerkUptimeMonitor_UiInternetOff'
+        : 'FeinwerkUptimeMonitor_UiInternetOffNeutral');
+    },
+    /** L7: those functions are missing because PHP's curl extension is not installed */
+    curlMissing(): boolean {
+      return !!(this.matomo?.curlExtensionMissing || this.site?.curlExtensionMissing);
     },
     /** the website's Tag Manager containers: shown in the Matomo group */
     containers(): TargetStatus[] {
@@ -1076,6 +1187,7 @@ export default defineComponent({
           state: this.groupState(this.matomoRows, this.matomoAllOff),
           cert: this.sharedCert(this.matomoRows),
           outside: this.matomoOutside.cells,
+          reason: this.reasonOf(this.matomoRows),
         });
       }
       if (this.showSite) {
@@ -1088,9 +1200,34 @@ export default defineComponent({
           state: this.groupState(this.siteRows, this.siteTargetCount > 0),
           cert: this.sharedCert(this.siteRows),
           outside: this.siteOutside.cells,
+          reason: this.reasonOf(this.siteRows),
         });
       }
-      return out;
+      // polish before 5.4.0: a group whose answer line names its one reason (P1) leaves it out of
+      // its cells; quick UI review before 5.4.0, L1: with results from outside so does every
+      // server cell on the screen whose reason a line names (an answer line, else the count line)
+      const named = this.screenReasons(out);
+      return out.map((g) => {
+        if (this.namesReason(g)) {
+          return { ...g, rows: g.rows.map((r) => this.withReasonAbove(r, 'group')) };
+        }
+        return named.length
+          ? { ...g, rows: g.rows.map((r) => this.withReasonAbove(r, 'screen', named)) } : g;
+      });
+    },
+    /**
+     * L1: the reason the count line names for every address the server cannot check; '' when an
+     * answer line names one (the count line does not repeat it) or they do not share one
+     */
+    countReason(): string {
+      if (this.groups.some((g) => this.namesReason(g))) {
+        return '';
+      }
+      return this.screenReasons(this.groups)[0] || '';
+    },
+    /** L2: the opt-in's line, as the admin page's chip */
+    internetLine(): string {
+      return INTERNET_LINE;
     },
     /**
      * One answer for the screen: "Everything reachable" when every group answers; else each
@@ -1134,14 +1271,15 @@ export default defineComponent({
             text: this.isPage
               ? translate('FeinwerkUptimeMonitor_UiAnswerGroup', g.name, state)
               : g.state.text,
-            detail: this.downDetail(g.rows),
+            // P1 (UI review of 5.4.0): nothing of the group can be checked for one reason: it
+            // follows in a few words, where an outage's cause goes
+            detail: this.namesReason(g) ? `(${g.reason})` : this.downDetail(g.rows),
           };
         });
-      // L8 review of 5.3.0, NIT 2: while results from outside show, the worst line first by its own
-      // colour (a red line naming an address before an amber 3a line), the groups' order on a tie;
-      // without them the order of 5.2.0
-      return this.showOutside
-        ? lines.sort((a, b) => SEVERITY.indexOf(a.outcome) - SEVERITY.indexOf(b.outcome)) : lines;
+      // L8 review of 5.3.0, NIT 2: the worst line first by its own colour (a red line naming an
+      // address before an amber count or 3a line), the groups' order on a tie; since part 1 of the
+      // robustness release also without results from outside
+      return lines.sort((a, b) => SEVERITY.indexOf(a.outcome) - SEVERITY.indexOf(b.outcome));
     },
     /**
      * B3 (Peter): on a past day or a longer period the answer states that period first, "Nov 24:
@@ -1341,12 +1479,40 @@ export default defineComponent({
       const mark = '\u0001';
       const fresh = this.checking || this.freshness !== '';
       const text = fresh
-        ? translate('FeinwerkUptimeMonitor_UiNowChecked', this.nowState, mark)
-        : translate('FeinwerkUptimeMonitor_UiNow', this.nowState);
+        ? translate('FeinwerkUptimeMonitor_UiNowChecked', this.nowQuiet, mark)
+        : translate('FeinwerkUptimeMonitor_UiNow', this.nowQuiet);
       const [before, after = ''] = text.split(mark);
       return [this.past, {
         key: 'now', outcome: 'now', text: before, detail: '', now: true, after,
       }];
+    },
+    /**
+     * P4 (UI review of 5.4.0): the muted Now line's state. With addresses that cannot be checked
+     * now (their line shows today only) they stay in it: "Matomo reachable, 1 address not
+     * checkable", "Reachable, 2 addresses not checkable" when every group answers; when nothing
+     * can be checked, the state with its short reason (P1). Without them, nowState as before.
+     */
+    nowQuiet(): string {
+      const rows = this.groups.flatMap((g) => g.rows);
+      const count = rows.filter((r) => r.outcome === 'not_checkable').length;
+      if (!count) {
+        return this.nowState;
+      }
+      if (count === rows.length) {
+        const reason = this.reasonOf(rows);
+        return reason ? `${this.nowState} (${reason})` : this.nowState;
+      }
+      const shown = this.groups.filter((g) => g.rows.length);
+      const up = shown.filter((g) => g.state.outcome === 'up');
+      let state = this.nowState;
+      if (up.length === shown.length) {
+        state = translate('FeinwerkUptimeMonitor_UiReachable');
+      } else if (up.length) {
+        state = translate('FeinwerkUptimeMonitor_UiGroupReachable',
+          listOf(up.map((g) => g.name), this.config.language));
+      }
+      return count === 1 ? translate('FeinwerkUptimeMonitor_UiNowNotCheckableOne', state)
+        : translate('FeinwerkUptimeMonitor_UiNowNotCheckableMany', state, String(count));
     },
     /** the answer line that carries the freshness: the first one of a group with results */
     freshnessLine(): number {
@@ -1630,12 +1796,7 @@ export default defineComponent({
     },
     /** a widget with an outage lists only the failing addresses */
     widgetRows(): Row[] {
-      if (!this.widgetGroup) {
-        return [];
-      }
-      return this.widgetDown
-        ? this.widgetGroup.rows.filter((r) => r.outcome === 'down')
-        : this.widgetGroup.rows;
+      return this.listedOf(this.widgetGroup);
     },
     notCheckableRows(): Row[] {
       const rows = this.isPage ? this.groups.flatMap((g) => g.rows) : this.widgetRows;
@@ -1652,6 +1813,24 @@ export default defineComponent({
     notCheckableTooLarge(): boolean {
       return this.notCheckableRows.some((r) => r.tooLarge);
     },
+    /**
+     * the general reasons (firewall, private address, password) and the link to allow private
+     * addresses fit: not for a container too large, nor where nothing was sent (the server's PHP,
+     * Matomo's internet features: the admin page and the internet line say why), nor for a name
+     * that needs PHP's intl (its own reason)
+     */
+    notCheckableExplained(): boolean {
+      return this.notCheckableRows.some((r) => !r.tooLarge
+        && !NOT_EXPLAINED.includes(r.serverNote || ''));
+    },
+    /** a name only PHP's intl converts safely, on a server without it: its own reason */
+    notCheckableNeedsIntl(): boolean {
+      return this.notCheckableRows.some((r) => r.serverNote === 'needs_intl');
+    },
+    /** a reason to show under "Why?" */
+    whyAvailable(): boolean {
+      return this.notCheckableExplained || this.notCheckableTooLarge || this.notCheckableNeedsIntl;
+    },
     /** B5: of those this server cannot reach, the ones the outside cannot check either */
     notCheckableOutsideToo(): Row[] {
       return this.notCheckableRows.filter((r) => !r.tooLarge && !!r.outside
@@ -1665,7 +1844,7 @@ export default defineComponent({
     /** "Why?": the reasons of the addresses that cannot be checked, each once */
     whyText(): string {
       const parts: string[] = [];
-      if (this.notCheckableUnreached) {
+      if (this.notCheckableExplained) {
         parts.push(translate('FeinwerkUptimeMonitor_UiNotCheckableHelp'));
         // next to the link "Allow private addresses" this sentence would repeat it
         if (!(this.config.isSuperUser && !this.config.embedded) && !this.config.allowPrivate) {
@@ -1679,6 +1858,13 @@ export default defineComponent({
       if (this.notCheckableTooLarge) {
         parts.push(translate('FeinwerkUptimeMonitor_UiNotCheckableTooLarge'));
       }
+      if (this.notCheckableNeedsIntl) {
+        parts.push(translate('FeinwerkUptimeMonitor_UiNotCheckableNeedsIntl'));
+        // UI review of 5.4.0, L5: what the server administrator can do
+        if (this.serverHintsShown) {
+          parts.push(translate('FeinwerkUptimeMonitor_UiNotCheckableNeedsIntlHint'));
+        }
+      }
       // "4 MB" stays together (D4)
       return keepUnits(parts.join(' '));
     },
@@ -1687,6 +1873,14 @@ export default defineComponent({
      * this server"; while results from outside show, "from the Matomo server" (follow-up W2)
      */
     notCheckableText(): string {
+      // L1: with results from outside, the one cause of them all, once
+      const reason = this.countReason;
+      if (reason) {
+        return this.notCheckableCount === 1
+          ? translate('FeinwerkUptimeMonitor_UiNotCheckableOneFromServerCause', reason)
+          : translate('FeinwerkUptimeMonitor_UiNotCheckableManyFromServerCause',
+            String(this.notCheckableCount), reason);
+      }
       const anywhere = !this.notCheckableUnreached;
       // B5: no side can check them: both named, as in the answer line
       const side = this.showOutside ? 'FromServer' : '';
@@ -1762,6 +1956,98 @@ export default defineComponent({
     translate,
     breakParts,
     keepHyphens,
+    sideWords,
+    /**
+     * UI review of 5.4.0, P1 and P3: why the server sends nothing for an address, in a few words.
+     * The server's configuration for super users only, never in an embed (L3): everyone else reads
+     * that the checks are switched off, and nothing about PHP. A name that needs intl: for
+     * everyone, as its reason behind "Why?" is.
+     */
+    shortReason(note: string | null): string {
+      if (note === 'needs_intl') {
+        return translate('FeinwerkUptimeMonitor_UiShortCauseNeedsIntl');
+      }
+      if (note === 'internet_off') {
+        return translate(this.serverConfigShown ? 'FeinwerkUptimeMonitor_UiShortCauseInternetOff'
+          : 'FeinwerkUptimeMonitor_UiShortCauseChecksOff');
+      }
+      if (note === 'php_disabled' && this.serverConfigShown) {
+        return translate('FeinwerkUptimeMonitor_UiShortCausePhpDisabled');
+      }
+      return '';
+    },
+    /**
+     * P1: the one short reason that every address of rows that cannot be checked shares; '' when
+     * they differ, one has none (a firewall, a container too large) or the outside cannot check it
+     * either (the line then names both sides)
+     */
+    reasonOf(rows: Row[]): string {
+      const reasons = rows.filter((r) => r.outcome === 'not_checkable')
+        .map((r) => (r.outside && r.outside.outcome === 'not_checkable' ? '' : r.server.reason || ''));
+      return reasons.length && reasons.every((r) => r !== '' && r === reasons[0]) ? reasons[0] : '';
+    },
+    /** P1: the group's answer line names the one reason nothing of it can be checked */
+    namesReason(group: Group): boolean {
+      return group.state.outcome === 'not_checkable' && group.reason !== '';
+    },
+    /**
+     * Quick UI review before 5.4.0, L1: with results from outside, the short reasons a line on the
+     * screen names, so that the server's cells with one of them leave it out: each answer line's
+     * (P1), else the count line's, the one reason every address it counts shares (reasonOf). None
+     * on a past day (no count line, no Response cells) and without results from outside (P3: each
+     * cell names its own)
+     */
+    screenReasons(groups: Group[]): string[] {
+      // a past day as past() has it, without reading it: its answer reads the groups
+      const pastDay = this.isPage && !this.todaySelected;
+      if (!this.showOutside || pastDay) {
+        return [];
+      }
+      const answered = groups.filter((g) => this.namesReason(g)).map((g) => g.reason);
+      if (answered.length) {
+        return answered.filter((r, i) => answered.indexOf(r) === i);
+      }
+      const rows = this.isPage ? groups.flatMap((g) => g.rows) : this.listedOf(groups[0] || null);
+      const counted = this.reasonOf(rows);
+      return counted ? [counted] : [];
+    },
+    /** the addresses a widget lists of its group: only the failing ones while one is down */
+    listedOf(group: Group | null): Row[] {
+      if (!group) {
+        return [];
+      }
+      const down = group.rows.filter((r) => r.outcome === 'down');
+      return down.length ? down : group.rows;
+    },
+    /**
+     * Polish before 5.4.0: an address of a group whose answer line names its reason (namesReason,
+     * 'group') says only "Not checkable"; its words with the reason (P3) become the cell's tooltip.
+     * L1 ('screen', another group's answer line or the count line names the reason): a server
+     * that cannot check the address for one of those reasons says "Not checkable from the Matomo
+     * server" in one line and "Not checkable" on its side line, also where the outside reaches it,
+     * the reason in the tooltip. The reason stays on the server's side for the past day's Now line
+     * (reasonOf).
+     */
+    withReasonAbove(row: Row, where: 'group' | 'screen', reasons: string[] = []): Row {
+      const cannot = where === 'group' ? row.outcome === 'not_checkable'
+        : row.server.outcome === 'not_checkable' && reasons.includes(row.server.reason || '');
+      if (!cannot || !row.server.reason) {
+        return row;
+      }
+      const server: Side = { ...row.server, reasonAbove: where };
+      if (row.outcome !== 'not_checkable') {
+        // L1: the outside reaches it: the row's own words are the outside's, the server's side
+        // line leaves the reason to the line that names it
+        return { ...row, server, textTitle: namedCause(row.server) };
+      }
+      return {
+        ...row,
+        server,
+        text: this.showOutside ? responseLines(server, row.outside)[0].text
+          : translate('FeinwerkUptimeMonitor_UiNotCheckableShort'),
+        textTitle: row.text,
+      };
+    },
     /** B4: a measured share is shown below MEASURED_SHOWN %, compared as it reads (rounded) */
     measuredVisible(measured: number): boolean {
       return Math.round(measured) < MEASURED_SHOWN;
@@ -1995,6 +2281,7 @@ export default defineComponent({
         uptime: server.uptime,
         percent: of('local')?.uptimePercent ?? null,
         tooLarge: server.tooLarge,
+        reason: server.reason,
         checkedAt: server.checkedAt,
         downSince: serverOpen.length ? serverOpen[0] : '',
         outageOpen: known ? serverOpen.length > 0 : undefined,
@@ -2033,17 +2320,21 @@ export default defineComponent({
         serverOnlyDown: serverOnlyDown(serverSide, outsideSide),
         // one line's words; with results from outside the first line of the cell (P2)
         text: twoSided ? responseLines(serverSide, outsideSide)[0].text : server.text,
-        title: target.url || targetLabel(target),
+        // B3: the address as entered, an international name also in its ASCII form
+        title: addressTitle(target.url, targetLabel(target)),
         uptime: server.uptime,
         cert: target.certificate ? this.certText(target.certificate) : '',
         certLevel: target.certificate ? target.certificate.level : '',
         certDays: target.certificate ? target.certificate.daysLeft : null,
-        // the newer of the two sides' current results
-        checkedAt: [server.checkedAt, counted ? counted.checkedAt : ''].sort().pop() || '',
+        // the newer of the two sides' current results; a result of the server that sent nothing is
+        // no check (UI review of 5.4.0, B2)
+        checkedAt: [NOTHING_SENT.includes(server.note || '') ? '' : server.checkedAt,
+          counted ? counted.checkedAt : ''].sort().pop() || '',
         host: hostOf(target.url),
         // D1: a past day's dot follows that day's uptime: all of it, part of it, nothing measured
         dayOutcome,
         tooLarge: server.tooLarge,
+        serverNote: server.note,
         serverOutcome: server.outcome,
         cause: this.causeOf(serverSide, counted ? outsideSide : null),
         server: serverSide,
@@ -2064,6 +2355,7 @@ export default defineComponent({
       let outcome = state ? state.outcome : 'none';
       let text = '';
       let title = '';
+      let reason = '';
       if (!state) {
         // B2: no result from outside may never come (a limit, an address it skips): not "yet"
         text = translate(fromOutside ? 'FeinwerkUptimeMonitor_UiNotChecked'
@@ -2079,6 +2371,12 @@ export default defineComponent({
         // both sides shown: their headings say from where, the cell says it in two words
         let words = translate(short ? 'FeinwerkUptimeMonitor_UiNotCheckableShort'
           : 'FeinwerkUptimeMonitor_UiNotCheckable');
+        // UI review of 5.4.0, P3: the server's short reason; with both sides on the screen in its
+        // own field (sides.ts sideWords), so the sides agree and split as before
+        reason = fromOutside ? '' : this.shortReason(state.note);
+        if (reason && !short) {
+          words = translate('FeinwerkUptimeMonitor_UiNotCheckableCause', reason);
+        }
         if (state.note === 'too_large') {
           // UI review of 5.3.0, L3: "(over 4 MB)" stays whole
           words = keepBrackets(keepUnits(translate('FeinwerkUptimeMonitor_UiTooLargeToCheck')));
@@ -2104,7 +2402,9 @@ export default defineComponent({
         checkedAt: state && !state.stale ? state.checkedAt : '',
         tooLarge: !!state && !state.stale && state.outcome === 'not_checkable'
           && state.note === 'too_large',
+        note: state && !state.stale && state.outcome === 'not_checkable' ? state.note : null,
         title,
+        reason,
       };
     },
     /** B5: "Not checkable from outside: a private or reserved address, or a port ..." */
@@ -2181,7 +2481,11 @@ export default defineComponent({
     },
     /** D2: a sub-row's uptime; "Not measured" on a past day where nothing was */
     subUptime(side: Side): string {
-      return side.uptime || (this.past ? translate('FeinwerkUptimeMonitor_UiNotMeasured') : '');
+      return this.uptimeOrNone(side.uptime);
+    },
+    /** an Uptime cell's value; "Not measured" on a past day where nothing was (D2, R1) */
+    uptimeOrNone(uptime: string): string {
+      return uptime || (this.past ? translate('FeinwerkUptimeMonitor_UiNotMeasured') : '');
     },
     /** D2 with NIT 3: the outside's words only while it has a current answer */
     hasWords(side: Side): boolean {
@@ -2221,6 +2525,7 @@ export default defineComponent({
         lane: strip.lane,
         axis: strip.axis,
         now: this.tick,
+        end: strip.timeline.end || '',
       };
     },
     /** P2: the Uptime cell's lines (sides.ts) */
@@ -2229,16 +2534,19 @@ export default defineComponent({
     },
     /**
      * P2: what each side says, as the Response cell's tooltip (the detail one line leaves out); the
-     * outside's reason when it cannot check the address (B5)
+     * outside's reason when it cannot check the address (B5); the server's words with the reason
+     * the group's answer line names (polish before 5.4.0, textTitle)
      */
     responseTitle(row: Row): string | undefined {
       if (!row.outside) {
-        return undefined;
+        return row.textTitle || undefined;
       }
       const outside = row.outside.outcome === 'not_checkable' && row.outside.title
         ? row.outside.title
         : translate('FeinwerkUptimeMonitor_UiCheckedFromOutsideValue', row.outside.text);
-      return `${translate('FeinwerkUptimeMonitor_UiCheckedFromServerValue', row.server.text)}\n${outside}`;
+      const server = row.textTitle
+        || translate('FeinwerkUptimeMonitor_UiCheckedFromServerValue', row.server.text);
+      return `${server}\n${outside}`;
     },
     /**
      * D3: the certificate figure under its days: the host when the figure stands for all the

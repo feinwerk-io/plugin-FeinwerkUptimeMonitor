@@ -308,6 +308,49 @@ class StoresTest extends IntegrationTestCase
         $this->assertSame('2026-03-14 12:00:00', $row['ended_at']);
     }
 
+    /**
+     * Q1 (quick UI review before 5.4.0): a run that sent nothing ends the server's open outage at its last check that
+     * found the address down, never at the run's own minute; without such a check (gone with the 14 days of raw checks)
+     * at its start. Ended outages and those seen from outside stay as they are.
+     */
+    public function test_endAtLastFailure_endsTheServersOpenOutage_atItsLastFailingCheck(): void
+    {
+        $incidents = new IncidentStore();
+        $checks = new CheckStore();
+        foreach (['10:00:00', '10:01:00', '10:02:00'] as $time) {
+            $down = self::result(5, Outcome::DOWN, '2026-03-14 ' . $time, Outcome::HTTP_STATUS);
+            $checks->insertMany([$down]);
+            $incidents->apply([$down]);
+        }
+        // not checkable (a firewall) after it: no failure, no end either
+        $checks->insertMany([self::result(5, Outcome::NOT_CHECKABLE, '2026-03-14 10:03:00', Outcome::CONNECT)]);
+        // an earlier outage of target 6, ended; its open one has no check rows left
+        foreach ([[Outcome::DOWN, '08:00:00'], [Outcome::UP, '08:01:00']] as [$outcome, $time]) {
+            $checks->insertMany([self::result(6, $outcome, '2026-03-14 ' . $time)]);
+            $incidents->apply([self::result(6, $outcome, '2026-03-14 ' . $time)]);
+        }
+        $incidents->apply([self::result(6, Outcome::DOWN, '2026-03-14 09:00:00')]);
+        $incidents->upsert([['idtarget' => 5, 'source' => StateStore::EXTERNAL, 'kind' => IncidentStore::OUTAGE,
+            'started_at' => '2026-03-14 09:59:00', 'ended_at' => null, 'cause' => null, 'detail' => null, 'down_samples' => 2]]);
+
+        $incidents->endAtLastFailure([5, 6, 7]);
+
+        $ends = array_map(static fn(array $r): array => [(int) $r['idtarget'], $r['source'], $r['started_at'], $r['ended_at']],
+            Db::fetchAll('SELECT idtarget, source, started_at, ended_at FROM ' . Schema::table(Schema::INCIDENT)
+                . ' ORDER BY idtarget, source, started_at'));
+        $this->assertSame([
+            [5, 'external', '2026-03-14 09:59:00', null],
+            [5, 'local', '2026-03-14 10:00:00', '2026-03-14 10:02:00'],
+            [6, 'local', '2026-03-14 08:00:00', '2026-03-14 08:01:00'],
+            [6, 'local', '2026-03-14 09:00:00', '2026-03-14 09:00:00'],
+        ], $ends);
+
+        $incidents->endAtLastFailure([]);
+        $incidents->endAtLastFailure([5]);
+        $this->assertSame('2026-03-14 10:02:00', Db::fetchOne('SELECT ended_at FROM ' . Schema::table(Schema::INCIDENT)
+            . ' WHERE idtarget = 5 AND source = ?', [StateStore::LOCAL]), 'a later run that sends nothing moves no end');
+    }
+
     public function test_notCheckable_opensNothing(): void
     {
         (new IncidentStore())->apply([self::result(5, Outcome::NOT_CHECKABLE, '2026-03-14 10:00:00', Outcome::CONNECT)]);

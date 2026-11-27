@@ -48,6 +48,13 @@ switch ($path) {
         // a redirect to an internationalised name on this server's port
         $send(302, '', ['Location: http://straße.test:' . ($_SERVER['SERVER_PORT'] ?? '80') . '/host']);
         break;
+    case '/upgrade/matomo.php':
+        // Matomo stored as http behind a TLS proxy: the web server sends the same address with https
+        $send(301, '', ['Location: https://' . ($_SERVER['HTTP_HOST'] ?? '127.0.0.1') . '/upgrade/matomo.php']);
+        break;
+    case '/upgrade/elsewhere.php':
+        $send(301, '', ['Location: https://' . ($_SERVER['HTTP_HOST'] ?? '127.0.0.1') . '/somewhere-else.php']);
+        break;
     case '/off/matomo.php':
         $send(503, '');
         break;

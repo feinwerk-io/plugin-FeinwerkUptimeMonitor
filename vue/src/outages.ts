@@ -8,14 +8,26 @@
 import type { Incident } from './types';
 
 /**
+ * An incident with a part inside the period: seconds inside it, or (quick UI review before 5.4.0,
+ * Q1) an ended outage of no length: one failed check, after which the server's checks stopped
+ * sending (it ends at its last failed check), which the API returns only for the periods that
+ * contain its start. One that only touches the period (it ends at the period's start) is left out.
+ */
+function inPeriod(i: Incident): boolean {
+  return i.durationInPeriodSeconds > 0
+    || (i.type === 'outage' && i.end !== null && i.durationSeconds === 0);
+}
+
+/**
  * The outages of a period as the day's answer counts them (5.1.5 review, F1): only their parts
  * inside the period (API startInPeriod, durationInPeriodSeconds), and outages of several
  * addresses that overlap or touch as one outage with the length of their union. Gaps and parts
- * of no length (an outage that only touches the period) do not count.
+ * of no length (an outage that only touches the period) do not count; an outage of no length
+ * inside it does (inPeriod).
  */
 export function outageTotals(incidents: Incident[]): { count: number; seconds: number } {
   const parts = incidents
-    .filter((i) => i.type === 'outage' && i.durationInPeriodSeconds > 0)
+    .filter((i) => i.type === 'outage' && inPeriod(i))
     .map((i) => {
       const start = new Date(i.startInPeriod).getTime() / 1000;
       return [start, start + i.durationInPeriodSeconds];
@@ -46,7 +58,7 @@ export function outageTotals(incidents: Incident[]): { count: number; seconds: n
 /** the parts of the outages inside the period as merged intervals (seconds), sorted */
 function union(incidents: Incident[]): number[][] {
   const parts = incidents
-    .filter((i) => i.type === 'outage' && i.durationInPeriodSeconds > 0)
+    .filter((i) => i.type === 'outage' && inPeriod(i))
     .map((i) => {
       const start = new Date(i.startInPeriod).getTime() / 1000;
       return [start, start + i.durationInPeriodSeconds];
@@ -111,9 +123,9 @@ export function onlyFromOutside(incidents: Incident[]): number {
   return Math.round(seconds);
 }
 
-/** The outages with a part inside the period (those that only touch it are left out). */
+/** The outages with a part inside the period (those that only touch it are left out: inPeriod). */
 export function outagesInPeriod(incidents: Incident[]): Incident[] {
-  return incidents.filter((i) => i.type === 'outage' && i.durationInPeriodSeconds > 0);
+  return incidents.filter((i) => i.type === 'outage' && inPeriod(i));
 }
 
 /** the order of the addresses on the screens: Matomo's, then the website's */
@@ -165,7 +177,7 @@ export interface OutageRow {
 export function outageRows(incidents: Incident[], past: boolean): OutageRow[] {
   const ms = (iso: string) => new Date(iso).getTime();
   const items = incidents
-    .filter((i) => !past || i.durationInPeriodSeconds > 0)
+    .filter((i) => !past || inPeriod(i))
     .map((i) => ({ i, from: ms(i.start), to: ms(i.start) + i.durationSeconds * 1000 }))
     .sort((a, b) => a.from - b.from || a.i.idIncident - b.i.idIncident);
   const open: Record<string, { members: typeof items; to: number }> = {};
@@ -187,7 +199,7 @@ export function outageRows(incidents: Incident[], past: boolean): OutageRow[] {
   return clusters.map((members) => {
     const first = members[0].i;
     const end = Math.max(...members.map((m) => m.to));
-    const parts = members.filter((m) => m.i.durationInPeriodSeconds > 0);
+    const parts = members.filter((m) => inPeriod(m.i));
     const partStart = parts.length ? Math.min(...parts.map((m) => ms(m.i.startInPeriod))) : 0;
     const partEnd = parts.length ? Math.max(...parts.map((m) => ms(m.i.startInPeriod)
       + m.i.durationInPeriodSeconds * 1000)) : 0;

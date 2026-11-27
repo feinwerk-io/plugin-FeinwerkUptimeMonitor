@@ -112,6 +112,14 @@ class DisabledFunctionsTest extends TestCase
         $this->assertGreaterThanOrEqual(0.9, $answer['results'], 'usleep instead');
     }
 
+    /** Audit D3: without idn_to_ascii a website address with umlauts is still checked, in punycode. */
+    public function test_internationalisedHost_withoutIdnToAscii_isCheckedInPunycode(): void
+    {
+        $answer = DisabledFunctions::runChild(['idn_to_ascii'], ['idn', 'https://müller.de/']);
+        $this->assertTrue($answer['ok'], (string) ($answer['error'] ?? ''));
+        $this->assertSame(['allowed' => true, 'reason' => null, 'host' => 'xn--mller-kva.de', 'refusedWithoutLookup' => false], $answer['results']);
+    }
+
     public function test_timeLimit_withoutSetTimeLimitOrIniGet_neverAnError(): void
     {
         foreach ([['set_time_limit'], ['ini_get']] as $disabled) {

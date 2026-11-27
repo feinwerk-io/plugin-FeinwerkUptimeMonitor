@@ -17,6 +17,7 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Target;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Thresholds;
 use Piwik\Plugins\FeinwerkUptimeMonitor\External\ExternalResults;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\AddressGuard;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Math\LocalClock;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Math\UptimeMath;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\CheckRunner;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\Freshness;
@@ -39,6 +40,11 @@ final class UptimeReport
     /** the strips of getTimeline: every target, or grouped as the screens show them */
     public const GROUPS = ['all', 'matomo', 'website'];
     private const HOUR_ROWS_DAYS = 31;
+    /**
+     * a clock change makes a local day up to 2 hours longer (1 hour almost everywhere, 2 on Antarctica/Troll): a month
+     * of 31 local days, or a range of two, can be that much longer and still counts as such (L8 review of 5.4.0)
+     */
+    public const CLOCK_CHANGE = 7200;
     /**
      * One address checked from both sides, as the uptime page combines them (UptimePage.vue COMBINED): the first of
      * these that either side has. Down when either side finds it down, reachable when one side reaches it and none
@@ -88,7 +94,7 @@ final class UptimeReport
         if ($cutAtNow) {
             $to = min($to, $this->now());
         }
-        $grain = $to - $from <= self::HOUR_ROWS_DAYS * 86400 ? 'hour' : 'day';
+        $grain = $to - $from <= self::HOUR_ROWS_DAYS * 86400 + self::CLOCK_CHANGE ? 'hour' : 'day';
 
         return ['from' => $from, 'to' => max($from, $to), 'grain' => $grain];
     }
@@ -142,8 +148,7 @@ final class UptimeReport
                 if ($group === [] && $src === StateStore::EXTERNAL) {
                     continue;
                 }
-                $measured = array_sum(array_column($group, 'measured_seconds'));
-                $up = array_sum(array_column($group, 'up_seconds'));
+                [$measured, $up] = $this->sumInside($group, $range);
                 $p50 = array_values(array_filter(array_column($group, 'ms_p50'), static fn($v): bool => $v !== null));
                 $p95 = array_values(array_filter(array_column($group, 'ms_p95'), static fn($v): bool => $v !== null));
                 $max = array_values(array_filter(array_column($group, 'ms_max'), static fn($v): bool => $v !== null));
@@ -176,7 +181,9 @@ final class UptimeReport
      * @param array{from: int, to: int, grain: string} $range from range()
      * @param string $timezone the timezone the local days follow (Matomo's names, also "UTC+2")
      * @param string $group all|matomo|website, see groupTargets()
-     * @return array{grain: string, days: ?string, cells: list<array{time: string, measuredSeconds: int, upSeconds: int, state: string}>}
+     * @return array{grain: string, days: ?string, cells: list<array{time: string, measuredSeconds: int, upSeconds: int, state: string}>,
+     *               end: string, firstMeasured: ?string} end: the end of the last cell (the period's end; with UTC days the end
+     *               of the last UTC day), so a client gives the last day its 23 or 25 hours on a clock change
      */
     public function timeline(int $idSite, array $range, string $source, string $timezone, string $period = '', string $group = 'all'): array
     {
@@ -186,45 +193,31 @@ final class UptimeReport
         $now = $this->now();
         $span = $range['to'] - $range['from'];
         // a fixed axis per period: a day in hours, a week and a month in the website's days, longer periods in UTC days
-        $hourly = $period === 'day' || ($period !== 'week' && $period !== 'month' && $span <= 2 * 86400);
-        $localDays = !$hourly && $span <= self::HOUR_ROWS_DAYS * 86400;
+        $hourly = $period === 'day' || ($period !== 'week' && $period !== 'month' && $span <= 2 * 86400 + self::CLOCK_CHANGE);
+        $localDays = !$hourly && $span <= self::HOUR_ROWS_DAYS * 86400 + self::CLOCK_CHANGE;
         $rollups = new RollupStore();
         $cells = [];
         $grain = $hourly ? 'hour' : 'day';
         $days = $hourly ? null : 'local';
+        // the end of the last cell: the period's end (review of the 5.4.0 fixes, SHOULD 1: a week's Sunday with a clock
+        // change has 23 or 25 hours, which the cells' starts alone cannot tell)
+        $end = $range['to'];
         $readTo = min($range['to'], $now);
         $hourRows = ($hourly || $localDays) && $ids !== [] && $readTo > $range['from']
             ? $rollups->hours($ids, self::utc(intdiv($range['from'], 3600) * 3600), self::utc($readTo), $source)
             : [];
         if ($hourly) {
-            for ($t = intdiv($range['from'], 3600) * 3600; $t < $range['to']; $t += 3600) {
-                $cells[$t] = [0, 0];
-            }
-            foreach ($hourRows as $row) {
-                $t = (int) strtotime($row['hour'] . ' UTC');
-                if (isset($cells[$t])) {
-                    $cells[$t][0] += (int) $row['measured_seconds'];
-                    $cells[$t][1] += (int) $row['up_seconds'];
-                }
-            }
+            // one cell per local hour from local midnight: on the UTC hour in whole-hour zones; in zones with half or
+            // quarter hours (Asia/Kolkata, Asia/Kathmandu, UTC+5.5) each UTC hour row counts in the two cells it overlaps
+            // with its part in each (audit D4), so the day has 24 cells (23 or 25 on a daylight saving day)
+            $cells = $this->spread($hourRows, LocalClock::hourStarts($range['from'], $range['to'], $timezone), $range['to'], $now);
         } elseif ($localDays && ($hourRows !== [] || $readTo <= $range['from'] || $ids === []
             || $rollups->days($ids, gmdate('Y-m-d', $range['from'] + 43200), gmdate('Y-m-d', $readTo + 43200), $source) === [])) {
             // UTC days only when the hourly values are gone but day values exist (older than 90 days)
-            // local days: the start of each local day as a UTC instant
-            $starts = [];
-            for ($t = $range['from']; $t < $range['to']; $t += 86400) {
-                $starts[self::localDay($t, $timezone)] ??= $t;
-            }
-            foreach ($starts as $t) {
-                $cells[$t] = [0, 0];
-            }
-            foreach ($hourRows as $row) {
-                $local = self::localDay((int) strtotime($row['hour'] . ' UTC'), $timezone);
-                if (isset($starts[$local])) {
-                    $cells[$starts[$local]][0] += (int) $row['measured_seconds'];
-                    $cells[$starts[$local]][1] += (int) $row['up_seconds'];
-                }
-            }
+            // local days from local midnight to the next local midnight, also after a clock change (L8 review of 5.4.0,
+            // BLOCKER 1); an hour row across local midnight (zones with half or quarter hours) counts in both days with
+            // its part in each
+            $cells = $this->spread($hourRows, LocalClock::dayStarts($range['from'], $range['to'], $timezone), $range['to'], $now);
         } else {
             // long periods, and short ones whose hourly values are gone (kept 90 days): UTC days, like uptime()
             $days = 'utc';
@@ -233,6 +226,7 @@ final class UptimeReport
             for ($day = $first; $day < $last; $day = gmdate('Y-m-d', (int) strtotime($day . ' UTC') + 86400)) {
                 $cells[(int) strtotime($day . ' UTC')] = [0, 0];
             }
+            $end = (int) strtotime($last . ' UTC');
             if ($ids !== []) {
                 foreach ($rollups->days($ids, $first, gmdate('Y-m-d', $readTo + 43200), $source) as $row) {
                     $t = (int) strtotime($row['day'] . ' UTC');
@@ -245,6 +239,8 @@ final class UptimeReport
         }
         $out = [];
         foreach ($cells as $t => [$measured, $up]) {
+            $measured = (int) round($measured);
+            $up = (int) round($up);
             if ($t >= $now) {
                 $state = 'future';
             } else {
@@ -256,27 +252,90 @@ final class UptimeReport
         // final review D3: a period before the first measurement names the day the measurements start
         $first = $rollups->firstMeasured($ids, $source);
 
-        return ['grain' => $grain, 'days' => $days, 'cells' => $out,
+        return ['grain' => $grain, 'days' => $days, 'cells' => $out, 'end' => self::iso($end),
             'firstMeasured' => $first !== null ? self::iso((int) strtotime($first . ' UTC')) : null];
     }
 
     /**
-     * The local calendar day of a UTC instant in a Matomo timezone: IANA names, and Matomo's fixed offsets ("UTC+2",
-     * "UTC-5.5") that PHP's DateTimeZone cannot read. Matomo's Date::setTimezone() is for the other direction (a local
-     * date to UTC) and shifts the wrong way here.
+     * Sums hour rows into cells [start, next start), each row with the part of it that lies in a cell (audit D4): a row
+     * of the hour h counts in every cell it overlaps, the cell its start falls into and the ones after it up to h + 1
+     * hour. The part is measured against the part of the hour that had passed by now (the current hour row holds only
+     * the seconds up to now), so whole-hour cells get whole rows, as before.
+     *
+     * @param array[] $rows hour rows (hour, measured_seconds, up_seconds)
+     * @param int[] $starts the cells' starts, ascending
+     * @param int $end the end of the last cell
+     * @return array<int, array{0: float, 1: float}> measured and up seconds by cell start
      */
-    private static function localDay(int $timestamp, string $timezone): string
+    private function spread(array $rows, array $starts, int $end, int $now): array
     {
-        if (preg_match('/^UTC([+-])(\d+(?:\.\d+)?)$/', $timezone, $m)) {
-            $offset = (int) round((float) $m[2] * 3600) * ($m[1] === '-' ? -1 : 1);
+        $cells = [];
+        foreach ($starts as $t) {
+            $cells[$t] = [0.0, 0.0];
+        }
+        $count = count($starts);
+        foreach ($rows as $row) {
+            $hour = (int) strtotime($row['hour'] . ' UTC');
+            // the last cell that starts at or before the hour (binary search; the first cell for a row before it)
+            $j = 0;
+            for ($lo = 0, $hi = $count - 1; $lo <= $hi;) {
+                $mid = intdiv($lo + $hi, 2);
+                if ($starts[$mid] <= $hour) {
+                    $j = $mid;
+                    $lo = $mid + 1;
+                } else {
+                    $hi = $mid - 1;
+                }
+            }
+            for (; $j < $count && $starts[$j] < $hour + 3600; $j++) {
+                $share = self::share($hour, $starts[$j], $starts[$j + 1] ?? $end, $now);
+                $cells[$starts[$j]][0] += $share * (int) $row['measured_seconds'];
+                $cells[$starts[$j]][1] += $share * (int) $row['up_seconds'];
+            }
+        }
 
-            return gmdate('Y-m-d', $timestamp + $offset);
+        return $cells;
+    }
+
+    /**
+     * The measured and up seconds of hour or day rows inside the range: day rows whole; hour rows with their part inside
+     * [from, to) (audit D4: a day in a zone with half or quarter hours borrows no UTC hour from its neighbours).
+     *
+     * @param array[] $rows
+     * @param array{from: int, to: int, grain: string} $range as rows() left it
+     * @return array{0: int, 1: int}
+     */
+    private function sumInside(array $rows, array $range): array
+    {
+        if ($range['grain'] !== 'hour') {
+            return [(int) array_sum(array_column($rows, 'measured_seconds')), (int) array_sum(array_column($rows, 'up_seconds'))];
         }
-        try {
-            return (new \DateTime('@' . $timestamp))->setTimezone(new \DateTimeZone($timezone === '' ? 'UTC' : $timezone))->format('Y-m-d');
-        } catch (\Throwable $e) {
-            return gmdate('Y-m-d', $timestamp);
+        $measured = 0.0;
+        $up = 0.0;
+        $now = $this->now();
+        foreach ($rows as $row) {
+            $share = self::share((int) strtotime($row['hour'] . ' UTC'), $range['from'], $range['to'], $now);
+            $measured += $share * (int) $row['measured_seconds'];
+            $up += $share * (int) $row['up_seconds'];
         }
+
+        return [(int) round($measured), (int) round($up)];
+    }
+
+    /**
+     * The part of the hour row [hour, hour + 3600) inside [from, to), of the part of that hour that had passed by now
+     * (the row of the current hour holds only its seconds up to now): 1 for a whole hour inside, 0.5 for the half hour
+     * at the edge of a day in UTC+5:30.
+     */
+    private static function share(int $hour, int $from, int $to, int $now): float
+    {
+        $passed = min($hour + 3600, $now) - $hour;
+        if ($passed <= 0) {
+            return 0.0;
+        }
+        $inside = min($hour + 3600, $to, $now) - max($hour, $from);
+
+        return max(0.0, min(1.0, $inside / $passed));
     }
 
     /**
@@ -496,7 +555,11 @@ final class UptimeReport
                     // Matomo's row says whose container fails: the fix may be in that website's Tag Manager
                     $row['containersDown'][$target->idSite] = ['idSite' => $target->idSite, 'name' => $names[$target->idSite]];
                 }
-                foreach ($sides as $state) {
+                foreach ($sides as $source => $state) {
+                    if ($source === StateStore::LOCAL && self::sentNothing($state)) {
+                        // UI review of 5.4.0, B2: nothing was sent, so nothing was checked
+                        continue;
+                    }
                     $checked = self::iso((int) strtotime($state['checked_at'] . ' UTC'));
                     $row['lastCheckedAt'] = $row['lastCheckedAt'] === null ? $checked : max($row['lastCheckedAt'], $checked);
                 }
@@ -612,16 +675,30 @@ final class UptimeReport
         return $guard !== null && $guard->refusesWithoutLookup($target->url, $target->isInstanceAddress());
     }
 
-    /** the certificate expiry of a target (Y-m-d): the server's, else the one from outside (sides() order), else null */
+    /**
+     * The certificate expiry of a target (Y-m-d): the server's, else the one from outside (sides() order), else null.
+     * The server's date counts only while its checks send requests: a result that sent nothing (Outcome::NOTHING_SENT:
+     * internet features off, PHP functions disabled, a name only intl converts) confirms no date, which could be
+     * renewed long since (L8 review of 5.4.0, SHOULD 3; Sentinel's U03 answers unknown then).
+     */
     private static function certOf(array $sides): ?string
     {
-        foreach ($sides as $state) {
+        foreach ($sides as $source => $state) {
+            if ($source === StateStore::LOCAL && self::sentNothing($state)) {
+                continue;
+            }
             if ($state['cert_not_after'] !== null) {
                 return (string) $state['cert_not_after'];
             }
         }
 
         return null;
+    }
+
+    /** whether the server's latest result sent nothing (Outcome::NOTHING_SENT): no check, only its reason */
+    private static function sentNothing(array $state): bool
+    {
+        return in_array($state['note'], Outcome::NOTHING_SENT, true);
     }
 
     /** one side's current outcome: up|down|not_checkable, stale when older than $staleAfter seconds, null without one */

@@ -1,5 +1,51 @@
 # Changelog
 
+## 5.4.0
+
+- When Matomo's internet features are switched off (`enable_internet_features = 0` in `[General]`), the checks send
+  nothing and every address reads "not checkable" with the reason; Visitors > Uptime and Administration > Diagnostic >
+  Uptime Monitor name the setting to super users, everyone else reads that the checks are switched off. Instances with
+  this setting are no longer checked after the update; to keep checking, set `checkWithInternetFeaturesOff = 1` in
+  `[FeinwerkUptimeMonitor]` of `config/config.ini.php` (Visitors > Uptime and the admin page have the line to copy).
+- An outage that was open when the checks stopped sending (Matomo's internet features switched off, PHP functions
+  missing) ends at its last failed check instead of staying open.
+- Certificates are verified with the CA file that comes with Matomo, as Matomo's own requests do, so HTTPS addresses
+  are also checked on servers whose own trust store is missing or outdated. Intranet certificates that only the
+  server's own trust store knows, from an internal CA or self-signed, keep working.
+- Through Matomo's proxy, a local name server that does not answer no longer makes every address read as a DNS failure.
+- When Matomo's address is stored with http and the server redirects it to https, the tracker endpoint, the JavaScript
+  tracker and the Tag Manager containers follow that redirect instead of reading "unexpected redirect", and the admin
+  page says what to set.
+- Website addresses with ß (such as straße.de) are checked under their own domain, as browsers open them, and no
+  longer under the spelling with ss (strasse.de), which can be another domain.
+- Website addresses with umlauts and other common accented letters are checked on servers without PHP's intl
+  extension too; other characters there read "not checkable" with the reason, and super users read what to install.
+- Addresses with international characters are shown as entered, with their ASCII form in the tooltip.
+- Visitors > Uptime: when the server's PHP cannot send the checks, super users read which PHP functions are missing and
+  what to do, as on the admin page; a missing curl extension is named as such on both.
+- Results for which nothing could be sent (Matomo's internet features off, PHP functions missing) no longer read as a
+  recent check on Visitors > Uptime, in the widgets and in the admin page's last check, and a certificate date that no
+  check confirmed no longer reads as expired. The check button is hidden while Matomo's internet features are off.
+- The strip and the uptime figures of a week or a month with a clock change, such as October in Europe, follow the
+  website's own days, also when the change falls on the week's last day; on the day the clocks go back, the hour that
+  comes twice names its time zone (such as "2:00 AM GMT+2" and "2:00 AM GMT+1").
+- Days in time zones with half or quarter hours, such as India or Nepal, show one cell per local hour and count only
+  their own hours in their uptime.
+- On servers with a libcurl older than 7.59, addresses with both IPv4 and IPv6 records no longer read as a DNS failure.
+- Visitors > Uptime: addresses the server cannot check because its PHP disables functions, or because Matomo's internet
+  features are off, no longer show the general reasons and the link to allow private addresses.
+- Visitors > Uptime: the answer lists red lines before amber ones.
+- Visitors > Uptime: on a past day, addresses that cannot be checked now are counted in the muted "Now" line (such as
+  "Now: Matomo reachable, 1 address not checkable"); the line about them under the table shows for today only. An
+  address without measurements on that day reads "Not measured".
+- Visitors > Uptime with results checked from outside: when the Matomo server cannot check addresses for one reason,
+  the reason is named once, in the answer or in the line under the table, instead of in every row.
+- The Copy buttons name the line they copy for screen readers and announce when it is copied.
+- API: `getStatus` names `internetFeaturesOff` and, for super users, `curlExtensionMissing`; results can carry the notes
+  `internet_off`, `https_redirect` and `needs_intl`; `getTimeline` returns `end`, the end of its last cell;
+  `detectTargets` says why the main page could not be read
+  (`readError`), and with `apply=1` it changes nothing then (`applied` is false).
+
 ## 5.3.3
 
 - Addresses with international characters (such as ß or umlauts) are always fetched under exactly the name that was

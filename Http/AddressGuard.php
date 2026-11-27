@@ -47,6 +47,16 @@ final class AddressGuard implements UrlGuard
 
     /** @var \Closure(string): string[] */
     private \Closure $resolver;
+    /**
+     * this guard's lookups (one check run, or one API call): host => addresses. A failed lookup is kept only for the
+     * proxied way, where it decides nothing; on the direct way the run's retry asks again. A resolver that drops
+     * queries is still asked once per host: skipping it for later names after one silent answer would let a slow DNS
+     * name of one website switch the private-address check off for the names after it. Each answer keeps the time its
+     * lookup took (L8 review of 5.4.0, NIT 6).
+     *
+     * @var array<string, array{0: string[], 1: int}>
+     */
+    private array $answers = [];
     private Capabilities $capabilities;
     /** the default lookup (needs gethostbynamel or dns_get_record), not a resolver given by the caller */
     private bool $looksUp;
@@ -77,9 +87,9 @@ final class AddressGuard implements UrlGuard
 
     public function check(string $url, bool $instanceTarget = false): GuardDecision
     {
-        [$scheme, $host, $port, $refusal] = self::parse($url);
+        [$scheme, $host, $port, $refusal] = self::parse($url, $this->capabilities);
         if ($refusal !== null) {
-            return self::refuse($host, $port, $scheme);
+            return new GuardDecision(false, null, $refusal, $host, $port, $scheme, [], 0);
         }
         if (!$this->capabilities->canCompareAddresses()) {
             return self::disabled($host, $port, $scheme);
@@ -97,22 +107,17 @@ final class AddressGuard implements UrlGuard
             return self::disabled($host, $port, $scheme);
         }
 
-        $started = microtime(true);
-        $addresses = array_values(array_filter(
-            array_map('strval', ($this->resolver)($host)),
-            static fn(string $ip): bool => (bool) filter_var($ip, FILTER_VALIDATE_IP)
-        ));
-        $lookupMs = (int) round((microtime(true) - $started) * 1000);
+        [$addresses, $lookupMs, $answerMs] = $this->lookup($host, false);
         if ($addresses === []) {
             return new GuardDecision(false, null, Outcome::DNS, $host, $port, $scheme, [], $lookupMs);
         }
         foreach ($addresses as $address) {
             if (!$this->isAllowedIp($address, $instanceTarget)) {
-                return new GuardDecision(false, null, Outcome::BLOCKED, $host, $port, $scheme, [], $lookupMs);
+                return new GuardDecision(false, null, Outcome::BLOCKED, $host, $port, $scheme, [], $lookupMs, $answerMs);
             }
         }
 
-        return new GuardDecision(true, $addresses[0], null, $host, $port, $scheme, $addresses, $lookupMs);
+        return new GuardDecision(true, $addresses[0], null, $host, $port, $scheme, $addresses, $lookupMs, $answerMs);
     }
 
     /**
@@ -123,9 +128,10 @@ final class AddressGuard implements UrlGuard
      */
     public function refusesWithoutLookup(string $url, bool $instanceTarget = false): bool
     {
-        [, $host, , $refusal] = self::parse($url);
+        [, $host, , $refusal] = self::parse($url, $this->capabilities);
         if ($refusal !== null) {
-            return true;
+            // a name that needs intl: its check says why (note needs_intl), not "never checked"
+            return $refusal !== Outcome::NEEDS_INTL;
         }
         if (!$this->capabilities->canCompareAddresses()) {
             // nothing is checkable from this PHP: its checks say why (note php_disabled), not "never checked"
@@ -151,7 +157,10 @@ final class AddressGuard implements UrlGuard
      */
     public function checkWithoutResolving(string $url, bool $instanceTarget = false): GuardDecision
     {
-        [$scheme, $host, $port, $refusal] = self::parse($url);
+        [$scheme, $host, $port, $refusal] = self::parse($url, $this->capabilities);
+        if ($refusal === Outcome::NEEDS_INTL) {
+            return new GuardDecision(false, null, $refusal, $host, $port, $scheme, [], 0);
+        }
         $blocked = $refusal !== null;
         $lookupMs = 0;
         if (!$blocked && !$this->capabilities->canCompareAddresses()) {
@@ -169,10 +178,9 @@ final class AddressGuard implements UrlGuard
             return self::disabled($host, $port, $scheme);
         }
         if ($name && !$cannotResolve) {
-            // the proxy resolves the host; this server resolves it too, and its answers must pass as well
-            $started = microtime(true);
-            $addresses = array_filter(array_map('strval', ($this->resolver)($host)), static fn(string $ip): bool => (bool) filter_var($ip, FILTER_VALIDATE_IP));
-            $lookupMs = (int) round((microtime(true) - $started) * 1000);
+            // the proxy resolves the host; this server resolves it too, and its answers must pass as well. No answer
+            // decides nothing (the proxy resolves), as before; each host is asked once per guard (audit D1)
+            [$addresses, $lookupMs] = $this->lookup($host, true);
             foreach ($addresses as $address) {
                 if (!$this->isAllowedIp($address, $instanceTarget)) {
                     $blocked = true;
@@ -184,46 +192,91 @@ final class AddressGuard implements UrlGuard
     }
 
     /**
+     * The addresses of a host, the time waited for them now (0 when this guard asked before) and the time the lookup
+     * took when it was made.
+     *
+     * @param bool $keepFailed keep a lookup without an answer too (the proxied way)
+     * @return array{0: string[], 1: int, 2: int}
+     */
+    private function lookup(string $host, bool $keepFailed): array
+    {
+        if (isset($this->answers[$host])) {
+            return [$this->answers[$host][0], 0, $this->answers[$host][1]];
+        }
+        $started = microtime(true);
+        $addresses = array_values(array_filter(
+            array_map('strval', ($this->resolver)($host)),
+            static fn(string $ip): bool => (bool) filter_var($ip, FILTER_VALIDATE_IP)
+        ));
+        $lookupMs = (int) round((microtime(true) - $started) * 1000);
+        if ($addresses !== [] || $keepFailed) {
+            $this->answers[$host] = [$addresses, $lookupMs];
+        }
+
+        return [$addresses, $lookupMs, $lookupMs];
+    }
+
+    /**
      * The host as curl will use it: lower case, without one trailing dot, internationalised names in ASCII (punycode).
      * Null when the host is not acceptable.
      */
-    public static function normalizeHost(string $host): ?string
+    public static function normalizeHost(string $host, ?Capabilities $capabilities = null): ?string
+    {
+        return self::normalize($host, $capabilities ?? new Capabilities())[0];
+    }
+
+    /**
+     * normalizeHost() with the reason of a refusal: Outcome::NEEDS_INTL for a name only intl converts safely on a PHP
+     * without it, else Outcome::BLOCKED.
+     *
+     * Internationalised names as browsers (WHATWG URL) and libcurl's libidn2 map them: UTS46 nontransitional (IDNA2008,
+     * ß stays ß: straße.de and strasse.de are two domains; L8 review of 5.4.0, SHOULD 4), with the joiner and bidi
+     * rules. Without intl, Punycode gives the same names and refuses what UTS46 refuses (SHOULD 5).
+     *
+     * @return array{0: ?string, 1: ?string} the host, or null and the reason
+     */
+    private static function normalize(string $host, Capabilities $capabilities): array
     {
         $host = strtolower(trim($host));
         if ($host !== '' && $host[0] === '[' && substr($host, -1) === ']') {
             $inner = substr($host, 1, -1);
-            return filter_var($inner, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? $inner : null;
+            return filter_var($inner, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? [$inner, null] : [null, Outcome::BLOCKED];
         }
         if (substr($host, -1) === '.') {
             $host = substr($host, 0, -1);
         }
         if ($host === '') {
-            return null;
+            return [null, Outcome::BLOCKED];
         }
         if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            return $host;
+            return [$host, null];
         }
         if (preg_match('/[^\x20-\x7e]/', $host)) {
-            if (!function_exists('idn_to_ascii')) {
-                return null;
+            if ($capabilities->has('idn_to_ascii')) {
+                $ascii = idn_to_ascii($host, IDNA_NONTRANSITIONAL_TO_ASCII | IDNA_CHECK_CONTEXTJ | IDNA_CHECK_BIDI, INTL_IDNA_VARIANT_UTS46);
+            } else {
+                // without intl (shared hosting, slim images): the same punycode by Punycode (audit D3)
+                [$ascii, $why] = Punycode::convert($host, $capabilities);
+                if ($ascii === null) {
+                    return [null, $why === Punycode::UNSUPPORTED ? Outcome::NEEDS_INTL : Outcome::BLOCKED];
+                }
             }
-            $ascii = idn_to_ascii($host, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46);
             if (!is_string($ascii) || $ascii === '') {
-                return null;
+                return [null, Outcome::BLOCKED];
             }
             $host = strtolower($ascii);
         }
         if (!preg_match('/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/', $host) || strlen($host) > 253) {
-            return null;
+            return [null, Outcome::BLOCKED];
         }
         // numeric forms curl may read as an address (0x7f.1, 2130706433, 127.1): only canonical IPv4 literals pass
         $labels = explode('.', $host);
         $last = (string) end($labels);
         if (preg_match('/^(0x[0-9a-f]*|[0-9]+)$/', $last)) {
-            return null;
+            return [null, Outcome::BLOCKED];
         }
 
-        return $host;
+        return [$host, null];
     }
 
     public static function isPublicIp(string $ip): bool
@@ -295,7 +348,7 @@ final class AddressGuard implements UrlGuard
     /**
      * @return array{0: string, 1: string, 2: int, 3: ?string} scheme, host, port, refusal reason (null: acceptable)
      */
-    private static function parse(string $url): array
+    private static function parse(string $url, Capabilities $capabilities): array
     {
         $parts = parse_url($url);
         if ($parts === false) {
@@ -303,11 +356,17 @@ final class AddressGuard implements UrlGuard
         }
         $scheme = strtolower((string) ($parts['scheme'] ?? ''));
         $port = (int) ($parts['port'] ?? ($scheme === 'http' ? 80 : 443));
-        $host = self::normalizeHost((string) ($parts['host'] ?? ''));
-        if (!in_array($scheme, ['http', 'https'], true) || $host === null || isset($parts['user']) || isset($parts['pass'])
+        $raw = (string) ($parts['host'] ?? '');
+        [$host, $why] = self::normalize($raw, $capabilities);
+        if (!in_array($scheme, ['http', 'https'], true) || isset($parts['user']) || isset($parts['pass'])
             || $port < 1 || $port > 65535 || preg_match('/[\s\\\\]/', $url)
         ) {
             return [$scheme, (string) $host, $port, Outcome::BLOCKED];
+        }
+        if ($host === null) {
+            // a name only intl converts safely, on a PHP without it: not checkable with its own note (security review
+            // of D3), not "blocked by the settings"; a name UTS46 refuses is blocked with intl and without
+            return [$scheme, '', $port, $why ?? Outcome::BLOCKED];
         }
 
         return [$scheme, $host, $port, null];

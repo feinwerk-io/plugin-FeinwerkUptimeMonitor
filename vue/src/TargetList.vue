@@ -18,7 +18,13 @@
   of an agreeing line (W5). Review fixes before 5.3.0: a side line holds its values as one unit
   that moves under the side's name as a whole (UI review B1); an outside without a current result
   adds no words, in the widgets no line (L8 NIT 3); a container too large to read names no side
-  (L2); the widgets on a past day list the lower uptime first (L4, byUptime).
+  (L2); the widgets on a past day list the lower uptime first (L4, byUptime). UI review of 5.4.0,
+  P3 (Peter, "go"): an address the server cannot check names its own short reason ("Not
+  checkable: needs PHP intl"), also on a side line; where the group's answer line names it for all
+  of the group, "Not checkable" with the reason in the tooltip (polish before 5.4.0); with results
+  from outside where the count line names it, "Not checkable from the Matomo server" in one line
+  and "Not checkable" on a side line (quick UI review before 5.4.0, L1). A past day's address
+  without measurements says "Not measured" (R1).
 -->
 <template>
   <ul
@@ -48,6 +54,7 @@
         <span
           v-if="!past"
           class="fwum-targets__text"
+          :title="onlyFromOutside(row) ? undefined : row.textTitle || undefined"
         ><span class="fwum-sr">{{
           translate('FeinwerkUptimeMonitor_UiResponse') }}: </span>{{
           keepHyphens(textOf(row)) }}<span
@@ -81,10 +88,10 @@
               v-if="!past && hasWords(side)"
               class="fwum-targets__text"
               :class="`is-${toneOf(side, row)}`"
-              :title="side.title || undefined"
+              :title="sideTitle(side, row)"
             ><span class="fwum-sr">{{
               translate('FeinwerkUptimeMonitor_UiResponse') }}: </span>{{
-              keepHyphens(side.text) }}</span>
+              keepHyphens(sideWords(side)) }}</span>
             <span
               v-if="side.uptime || past"
               class="fwum-targets__uptime"
@@ -115,7 +122,7 @@ import { translate } from 'CoreHome';
 import { AddressRow } from './types';
 import { breakParts, keepHyphens } from './format';
 import {
-  aside, keepServer, Side, sideTone, speaks, split, uptimeLines, widgetSide,
+  aside, keepServer, Side, sideTone, sideWords, speaks, split, uptimeLines, widgetSide,
 } from './sides';
 
 export default defineComponent({
@@ -131,11 +138,18 @@ export default defineComponent({
     widget: { type: Boolean, default: false },
     /** the lower uptime first where the sides differ: a widget on a past day or period (L4) */
     byUptime: { type: Boolean, default: false },
+    /**
+     * an address on the screen has a figure (the page's Uptime column, D4): a past day's address
+     * without one says "Not measured" (quick UI review before 5.4.0, R1)
+     */
+    measured: { type: Boolean, default: true },
   },
   methods: {
     translate,
     breakParts,
     keepHyphens,
+    /** UI review of 5.4.0, P3: a side's words with the server's short reason it cannot check it */
+    sideWords,
     /**
      * the row's side from outside as this list shows it: none in a widget while the outside has no
      * current answer about the address (L8 review of 5.3.0, NIT 3: a green widget keeps one line)
@@ -180,7 +194,8 @@ export default defineComponent({
     },
     /**
      * the one line's uptime: with results from outside the Uptime cell's one value (it names the
-     * outside); D3 the one side's, its name follows once
+     * outside); D3 the one side's, its name follows once. R1: "Not measured" on a past day where
+     * nothing was, as the page's Uptime cell, unless nothing on the screen has a figure (D4)
      */
     uptimeOf(row: AddressRow): string {
       const only = this.onlyOf(row);
@@ -189,9 +204,17 @@ export default defineComponent({
       }
       const outside = this.outsideOf(row);
       if (!outside || (!row.uptime && !outside.uptime)) {
-        return row.uptime;
+        return row.uptime || (this.past && this.measured
+          ? translate('FeinwerkUptimeMonitor_UiNotMeasured') : '');
       }
       return uptimeLines(row.server, outside, this.past)[0].text;
+    },
+    /**
+     * a side line's tooltip: why the outside cannot check the address (B5); the server's words
+     * with the reason the group's answer line names (polish before 5.4.0)
+     */
+    sideTitle(side: Side, row: AddressRow): string | undefined {
+      return side.title || (side.key === 'server' ? row.textTitle : '') || undefined;
     },
     /** W5: the outside's value of an agreeing line, for screen readers (sides.ts aside) */
     asideOf(row: AddressRow): string {

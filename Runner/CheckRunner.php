@@ -9,6 +9,7 @@
 
 namespace Piwik\Plugins\FeinwerkUptimeMonitor\Runner;
 
+use Composer\CaBundle\CaBundle;
 use Piwik\Config;
 use Piwik\Container\StaticContainer;
 use Piwik\Option;
@@ -23,6 +24,7 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Http\AddressGuard;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Capabilities;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\CertificateReader;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Prober;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Http\TrustFile;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\CheckStore;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\IncidentStore;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\Retention;
@@ -145,26 +147,48 @@ final class CheckRunner
     }
 
     /**
-     * The prober with Matomo's [proxy] settings and CA bundle.
+     * The prober with Matomo's [proxy] settings and CA file (trust()).
      */
     public static function prober(AddressGuard $guard): Prober
     {
         $proxy = Config::getInstance()->proxy;
-        // like Matomo's own requests: [General] custom_cacert_pem when set (a TLS-inspecting proxy, an internal CA);
-        // otherwise the server's own trust store
-        $general = Config::getInstance()->General;
-        $caInfo = is_array($general) && !empty($general['custom_cacert_pem']) ? (string) $general['custom_cacert_pem'] : null;
+        [$caInfo, $systemRetry] = self::trust();
 
-        return new Prober($guard, is_array($proxy) ? $proxy : [], self::userAgent(), 5000, 10000, 8, $caInfo, self::capabilities());
+        return new Prober($guard, is_array($proxy) ? $proxy : [], self::userAgent(), 5000, 10000, 8, $caInfo, self::capabilities(), $systemRetry);
+    }
+
+    /**
+     * The CA file of the checks, as Matomo's own curl requests take it (core Http::configCurlCertificate at 5.0.0 and
+     * 6.0.0): [General] custom_cacert_pem when set (a TLS-inspecting proxy, an internal CA), else Matomo's bundled
+     * cacert.pem, so a server whose own trust store is missing or old still verifies; with the bundle a verification
+     * that fails for a trust anchor problem (an issuer the bundle lacks, a self-signed certificate or root) is tried once
+     * more with the server's trust store (TrustFile::secondTry()).
+     *
+     * @return array{0: ?string, 1: bool} the file (null: the server's trust store) and the second try
+     */
+    public static function trust(): array
+    {
+        $general = Config::getInstance()->General;
+        $custom = is_array($general) ? (string) ($general['custom_cacert_pem'] ?? '') : '';
+        $bundled = null;
+        try {
+            // composer/ca-bundle ships with Matomo (core/Http.php uses it); a build without it falls back
+            $bundled = class_exists(CaBundle::class) ? CaBundle::getBundledCaBundlePath() : null;
+        } catch (\Throwable $e) {
+            $bundled = null;
+        }
+
+        return TrustFile::choose($custom, $bundled);
     }
 
     /**
      * The PHP functions there are, from Matomo's container (PHP's function_exists; tests put a host with disabled
-     * functions there).
+     * functions there), and whether the checks may send requests at all (Matomo's internet features or the opt-in,
+     * InternetAccess, read now).
      */
     public static function capabilities(): Capabilities
     {
-        return StaticContainer::get(Capabilities::class);
+        return StaticContainer::get(Capabilities::class)->withInternet(InternetAccess::checksAllowed());
     }
 
     /**
@@ -291,6 +315,12 @@ final class CheckRunner
         $this->states->upsertMany($list, StateStore::LOCAL);
         $this->targets->markChecked($list);
         $this->incidents->apply($list);
+        // nothing was sent (Matomo's internet features off, PHP functions disabled, a name that needs PHP intl): these
+        // addresses are no longer checked, so an outage that was open ends instead of growing for as long as nothing is
+        // sent; at its last failing check, never at this run's minute (quick UI review before 5.4.0, Q1)
+        $stopped = array_values(array_map(static fn(CheckResult $r): int => $r->idTarget,
+            array_filter($list, static fn(CheckResult $r): bool => in_array($r->note, Outcome::NOTHING_SENT, true))));
+        $this->incidents->endAtLastFailure($stopped);
 
         if ($previous !== null) {
             $previousTs = (int) strtotime($previous . ' UTC');
@@ -335,7 +365,8 @@ final class CheckRunner
      */
     private function withCertificateFallback(array $results, array $byId, float $deadline): array
     {
-        if ($this->guard === null) {
+        // its own lookup and handshake: nothing of it while Matomo's internet features are off
+        if ($this->guard === null || !$this->prober->internetAllowed()) {
             return $results;
         }
         $left = self::CERT_FALLBACKS_PER_RUN;

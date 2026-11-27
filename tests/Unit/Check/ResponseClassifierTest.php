@@ -125,6 +125,44 @@ class ResponseClassifierTest extends TestCase
         return (new ResponseClassifier())->classify($target, $response, self::NOW);
     }
 
+    /** Audit D2: the same address with https, followed by the prober for every kind, is up with the note https_redirect. */
+    public function test_theSameAddressWithHttps_isUp_withItsNote(): void
+    {
+        $classify = static function (string $kind, string $url, string $final, int $redirects, int $status, string $body): CheckResult {
+            $target = new Target(7, 0, $kind, $kind, $url, 'default', ['matomoHost' => 'matomo.example.com', 'idContainer' => 'AbC123'], '2026-03-01 00:00:00');
+            return (new ResponseClassifier())->classify($target, new ProbeResponse($status, $body, null, $final, ['total' => 5], null, $redirects), self::NOW);
+        };
+        $http = 'http://matomo.example.com/matomo.php';
+        $https = 'https://matomo.example.com/matomo.php';
+        $this->assertResult($classify(Kind::TRACKER, $http, $https, 1, 200, self::TRACKER_PAGE), Outcome::UP, null, Outcome::HTTPS_REDIRECT);
+        $this->assertResult($classify(Kind::JS, 'http://matomo.example.com/matomo.js', 'https://matomo.example.com/matomo.js', 1, 200, 'getAsyncTracker'),
+            Outcome::UP, null, Outcome::HTTPS_REDIRECT);
+        $this->assertResult($classify(Kind::CONTAINER, 'http://matomo.example.com/js/container_AbC123.js', 'https://matomo.example.com/js/container_AbC123.js', 1, 200, '{"id":"AbC123"}'),
+            Outcome::UP, null, Outcome::HTTPS_REDIRECT);
+        $this->assertResult($classify(Kind::TRACKER, $http, $https, 1, 200, '<html>shop</html>'), Outcome::DOWN, Outcome::CONTENT, null);
+        $this->assertResult($classify(Kind::TRACKER, $https, $https, 0, 200, self::TRACKER_PAGE), Outcome::UP, null, null);
+        $this->assertResult($classify(Kind::WEB, 'http://www.shop.example/', 'https://www.shop.example/', 1, 200, 'shop'), Outcome::UP, null, null);
+        $this->assertLessThanOrEqual(20, strlen(Outcome::HTTPS_REDIRECT), 'fits the note column (VARCHAR(20))');
+    }
+
+    /** Only the same address with https: same host, default ports, same path and query. */
+    public function test_isHttpsUpgrade(): void
+    {
+        $yes = [['http://m.example/matomo.php', 'https://m.example/matomo.php'], ['http://M.example:80/a/b?x=1', 'https://m.example:443/a/b?x=1'],
+            ['http://m.example/js/', 'https://m.example/js/']];
+        $no = [['https://m.example/matomo.php', 'https://m.example/matomo.php'], ['http://m.example/matomo.php', 'https://other.example/matomo.php'],
+            ['http://m.example/matomo.php', 'https://m.example/index.php'], ['http://m.example/matomo.php?a=1', 'https://m.example/matomo.php'],
+            ['http://m.example:8080/matomo.php', 'https://m.example/matomo.php'], ['http://m.example/matomo.php', 'https://m.example:8443/matomo.php'],
+            ['http://m.example/matomo.php', 'http://m.example/matomo.php'], ['http://m.example/matomo.php', 'https://user@m.example/matomo.php'],
+            ['http://m.example/matomo.php', '/matomo.php']];
+        foreach ($yes as [$from, $to]) {
+            $this->assertTrue(ResponseClassifier::isHttpsUpgrade($from, $to), "$from -> $to");
+        }
+        foreach ($no as [$from, $to]) {
+            $this->assertFalse(ResponseClassifier::isHttpsUpgrade($from, $to), "$from -> $to");
+        }
+    }
+
     public function test_detectedProxy_neverUp_failuresAreNotCheckable(): void
     {
         $target = new Target(7, 1, 'proxy', Kind::PROXY, 'https://shop.example/matomo.php', 'detected', ['matomoHost' => 'm.example']);
@@ -269,6 +307,19 @@ class ResponseClassifierTest extends TestCase
             $this->assertResult($this->classify($kind, null, '', Outcome::PHP_DISABLED, 'https://x/', [], null), Outcome::NOT_CHECKABLE, null, Outcome::PHP_DISABLED);
         }
         $this->assertLessThanOrEqual(20, strlen(Outcome::PHP_DISABLED), 'fits the note column (VARCHAR(20))');
+    }
+
+    /** Matomo's internet features are off: nothing was requested, never an outage, also for an address that was up. */
+    public function test_internetOff_isNotCheckable_withItsNote(): void
+    {
+        foreach ([Kind::WEB, Kind::UI, Kind::TRACKER, Kind::JS, Kind::CONTAINER, Kind::PROXY] as $kind) {
+            $this->assertResult($this->classify($kind, null, '', Outcome::INTERNET_OFF), Outcome::NOT_CHECKABLE, null, Outcome::INTERNET_OFF);
+            $this->assertResult($this->classify($kind, null, '', Outcome::INTERNET_OFF, 'https://x/', [], null), Outcome::NOT_CHECKABLE, null, Outcome::INTERNET_OFF);
+        }
+        $this->assertLessThanOrEqual(20, strlen(Outcome::INTERNET_OFF), 'fits the note column (VARCHAR(20))');
+        // a name only intl converts safely, on a PHP without it: the same, with its own note
+        $this->assertResult($this->classify(Kind::WEB, null, '', Outcome::NEEDS_INTL), Outcome::NOT_CHECKABLE, null, Outcome::NEEDS_INTL);
+        $this->assertLessThanOrEqual(20, strlen(Outcome::NEEDS_INTL));
     }
 
     public function test_ui_403FromForeignHost_isDown(): void

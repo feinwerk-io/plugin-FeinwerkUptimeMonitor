@@ -13,6 +13,7 @@ use Piwik\Plugins\FeinwerkSentinel\Check\CheckContext;
 use Piwik\Plugins\FeinwerkSentinel\Check\CheckResult;
 use Piwik\Plugins\FeinwerkSentinel\Check\Severity;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\StateStore;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Outcome;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Thresholds;
 
 /**
@@ -49,9 +50,20 @@ final class CertificateExpiry extends UptimeCheck
             }
             // the server's certificate, else the one from outside, but only while those results come in: an old one
             // from outside could be renewed long since (the uptime page and getStatus follow the same rule)
-            $notAfter = $cache->state($target->id)['cert_not_after']
+            $local = $cache->state($target->id);
+            // nothing was requested from this server (internet features off, PHP functions disabled): its stored date
+            // was not confirmed since and could be renewed long since
+            $unconfirmed = $local !== null && in_array($local['note'] ?? null, Outcome::NOTHING_SENT, true);
+            $notAfter = ($unconfirmed ? null : $local['cert_not_after'] ?? null)
                 ?? ($cache->proActive() ? $cache->state($target->id, StateStore::EXTERNAL)['cert_not_after'] ?? null : null);
-            if ($notAfter === null || isset($seenHosts[$host])) {
+            if (isset($seenHosts[$host])) {
+                continue;
+            }
+            if ($notAfter === null) {
+                if ($unconfirmed && ($local['cert_not_after'] ?? null) !== null) {
+                    $seenHosts[$host] = true;
+                    $results[] = CheckResult::unknown($target->key, 'not checked from this server');
+                }
                 continue;
             }
             $seenHosts[$host] = true;

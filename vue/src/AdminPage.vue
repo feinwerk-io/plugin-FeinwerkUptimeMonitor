@@ -23,7 +23,15 @@
   follows when Sentinel sends alerts, never "No alerts" while that plugin sends them. 5.3.1: when
   the server's PHP disables functions the checks need, one line above the table names them with
   a hint for the server administrator; the fold then has no "Why?" and no "Allow private
-  addresses", which are not the reason.
+  addresses", which are not the reason. The same while Matomo's internet features are off (Peter's
+  2a, with the opt-in), and a hint when Matomo's own addresses answer only after the redirect to
+  https (audit D2). UI review of 5.4.0 (Peter, "go" to P1 to P4): those server rows are one list
+  with the dividers of "Checks and alerts", and each line for config/config.ini.php is a chip with
+  Copy, as the cron line (P2); the line alone, never a section header, which would replace the
+  section already in the file; the tracker address field is named and linked as the settings page
+  names it (L6); while Matomo's internet features are off the cron row is neutral and says the
+  checks send nothing (L8), and the target panel says so too (L9). Quick UI review before 5.4.0, L3:
+  each chip's Copy is named with its line and says "Copied" in a polite region (CopyChip.vue).
 -->
 <template>
   <div
@@ -33,12 +41,16 @@
     <ContentBlock :content-title="translate('FeinwerkUptimeMonitor_MenuTitle')">
       <p>{{ translate(outside ? 'FeinwerkUptimeMonitor_UiAdminIntroOutside'
         : 'FeinwerkUptimeMonitor_UiAdminIntro') }}</p>
-      <!-- 5.3.1: the server's PHP disables functions the checks need: the reason, once -->
+      <!-- P2 (UI review of 5.4.0): the server's rows in one list, as "Checks and alerts" below -->
       <ul
-        v-if="phpDisabled.length"
-        class="fwum-checks fwum-admin__php"
+        v-if="phpDisabled.length || config.internetOff || config.httpsRedirect"
+        class="fwum-checks fwum-admin__server"
       >
-        <li class="is-warn">
+        <!-- 5.3.1: the server's PHP disables functions the checks need: the reason, once -->
+        <li
+          v-if="phpDisabled.length"
+          class="fwum-admin__php is-warn"
+        >
           <span
             class="icon-warning"
             aria-hidden="true"
@@ -46,8 +58,51 @@
           <div>
             <p>{{ translate('FeinwerkUptimeMonitor_UiAdminPhpDisabled',
                             phpDisabled.join(', ')) }}</p>
+            <!-- UI review of 5.4.0, L7: a missing curl extension, not disable_functions -->
+            <p class="fwum-muted">{{ translate(config.curlMissing
+              ? 'FeinwerkUptimeMonitor_UiAdminCurlMissingHint'
+              : 'FeinwerkUptimeMonitor_UiAdminPhpDisabledHint') }}</p>
+          </div>
+        </li>
+        <!-- Peter's 2a: Matomo's internet features are off: no check is sent; the opt-in -->
+        <li
+          v-if="config.internetOff"
+          class="fwum-admin__internet is-warn"
+        >
+          <span
+            class="icon-warning"
+            aria-hidden="true"
+          />
+          <div>
+            <p>{{ translate('FeinwerkUptimeMonitor_UiInternetOff') }}</p>
             <p class="fwum-muted">{{
-              translate('FeinwerkUptimeMonitor_UiAdminPhpDisabledHint') }}</p>
+              translate('FeinwerkUptimeMonitor_UiAdminInternetOffHint') }}</p>
+            <CopyChip
+              class="fwum-chip"
+              :line="internetLine"
+            />
+          </div>
+        </li>
+        <!-- audit D2: Matomo's address stored as http behind a proxy that handles https; UI review
+             of 5.4.0, B4: it works, so an info row, as Matomo's System Check -->
+        <li
+          v-if="config.httpsRedirect"
+          class="fwum-admin__https is-info"
+        >
+          <span
+            class="icon-info"
+            aria-hidden="true"
+          />
+          <div>
+            <p>{{ translate('FeinwerkUptimeMonitor_UiAdminHttpsRedirect') }}</p>
+            <p class="fwum-muted">{{
+              translate('FeinwerkUptimeMonitor_UiAdminHttpsRedirectHint') }}</p>
+            <CopyChip
+              class="fwum-chip"
+              :line="httpsLine"
+            />
+            <p class="fwum-muted">{{ trackerFacts.before }}<a :href="settingsUrl">{{
+              trackerFacts.link }}</a>{{ trackerFacts.after }}</p>
           </div>
         </li>
       </ul>
@@ -210,7 +265,7 @@
               : 'FeinwerkUptimeMonitor_UiShow') }}</button>
             <!-- with PHP functions disabled the reason is the line above the table, not a firewall
                  or a private address -->
-            <template v-if="!phpDisabled.length">
+            <template v-if="foldWhy">
               <button
                 type="button"
                 class="fwum-link-button"
@@ -225,7 +280,7 @@
             </template>
           </p>
           <p
-            v-if="!phpDisabled.length"
+            v-if="foldWhy"
             v-show="whyOpen"
             :id="`${uid}-why`"
             class="fwum-note fwum-nc__why"
@@ -241,28 +296,28 @@
     <!-- Peter's 3a (P2): status rows like Diagnostic > System Check -->
     <ContentBlock :content-title="translate('FeinwerkUptimeMonitor_UiChecksAndAlerts')">
       <ul class="fwum-checks">
+        <!-- UI review of 5.4.0, L8: no green tick while the checks send nothing -->
         <li
           class="fwum-checks__cron"
-          :class="cronOk ? 'is-ok' : 'is-warn'"
+          :class="cronClass"
         >
           <span
-            :class="cronOk ? 'icon-ok' : 'icon-warning'"
+            :class="cronIcon"
             aria-hidden="true"
           />
           <div>
             <p v-if="cronOk">{{ cronText }}</p>
             <template v-else>
               <p>{{ translate('FeinwerkUptimeMonitor_UiCronHelp') }}</p>
-              <div class="fwum-cron">
-                <code>{{ config.cronLine }}</code>
-                <button
-                  type="button"
-                  class="btn-flat"
-                  @click="copy"
-                >{{ translate(copied ? 'FeinwerkUptimeMonitor_UiCopied'
-                  : 'FeinwerkUptimeMonitor_UiCopy') }}</button>
-              </div>
+              <CopyChip
+                class="fwum-cron"
+                :line="config.cronLine || ''"
+              />
             </template>
+            <p
+              v-if="config.internetOff"
+              class="fwum-muted"
+            >{{ translate('FeinwerkUptimeMonitor_UiCronInternetOff') }}</p>
           </div>
         </li>
         <!-- results checked from outside: only while a plugin that adds them is there; P4: right
@@ -338,6 +393,7 @@
       v-if="panelSite !== null"
       :id-site="panelSite"
       :site-name="panelName"
+      :notice="config.internetOff ? translate('FeinwerkUptimeMonitor_UiInternetOff') : ''"
       @close="onPanelClose"
     />
   </div>
@@ -353,11 +409,15 @@ import {
 } from './format';
 import { observeNarrow } from './narrow';
 import { uptimePageToday } from './links';
+import { INTERNET_LINE } from './configLines';
 import TargetPanel from './TargetPanel.vue';
 import AdminStatus from './AdminStatus.vue';
+import CopyChip from './CopyChip.vue';
 
 export default defineComponent({
-  components: { ContentBlock, TargetPanel, AdminStatus },
+  components: {
+    ContentBlock, TargetPanel, AdminStatus, CopyChip,
+  },
   props: {
     config: { type: Object as PropType<ScreenConfig>, required: true },
   },
@@ -366,7 +426,6 @@ export default defineComponent({
       rows: [] as SiteOverview[],
       loading: true,
       failed: false,
-      copied: false,
       panelSite: null as number | null,
       panelName: '',
       /** the folded websites shown in the table again, and the reason open */
@@ -432,6 +491,13 @@ export default defineComponent({
     phpDisabled(): string[] {
       return this.config.disabledPhpFunctions || [];
     },
+    /**
+     * the fold's "Why?" and "Allow private addresses": not while the line above the table names
+     * the reason (PHP functions disabled, Matomo's internet features off)
+     */
+    foldWhy(): boolean {
+      return !this.phpDisabled.length && !this.config.internetOff;
+    },
     /** another plugin delivers results checked from outside: the overview combines both sides */
     outside(): boolean {
       return !!this.config.external && this.config.external.active;
@@ -455,6 +521,34 @@ export default defineComponent({
     /** a system cron runs the checks (IntervalTracker on the server) */
     cronOk(): boolean {
       return !!this.config.cron?.active;
+    },
+    /** L8: the cron runs, but while Matomo's internet features are off the checks send nothing */
+    cronClass(): string {
+      if (!this.cronOk) {
+        return 'is-warn';
+      }
+      return this.config.internetOff ? 'is-info' : 'is-ok';
+    },
+    cronIcon(): string {
+      if (!this.cronOk) {
+        return 'icon-warning';
+      }
+      return this.config.internetOff ? 'icon-info' : 'icon-ok';
+    },
+    /** P2: the opt-in's line for [FeinwerkUptimeMonitor] (configLines.ts) */
+    internetLine(): string {
+      return INTERNET_LINE;
+    },
+    /** P2: the line for [General] (never its header: the section holds Matomo's salt) */
+    httpsLine(): string {
+      return 'assume_secure_protocol = 1';
+    },
+    /** L6: UiAdminHttpsTrackerAddress around the field's name (%1$s ... %2$s), linked */
+    trackerFacts(): { before: string; link: string; after: string } {
+      const [before, rest = ''] = translate('FeinwerkUptimeMonitor_UiAdminHttpsTrackerAddress',
+        '\u0001', '\u0002').split('\u0001');
+      const [link, after = ''] = rest.split('\u0002');
+      return { before, link, after };
     },
     cronText(): string {
       const seconds = this.config.cron?.intervalSeconds || 60;
@@ -597,34 +691,6 @@ export default defineComponent({
       return row.certificateLevel ? `is-${row.certificateLevel}` : '';
     },
     pageUrl: uptimePageToday,
-    /** The clipboard API needs HTTPS; many intranet Matomos run on HTTP: then the classic way. */
-    copy(): void {
-      const text = this.config.cronLine || '';
-      const done = () => {
-        this.copied = true;
-      };
-      const fallback = () => {
-        const area = document.createElement('textarea');
-        area.value = text;
-        area.setAttribute('readonly', '');
-        area.style.position = 'fixed';
-        area.style.opacity = '0';
-        document.body.appendChild(area);
-        area.select();
-        try {
-          if (document.execCommand('copy')) {
-            done();
-          }
-        } finally {
-          document.body.removeChild(area);
-        }
-      };
-      if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(text).then(done).catch(fallback);
-      } else {
-        fallback();
-      }
-    },
     onPanelClose(changed: boolean): void {
       this.panelSite = null;
       if (changed) {

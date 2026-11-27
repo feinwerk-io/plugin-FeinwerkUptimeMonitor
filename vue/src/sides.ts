@@ -30,7 +30,9 @@ import { translate } from 'CoreHome';
  *
  * Follow-ups (Peter, 2026-11-26, "alle wie empfohlen"): D3 in the widgets a side that cannot check
  * the address adds no line (widgetSide); W5 an agreeing row's other value for screen readers
- * (aside); W8 the server's name never breaks inside (keepServer).
+ * (aside); W8 the server's name never breaks inside (keepServer). UI review of 5.4.0, P3 (Peter,
+ * "go"): the server's short reason it cannot check an address is shown with its words (sideWords)
+ * but never compared, so the sides agree and split as before.
  */
 
 /**
@@ -54,6 +56,20 @@ export interface Side {
   percent?: number | null;
   /** a Tag Manager container too large to read: no side can read it, so its words never name one */
   tooLarge?: boolean;
+  /**
+   * UI review of 5.4.0, P3: the server's short reason it cannot check the address ("needs PHP
+   * intl"), kept apart from text, which decides whether the sides agree; '' or undefined otherwise
+   */
+  reason?: string;
+  /**
+   * polish before 5.4.0: a line above names that reason, so the cell's words leave it out and its
+   * tooltip keeps it. 'group': the answer line of the address's group names it for all of it (P1)
+   * and names the Matomo server too, so one line says only "Not checkable"; 'screen' (quick UI
+   * review before 5.4.0, L1): on a screen with results from outside another group's answer line
+   * or the count line names it, so one line keeps "from the Matomo server" (other rows are checked
+   * from outside) and a side line says "Not checkable"
+   */
+  reasonAbove?: '' | 'group' | 'screen';
   /** why the outside cannot check it (5.2.0 review B5) */
   title?: string;
   /** when its current result was checked (ISO time; '' without a current one) */
@@ -203,6 +219,35 @@ export function named(side: Side, text: string): string {
     : 'FeinwerkUptimeMonitor_UiValueFromOutside', text));
 }
 
+/**
+ * UI review of 5.4.0, P3: a side's words as a cell shows them, with the server's short reason it
+ * cannot check the address ("Not checkable: needs PHP intl"); without it while the group's answer
+ * line names it (polish before 5.4.0, reasonAbove)
+ */
+export function sideWords(side: Side): string {
+  return side.reason && !side.reasonAbove
+    ? translate('FeinwerkUptimeMonitor_UiNotCheckableCause', side.reason) : side.text;
+}
+
+/**
+ * named() of a side's words: "Not checkable from the Matomo server: needs PHP intl"; without the
+ * reason while a line above names it (reasonAbove)
+ */
+function namedWords(side: Side): string {
+  return side.reason && side.key === 'server' && !side.reasonAbove
+    ? keepServer(translate('FeinwerkUptimeMonitor_UiNotCheckableFromServerCause', side.reason))
+    : named(side, side.text);
+}
+
+/**
+ * Quick UI review before 5.4.0, L1: the server's words with its reason in one named line ("Not
+ * checkable from the Matomo server: needs PHP intl"), the tooltip of a cell that leaves the reason
+ * to a line above
+ */
+export function namedCause(side: Side): string {
+  return namedWords({ ...side, reasonAbove: '' });
+}
+
 /** a failure in red; the server's while the outside reaches the address in amber (3a) */
 function toneOfLine(side: Side, other: Side | null | undefined): string {
   if (side.outcome !== 'down') {
@@ -225,18 +270,20 @@ function lowerFirst(server: Side, outside: Side): Side[] {
  * P2: the Response cell. One line when the outside has no current answer or both say the same; the
  * server's "Not checkable" then names the Matomo server (one name for it on a screen with results
  * from outside, review NIT 5), unless the outside cannot check it either or it is a container too
- * large for any server. Else both, ordered, each named.
+ * large for any server. Else both, ordered, each named. Polish before 5.4.0: "Not checkable" alone
+ * while the group's answer line names the server and its reason (reasonAbove 'group'); "Not
+ * checkable from the Matomo server" while the count line names the reason (L1, 'screen').
  */
 export function responseLines(server: Side, outside: Side | null | undefined): Line[] {
   if (!speaks(outside) || sameAnswer(server, outside)) {
     const both = speaks(outside) && outside.outcome === 'not_checkable';
     const text = server.outcome === 'not_checkable' && !server.tooLarge && !both
-      ? named(server, server.text) : server.text;
+      && server.reasonAbove !== 'group' ? namedWords(server) : sideWords(server);
     return [{ text, tone: toneOfLine(server, outside), other: false }];
   }
   return ordered(server, outside).map((side, i) => ({
     // a container too large for any server to read: its words never name a side (UI review W4)
-    text: side.tooLarge ? side.text : named(side, side.text),
+    text: side.tooLarge ? side.text : namedWords(side),
     tone: toneOfLine(side, side.key === 'server' ? outside : server),
     other: i > 0,
   }));

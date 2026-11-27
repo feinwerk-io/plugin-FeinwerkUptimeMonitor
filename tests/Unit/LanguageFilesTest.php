@@ -80,7 +80,7 @@ class LanguageFilesTest extends TestCase
     /**
      * Documented exceptions to "no URL" (docs/translations.md): the schemes an admin has to type in an address, not links.
      */
-    private const SCHEME_HINTS = ['ErrorUrl', 'ErrorHost'];
+    private const SCHEME_HINTS = ['ErrorUrl', 'ErrorHost', 'UiAdminHttpsRedirect', 'UiAdminHttpsRedirectHint', 'UiAdminHttpsTrackerAddress'];
 
     public function test_noText_hasADashOrAUrl(): void
     {

@@ -20,6 +20,7 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Input\Params;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Report\UptimeReport;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\CheckRunner;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\DetectionJob;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\InternetAccess;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\TargetStore;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Targets\DefaultTargets;
 use Piwik\Plugins\FeinwerkUptimeMonitor\External\ExternalResults;
@@ -70,18 +71,29 @@ class API extends \Piwik\Plugin\API
      *               source of getExternalSources is active and reached its service within 2 hours; older results from
      *               outside are left out), certificate: {notAfter: Y-m-d, daysLeft: int, level:
      *               ok|warning|critical|expired}|null (the server's certificate, else the one from outside under the
-     *               same condition)}, processing:
+     *               same condition; not the server's stored date while its latest result sent nothing, note
+     *               php_disabled, internet_off or needs_intl: no check confirms it)}, processing:
      *               {samples: int, p50Ms: int|null, p95Ms: int|null, maxMs: int|null, from: ISO time, to: ISO time}|null,
      *               disabledPhpFunctions: list of string (super users only, empty for everyone else: the PHP functions
      *               the latest check run needed and did not find, as PHP's function_exists said, e.g. ["curl_exec",
      *               "curl_multi_exec"]; hosts disable them in php.ini under disable_functions. While not empty, the
-     *               targets with note php_disabled cannot be checked; empty once a run has them all)};
+     *               targets with note php_disabled cannot be checked; empty once a run has them all),
+     *               curlExtensionMissing: bool (super users only, false for everyone else: PHP's curl extension is not
+     *               installed, so the curl functions are missing because of that rather than disable_functions),
+     *               internetFeaturesOff: bool (true while Matomo's [General] enable_internet_features = 0 and the opt-in
+     *               [FeinwerkUptimeMonitor] checkWithInternetFeaturesOff = 1 is not set: no check goes out, no lookup, no
+     *               request, and each target's next result is not checkable with note internet_off)};
      *               State = {outcome: up|down|not_checkable, error: string|null (dns, connect, tls, timeout, blocked,
      *               protocol, proxy, http_status, content, redirect, maintenance, tracking_off, stale_container),
-     *               note: protected|too_large|php_disabled|null (protected: behind a password or bot protection;
-     *               too_large: a Tag Manager container larger than 4 MB, not read whole, so not checkable; php_disabled:
-     *               not checkable, the server's PHP disables functions the check needs, nothing was requested, see
-     *               disabledPhpFunctions; error is null then), httpStatus: int|null,
+     *               note: protected|too_large|php_disabled|internet_off|needs_intl|https_redirect|null (protected:
+     *               behind a password or bot protection; too_large: a Tag Manager container larger than 4 MB, not read
+     *               whole, so not checkable; php_disabled: not checkable, the server's PHP disables functions the check
+     *               needs, nothing was requested, see disabledPhpFunctions; internet_off: not checkable, Matomo's
+     *               internet features are off, nothing was requested, see internetFeaturesOff; needs_intl: not
+     *               checkable, the address's host has characters only PHP's intl extension converts safely and the
+     *               server has none, nothing was requested; error is null with these three; https_redirect: up, the
+     *               address answered after one redirect to itself with https, as when Matomo's address is stored with
+     *               http behind a proxy that handles https), httpStatus: int|null,
      *               responseMs: int|null, checkedAt: ISO time, stale: bool (older than two check intervals: the checks
      *               stopped; not current. From outside: older than 2 h 15 min, since such results arrive when the
      *               other plugin pulls them)}
@@ -96,6 +108,9 @@ class API extends \Piwik\Plugin\API
             'processing' => $idSite === 0 ? $report->processingLastHour() : null,
             // the server's PHP configuration: super users only
             'disabledPhpFunctions' => Piwik::hasUserSuperUserAccess() ? CheckRunner::disabledPhpFunctions() : [],
+            'curlExtensionMissing' => Piwik::hasUserSuperUserAccess() && CheckRunner::capabilities()->curlMissing(),
+            // why every address reads not checkable: for every viewer
+            'internetFeaturesOff' => !InternetAccess::checksAllowed(),
         ];
     }
 
@@ -147,8 +162,15 @@ class API extends \Piwik\Plugin\API
      *                      Matomo; not for anonymous viewers); website the website's addresses and tracking proxy
      *                      without its containers. With idSite 0 only all or matomo.
      * @return array {grain: hour|day, days: local|utc|null (with grain day: whether a cell is a day in the website's
-     *               timezone or a UTC day), cells: list of {time: ISO time (start of the hour or day, UTC),
-     *               measuredSeconds: int, upSeconds: int, state: up|down|partial|none|future}, firstMeasured: ISO time|null
+     *               timezone or a UTC day), cells: list of {time: ISO time (the start of the local hour or the local
+     *               day, as a UTC instant; in zones with half or quarter hours an hour cell starts at :30 or :15 UTC
+     *               (Asia/Kolkata, Asia/Kathmandu) and the UTC hours at its edges count with their part, so
+     *               measuredSeconds and upSeconds are prorated and rounded; on a clock change a day has 22 to 26 hour
+     *               cells and a local day 22 to 26 hours (Antarctica/Troll moves by two hours; where the clock moves by
+     *               30 minutes, Australia/Lord_Howe, one of the day's cells is half an hour long)),
+     *               measuredSeconds: int, upSeconds: int, state: up|down|partial|none|future}, end: ISO time (the end of
+     *               the last cell: the period's end, with days utc the end of its last UTC day; a cell lasts up to the
+     *               next cell's time, the last one up to end), firstMeasured: ISO time|null
      *               (the start of the first hour in which any of the strip's targets was measured, at any time, also
      *               after the period: a period before it reads "measurements start on"; once the hourly values are gone
      *               (90 days) the start of that UTC day; null when nothing was ever measured)}; at most 367 cells; a
@@ -166,7 +188,8 @@ class API extends \Piwik\Plugin\API
         $report = new UptimeReport();
         // the whole period: the strip has a fixed axis, the hours or days after now are "future"
         $range = $this->range($report, $idSite, $period, $date, $timezoneOf, false);
-        if ($range['to'] - $range['from'] > self::MAX_TIMELINE_DAYS * 86400) {
+        // a clock change makes a local day up to UptimeReport::CLOCK_CHANGE longer
+        if ($range['to'] - $range['from'] > self::MAX_TIMELINE_DAYS * 86400 + UptimeReport::CLOCK_CHANGE) {
             throw $this->error(Piwik::translate('FeinwerkUptimeMonitor_ErrorPeriodTooLong', ['period', self::MAX_TIMELINE_DAYS]));
         }
         $zoneSite = $idSite > 0 ? $idSite : (int) $timezoneOf;
@@ -216,7 +239,11 @@ class API extends \Piwik\Plugin\API
      * one group (Matomo's own addresses with the website's Tag Manager containers, or the website's addresses and
      * tracking proxy) that overlap or touch as one outage, whatever side saw them, and the downtime as the union of
      * their parts (startInPeriod plus durationInPeriodSeconds). Example: the website's address down from the Matomo
-     * server 08:00 to 09:00 and from outside 08:30 to 09:30 is one outage of 1 h 30 min, not 2 h.
+     * server 08:00 to 09:00 and from outside 08:30 to 09:30 is one outage of 1 h 30 min, not 2 h. An outage of the
+     * Matomo server that is open when its checks stop sending requests (Matomo's internet features off, PHP functions
+     * disabled, a name that needs PHP intl: the notes internet_off, php_disabled and needs_intl of getStatus) ends at
+     * its last failed check: a run that sends nothing never moves an outage's end. With one failed check it lasts 0
+     * seconds and comes for the periods that contain its start.
      *
      * @param int $idSite website ID, or 0 for the Matomo instance
      * @param string $period day|week|month|year|range
@@ -227,10 +254,12 @@ class API extends \Piwik\Plugin\API
      * @param string $source all|local|external, default all
      * @param int $timezoneOf only with idSite 0: a website ID whose timezone the period follows; default 0 = UTC
      * @return array list of {idIncident: int, type: outage|gap, targetKey: string|null, kind: string|null, source:
-     *               local|external, start: ISO time, end: ISO time|null (null while open), durationSeconds: int (the
-     *               whole outage, until now while open), startInPeriod: ISO time (the later of start and the period's
-     *               start), durationInPeriodSeconds: int (the seconds from startInPeriod to the earliest of end, the
-     *               period's end and now; 0 when the outage only touches the period), open: bool, cause: string|null
+     *               local|external, start: ISO time, end: ISO time|null (null while open; the last failed check for
+     *               an outage of the Matomo server that was open when its checks stopped sending, see above),
+     *               durationSeconds: int (the whole outage, until now while open), startInPeriod: ISO time (the later
+     *               of start and the period's start), durationInPeriodSeconds: int (the seconds from startInPeriod to
+     *               the earliest of end, the period's end and now; 0 when the outage only touches the period or lasts
+     *               0 seconds), open: bool, cause: string|null
      *               (the error of the first failed check), detail: string|null (e.g. "HTTP 500"), failedChecks: int}
      */
     public function getIncidents($idSite, $period, $date, $state = 'all', $limit = 100, $source = 'all', $timezoneOf = 0)
@@ -247,7 +276,9 @@ class API extends \Piwik\Plugin\API
     /**
      * TLS certificates of a website's https targets (idSite 0: of Matomo's own addresses) with their expiry. Warning
      * from the super user setting (default 14 days before), critical from 3 days before. As read from the Matomo server,
-     * else from outside while another plugin delivers such results (see getStatus).
+     * else from outside while another plugin delivers such results (see getStatus). A target whose latest result from the
+     * server sent nothing (note php_disabled, internet_off or needs_intl) has no certificate from the server here: no
+     * check confirms the stored date.
      *
      * @param int $idSite website ID, or 0 for the Matomo instance
      * @return array list of {targetKey: string, host: string|null (null for Matomo's own addresses unless super user),
@@ -375,9 +406,14 @@ class API extends \Piwik\Plugin\API
      * nothing is changed (dry run). The daily check does the same by itself.
      *
      * @param int $idSite website ID (admin access)
-     * @param int $apply 0 (default): only show; 1: adopt and store the suggestions
+     * @param int $apply 0 (default): only show; 1: adopt and store the suggestions, only when the main page was read
      * @return array {found: {trackerUrl: string|null, jsUrl: string|null, containerUrls: {id: url}}, adopt: list of
-     *               {idSite: int, key: string, kind: string, url: string}, suggest: list of the same, applied: bool}
+     *               {idSite: int, key: string, kind: string, url: string}, suggest: list of the same, applied: bool
+     *               (true when apply=1 changed the stored targets and suggestions; false without apply, and when the
+     *               main page could not be read, answered with an HTTP error or was empty: then nothing changed),
+     *               readError: string|null (why the main page could not be read, so that nothing was found: internet_off
+     *               while Matomo's internet features are off (see getStatus internetFeaturesOff), php_disabled, or a
+     *               transport error such as dns, connect, tls, timeout, blocked, proxy; null when the page was read)}
      */
     public function detectTargets($idSite, $apply = 0)
     {
@@ -398,7 +434,11 @@ class API extends \Piwik\Plugin\API
         $found = $job->read($response !== null ? $response->body : '', $response !== null ? $response->finalUrl : $main->url);
         $matomoHost = (string) ($main->extra['matomoHost'] ?? '');
         $plan = $job->plan([$idSite => ['url' => $main->url, 'found' => $found]], $matomoHost, [$idSite => self::siteHosts($idSite)]);
-        if ($apply) {
+        // only what was read changes anything (L8 review of 5.4.0, NIT 8): the daily run's rule (CheckRunner)
+        $read = $response !== null && $response->error === null && $response->status !== null && $response->status < 400
+            && $response->body !== '';
+        $applied = $apply && $read;
+        if ($applied) {
             $job->apply($plan, [$idSite]);
         }
         $strip = static fn(array $c): array => ['idSite' => $c['idSite'], 'key' => $c['key'], 'kind' => $c['kind'], 'url' => $c['url']];
@@ -409,7 +449,8 @@ class API extends \Piwik\Plugin\API
             'found' => ['trackerUrl' => $found->trackerUrl, 'jsUrl' => $found->jsUrl, 'containerUrls' => $found->containerUrls],
             'adopt' => array_map($strip, $plan['adopt']),
             'suggest' => array_values(array_map($strip, array_filter($plan['suggested'][$idSite] ?? [], $visible))),
-            'applied' => $apply,
+            'applied' => $applied,
+            'readError' => $response !== null ? $response->error : null,
         ];
     }
 
@@ -419,9 +460,12 @@ class API extends \Piwik\Plugin\API
      *
      * @param int $idSite website ID (admin access), or 0 for the Matomo instance (super user)
      * @return array {locked: bool (another check run is going; nothing done), results: list of {targetKey: string,
-     *               outcome: up|down|not_checkable, error: string|null, note: protected|too_large|php_disabled|null
-     *               (as in getStatus; php_disabled: the server's PHP disables functions the check needs, named by
-     *               getStatus disabledPhpFunctions), httpStatus: int|null, responseMs: int}}
+     *               outcome: up|down|not_checkable, error: string|null, note:
+     *               protected|too_large|php_disabled|internet_off|needs_intl|https_redirect|null (as in getStatus;
+     *               php_disabled: the server's PHP disables functions the check needs, named by getStatus
+     *               disabledPhpFunctions; internet_off: Matomo's internet features are off, nothing was sent, see
+     *               getStatus internetFeaturesOff; needs_intl: the host needs PHP's intl extension; https_redirect: up
+     *               after the redirect to its own address with https), httpStatus: int|null, responseMs: int}}
      */
     public function checkNow($idSite)
     {
@@ -471,9 +515,11 @@ class API extends \Piwik\Plugin\API
      *               checks stopped; counted neither as up nor as down; from outside older than 2 h 15 min), each
      *               switched-on target counted in at most one of up, down, notCheckable and stale (in none before its
      *               first check, except an address the server never checks: notCheckable at once, see serverRefuses of
-     *               getStatus), lastCheckedAt: ISO time|null (the newest result of the row, of either side),
-     *               certificateDaysLeft: int|null (soonest expiry, per target the server's certificate, else the one
-     *               from outside; negative when expired), certificateLevel:
+     *               getStatus), lastCheckedAt: ISO time|null (the newest result of the row, of either side; a result
+     *               of the server that sent nothing, note php_disabled, internet_off or needs_intl, is no check and
+     *               does not count), certificateDaysLeft: int|null (soonest expiry, per target the server's
+     *               certificate, else the one from outside, the server's only while its results send requests as in
+     *               getStatus; negative when expired), certificateLevel:
      *               ok|warning|critical|expired|null (the level of that soonest certificate: warning from the super user
      *               setting, by default 14 days before, critical from 3 days before), containersDown: list of
      *               {idSite: int, name: string} (in Matomo's row: the websites whose Tag Manager container is not

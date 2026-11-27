@@ -142,12 +142,84 @@ class AddressGuardTest extends TestCase
             return ['93.184.215.14'];
         });
         $decision = $guard->check('https://bücher.example/');
+        $this->assertTrue($decision->allowed);
+        $this->assertSame('xn--bcher-kva.example', $decision->host);
+        $this->assertSame(['xn--bcher-kva.example'], $seen, 'the resolver sees the name curl will use');
+    }
+
+    /**
+     * Audit D3: PHP without intl (no idn_to_ascii), a website address with umlauts as entered in Matomo: checked in
+     * punycode like with intl, never "address blocked by the settings" with the hint to allow private addresses.
+     */
+    public function test_internationalisedHost_withoutIntl_isCheckedInPunycodeToo(): void
+    {
+        $noIntl = new Capabilities(DisabledFunctions::except(['idn_to_ascii']));
+        $seen = [];
+        $guard = new AddressGuard(false, static function (string $host) use (&$seen): array {
+            $seen[] = $host;
+            return ['93.184.215.14'];
+        }, false, $noIntl);
+        $decision = $guard->check('https://Bücher.Example/');
+        $this->assertSame([true, 'xn--bcher-kva.example'], [$decision->allowed, $decision->host]);
+        $this->assertSame(['xn--bcher-kva.example'], $seen);
+        $this->assertFalse($guard->refusesWithoutLookup('https://müller.de/'), 'not "never checked from this server"');
+        $this->assertTrue($guard->checkWithoutResolving('https://straße.de/')->allowed);
+        $this->assertSame('xn--strae-oqa.de', $guard->checkWithoutResolving('https://straße.de/')->host,
+            'as browsers and libcurl map it (nontransitional), never the other domain strasse.de');
+    }
+
+    /**
+     * Security review of D3: without intl only plain lower-case letters with common diacritics are converted; whatever
+     * NFKC or UTS46 would map (full-width letters, the dot variants U+3002, U+FF0E, U+FF61, the long s), and other
+     * scripts, are not checkable with the note needs_intl, on both ways, never looked up, never sent.
+     */
+    public function test_withoutIntl_onlyPlainLettersWithDiacritics_theRestNeedsIntl(): void
+    {
+        $noIntl = new Capabilities(DisabledFunctions::except(['idn_to_ascii']));
+        $lookups = [];
+        $guard = new AddressGuard(false, static function (string $host) use (&$lookups): array {
+            $lookups[] = $host;
+            return ['93.184.215.14'];
+        }, false, $noIntl);
+        foreach (["ex\u{FF0E}ample.de", "ex\u{3002}ample.de", "ex\u{FF61}ample.de", "\u{FF4D}üller.de", "\u{FF2D}\u{FF35}.de", "ma\u{017F}e.de",
+            'привет.рф', '日本語.jp', 'ς.gr', "a\u{200D}b.de", "i\u{0307}.de", "\u{0130}stanbul.tr"] as $host) {
+            $url = 'https://' . $host . '/';
+            $this->assertSame([false, Outcome::NEEDS_INTL], [$guard->check($url)->allowed, $guard->check($url)->reason], bin2hex($host));
+            $this->assertSame([false, Outcome::NEEDS_INTL], [$guard->checkWithoutResolving($url)->allowed, $guard->checkWithoutResolving($url)->reason], bin2hex($host));
+            $this->assertFalse($guard->refusesWithoutLookup($url), 'the check says why');
+        }
+        $this->assertSame([], $lookups, 'nothing looked up');
+        foreach (['müller.de' => 'xn--mller-kva.de', 'MÜLLER.de' => 'xn--mller-kva.de', 'straße.de' => 'xn--strae-oqa.de', 'mañana.es' => 'xn--maana-pta.es',
+            "cafe\u{0301}.fr" => 'xn--caf-dma.fr', 'łódź.pl' => 'xn--d-uga0v4h.pl'] as $host => $ascii) {
+            $this->assertSame([true, $ascii], [$guard->check('https://' . $host . '/')->allowed, $guard->check('https://' . $host . '/')->host], $host);
+        }
+        $this->assertSame(Outcome::BLOCKED, (new AddressGuard(false, null, false, $noIntl))->check('https://bad_host.example/')->reason, 'a broken name stays blocked');
+    }
+
+    /**
+     * L8 review of 5.4.0, SHOULD 4 and 5: the name is mapped as browsers do (ß stays ß), with intl and without, and what
+     * UTS46 refuses is blocked on both ways without intl too, never "needs intl" (intl would refuse it as well).
+     */
+    public function test_idn_nontransitional_andInvalidNamesBlocked_withAndWithoutIntl(): void
+    {
+        $ways = ['without intl' => new Capabilities(DisabledFunctions::except(['idn_to_ascii']))];
         if (function_exists('idn_to_ascii')) {
-            $this->assertTrue($decision->allowed);
-            $this->assertSame('xn--bcher-kva.example', $decision->host);
-            $this->assertSame(['xn--bcher-kva.example'], $seen, 'the resolver sees the name curl will use');
-        } else {
-            $this->assertFalse($decision->allowed, 'without intl, internationalised names are refused');
+            $ways['intl'] = new Capabilities();
+        }
+        foreach ($ways as $way => $capabilities) {
+            $lookups = [];
+            $guard = new AddressGuard(false, static function (string $host) use (&$lookups): array {
+                $lookups[] = $host;
+                return ['93.184.215.14'];
+            }, false, $capabilities);
+            $this->assertSame([true, 'xn--strae-oqa.de'], [$guard->check('https://straße.de/')->allowed, $guard->check('https://straße.de/')->host], $way);
+            $this->assertSame('xn--strae-oqa.de', AddressGuard::normalizeHost('STRAßE.DE', $capabilities), $way);
+            foreach (['-müller.de', 'müller-.de', 'ab--ü.de', 'xn--a.müller.de', str_repeat('a', 70) . 'ü.de', 'bad_müller.de'] as $host) {
+                $url = 'https://' . $host . '/';
+                $this->assertSame([false, Outcome::BLOCKED], [$guard->check($url)->allowed, $guard->check($url)->reason], "$way: $host");
+                $this->assertSame([false, Outcome::BLOCKED], [$guard->checkWithoutResolving($url)->allowed, $guard->checkWithoutResolving($url)->reason], "$way: $host");
+            }
+            $this->assertSame(['xn--strae-oqa.de'], array_values(array_unique($lookups)), "$way: nothing else looked up");
         }
     }
 

@@ -40,6 +40,11 @@
       </div>
 
       <div class="fwum-panel__body">
+        <!-- UI review of 5.4.0, L9: why nothing is found on the website while no check is sent -->
+        <p
+          v-if="notice"
+          class="fwum-muted fwum-panel__notice"
+        >{{ notice }}</p>
         <p
           v-if="loading"
           class="fwum-muted"
@@ -274,6 +279,11 @@ export default defineComponent({
     idSite: { type: Number, required: true },
     /** the website's name for the title ("Check targets: <name>") */
     siteName: { type: String, default: '' },
+    /**
+     * UI review of 5.4.0, L9: one muted line at the top while the checks send nothing (Matomo's
+     * internet features off), which also leaves the suggestions empty; the opener picks the words
+     */
+    notice: { type: String, default: '' },
   },
   emits: ['close'],
   data() {

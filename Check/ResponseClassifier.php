@@ -30,6 +30,12 @@ final class ResponseClassifier
     public function classify(Target $target, ProbeResponse $response, string $checkedAt): CheckResult
     {
         [$outcome, $error, $note] = $this->decide($target, $response);
+        // the tracker, matomo.js and containers follow only the redirect to their own address with https (audit D2)
+        if ($outcome === Outcome::UP && $note === null && !in_array($target->kind, [Kind::WEB, Kind::UI], true)
+            && $response->redirects > 0 && self::isHttpsUpgrade($target->url, $response->finalUrl)
+        ) {
+            $note = Outcome::HTTPS_REDIRECT;
+        }
         // an address found on the website, not confirmed by anyone, has to answer once before it can be an outage
         // (a redirecting or unusual tracking path would otherwise alarm at once)
         if ($outcome === Outcome::DOWN && $target->urlSource === 'detected' && $target->firstUpAt === null) {
@@ -105,6 +111,26 @@ final class ResponseClassifier
     }
 
     /**
+     * Whether $to is $from with https: http to https, the same host, both on their default port (80, 443), the same path
+     * and query, no credentials. Matomo stored as http behind a proxy that handles https: the web server redirects every
+     * address so.
+     */
+    public static function isHttpsUpgrade(string $from, string $to): bool
+    {
+        $a = parse_url($from);
+        $b = parse_url($to);
+        if (!is_array($a) || !is_array($b) || strtolower((string) ($a['scheme'] ?? '')) !== 'http'
+            || strtolower((string) ($b['scheme'] ?? '')) !== 'https' || isset($b['user']) || isset($b['pass'])
+        ) {
+            return false;
+        }
+
+        return strtolower((string) ($a['host'] ?? '')) === strtolower((string) ($b['host'] ?? '')) && ($a['host'] ?? '') !== ''
+            && (int) ($a['port'] ?? 80) === 80 && (int) ($b['port'] ?? 443) === 443
+            && ($a['path'] ?? '/') === ($b['path'] ?? '/') && ($a['query'] ?? '') === ($b['query'] ?? '');
+    }
+
+    /**
      * Matomo's tracker with its note hidden: some hosts answer a GET of matomo.php without parameters with HTTP 200 and
      * an empty body (a plugin or a server rule), while tracking works. Such an answer still carries the header Matomo's
      * tracker sends on every answer (core Tracker\Response::init, 5.0.0 to 6.0.0: Access-Control-Allow-Credentials:
@@ -121,9 +147,10 @@ final class ResponseClassifier
      */
     private function transportFailure(Target $target, string $error): array
     {
-        // the server's PHP cannot send the request: nothing was checked, the note says why
-        if ($error === Outcome::PHP_DISABLED) {
-            return [Outcome::NOT_CHECKABLE, null, Outcome::PHP_DISABLED];
+        // the server's PHP cannot send the request, or Matomo's internet features are off: nothing was checked, the
+        // note says why
+        if (in_array($error, Outcome::NOTHING_SENT, true)) {
+            return [Outcome::NOT_CHECKABLE, null, $error];
         }
         // a guard refusal or a failing proxy is a configuration matter, never an outage of the target
         if ($error === Outcome::BLOCKED || $error === Outcome::PROXY) {

@@ -13,12 +13,15 @@ use Piwik\Common;
 use Piwik\Container\StaticContainer;
 use Piwik\Piwik;
 use Piwik\Plugin\Manager;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Outcome;
 use Piwik\Plugins\FeinwerkUptimeMonitor\External\ExternalResults;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Feedback\PluginFeedback;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Promo\PromoLine;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\CheckRunner;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\Freshness;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Runner\InternetAccess;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Sentinel\SentinelVersion;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Store\StateStore;
 use Piwik\Plugins\FeinwerkUptimeMonitor\SystemSettings;
 use Piwik\Translation\Translator;
 
@@ -48,6 +51,12 @@ final class ScreenProps
             'cron' => $variant === 'admin' ? self::cron() : null,
             // the admin page: the PHP functions the latest check run missed, the reason for its "not checkable"
             'disabledPhpFunctions' => $variant === 'admin' ? self::disabledPhpFunctions() : null,
+            // the admin page: those functions are missing because PHP's curl extension is not installed (UI review L7)
+            'curlMissing' => $variant === 'admin' ? self::curlMissing() : null,
+            // Matomo's internet features are off without the opt-in (Peter's 2a): no check goes out, every screen says why
+            'internetOff' => self::internetOff(),
+            // the admin page: Matomo's own addresses answer only after the redirect to https (audit D2)
+            'httpsRedirect' => $variant === 'admin' ? self::httpsRedirect() : null,
             'variant' => $variant,
             // the page as a dashboard widget or an embed: Matomo's widget frame has no padding of its own
             'inWidget' => $variant === 'page' && ($onDashboard || $embedded),
@@ -141,6 +150,40 @@ final class ScreenProps
             ];
         } catch (\Throwable $e) {
             return null;
+        }
+    }
+
+    /**
+     * Whether the latest check of one of Matomo's own addresses (idSite 0, and the Tag Manager containers, whose file the
+     * Matomo server serves) answered only after the redirect to the same address with https (note https_redirect):
+     * Matomo is stored with http behind a proxy that handles https. False when it cannot be read.
+     */
+    private static function httpsRedirect(): bool
+    {
+        try {
+            return (new StateStore())->instanceAddressHasNote(Outcome::HTTPS_REDIRECT);
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    /** whether the checks send nothing because Matomo's internet features are off (InternetAccess); false when unknown */
+    private static function internetOff(): bool
+    {
+        try {
+            return !InternetAccess::checksAllowed();
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    /** whether PHP's curl extension is not installed (Capabilities::curlMissing()); false when unknown */
+    private static function curlMissing(): bool
+    {
+        try {
+            return CheckRunner::capabilities()->curlMissing();
+        } catch (\Throwable $e) {
+            return false;
         }
     }
 

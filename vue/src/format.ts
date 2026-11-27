@@ -158,6 +158,23 @@ export function hourOf(iso: string, language: string, timezone = ''): string {
   return formatIn(iso, language, timezone, { timeStyle: 'short' });
 }
 
+/**
+ * The zone's short name at a time ("GMT+2", "EDT", "MESZ" in the page language): tells the hour
+ * that repeats on a fall-back day apart (review of the 5.4.0 fixes, NIT 3). A fixed offset, which
+ * repeats no hour, by its label ("UTC+2"); '' when the browser names none.
+ */
+export function zoneNameOf(iso: string, language: string, timezone = ''): string {
+  const zone = zoneOf(timezone);
+  if (zone.offsetMinutes !== undefined) {
+    return zone.label || '';
+  }
+  const parts = new Intl.DateTimeFormat(locale(language), {
+    hour: 'numeric', timeZoneName: 'short', ...(zone.name ? { timeZone: zone.name } : {}),
+  }).formatToParts(new Date(iso));
+  const name = parts.find((part) => part.type === 'timeZoneName');
+  return name ? name.value : '';
+}
+
 /** The day of a time ("Mar 14") in the website's timezone, for the strip of longer periods. */
 export function dayOf(iso: string, language: string, timezone = ''): string {
   return formatIn(iso, language, timezone, { month: 'short', day: 'numeric' });
@@ -251,15 +268,31 @@ export function keepHyphens(text: string): string {
   return text.replace(/-/g, '\u2011');
 }
 
+/**
+ * The host (with a port other than the scheme's) and the path of an address as entered: an
+ * international name in its own letters, as people type it (UI review of 5.4.0, B3), not in the
+ * ASCII form the browser's URL gives; lower case, without user info, query and fragment.
+ */
+function addressParts(url: string): { host: string; path: string } | null {
+  const match = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)([^?#]*)/i.exec(url.trim());
+  if (!match) {
+    return null;
+  }
+  const scheme = match[1].toLowerCase();
+  let host = match[2].slice(match[2].lastIndexOf('@') + 1).toLowerCase();
+  const port = /:(\d+)$/.exec(host);
+  if (port && ((scheme === 'https' && port[1] === '443') || (scheme === 'http' && port[1] === '80'))) {
+    host = host.slice(0, -port[0].length);
+  }
+  return { host, path: match[3] };
+}
+
 export function hostOf(url: string | null): string {
   if (!url) {
     return '';
   }
-  try {
-    return new URL(url).host;
-  } catch (e) {
-    return url;
-  }
+  const parts = addressParts(url);
+  return parts ? parts.host : url;
 }
 
 /** Host and path, so that two addresses on one host stay apart. */
@@ -267,12 +300,28 @@ export function hostAndPath(url: string | null): string {
   if (!url) {
     return '';
   }
+  const parts = addressParts(url);
+  if (!parts) {
+    return url;
+  }
+  return parts.path === '' || parts.path === '/' ? parts.host : `${parts.host}${parts.path}`;
+}
+
+/**
+ * An address's tooltip: the address as entered, and for an international name its ASCII form
+ * (punycode), which the checks request and server logs show.
+ */
+export function addressTitle(url: string | null, fallback: string): string {
+  if (!url) {
+    return fallback;
+  }
+  let ascii = '';
   try {
-    const parsed = new URL(url);
-    return parsed.pathname === '/' ? parsed.host : `${parsed.host}${parsed.pathname}`;
+    ascii = new URL(url).host;
   } catch (e) {
     return url;
   }
+  return ascii !== '' && ascii !== hostOf(url) ? `${url} (${ascii})` : url;
 }
 
 export function targetLabel(

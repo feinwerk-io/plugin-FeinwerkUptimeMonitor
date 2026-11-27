@@ -11,6 +11,7 @@ namespace Piwik\Plugins\FeinwerkUptimeMonitor\Store;
 
 use Piwik\Db;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\CheckResult;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Kind;
 
 /**
  * The latest state per target and source (`local` from this server, `external` from Pro), so that pages and the
@@ -98,6 +99,18 @@ final class StateStore
         }
 
         return $states;
+    }
+
+    /**
+     * Whether one of Matomo's own addresses (idSite 0, and the Tag Manager containers on Matomo's default address, whose
+     * file the Matomo server serves; Target::isInstanceAddress()) has the note in its latest state from this source. One
+     * query, without reading every website's targets (L8 review of 5.4.0, NIT 11).
+     */
+    public function instanceAddressHasNote(string $note, string $source = self::LOCAL): bool
+    {
+        return (bool) Db::fetchOne('SELECT 1 FROM ' . Schema::table(Schema::STATE) . ' s JOIN ' . Schema::table(Schema::TARGET)
+            . ' t ON t.idtarget = s.idtarget WHERE s.note = ? AND s.source = ?'
+            . " AND (t.idsite = 0 OR (t.kind = ? AND t.url_source = 'default')) LIMIT 1", [$note, $source, Kind::CONTAINER]);
     }
 
     private static function state(array $row): array

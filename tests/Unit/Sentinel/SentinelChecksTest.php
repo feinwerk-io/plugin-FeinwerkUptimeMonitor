@@ -149,6 +149,29 @@ class SentinelChecksTest extends TestCase
         $this->assertNotSame([], self::check(CertificateExpiry::class, $data)->evaluate(new CheckContext(1, self::now())));
     }
 
+    /**
+     * Matomo's internet features are off (Peter's 2a): no check went out, so U01 and U02 answer unknown, never down,
+     * and U03 does not judge a certificate date that no check confirmed since (the stored date stays in the state).
+     */
+    public function test_internetOff_isUnknown_forU01U02U03(): void
+    {
+        $data = self::data();
+        $off = static fn(?string $cert = null): array => ['outcome' => Outcome::NOT_CHECKABLE, 'error' => null,
+            'note' => Outcome::INTERNET_OFF, 'status' => null, 'ms_total' => 0, 'cert_not_after' => $cert, 'checked_at' => '2026-03-14 10:00:00'];
+        $data['states'][2]['local'] = $off();
+        $data['states'][3]['local'] = $off('2026-03-16');
+        $this->assertSame(CheckResult::UNKNOWN, self::results(self::check(MatomoUnreachable::class, $data), 0)['tracker']->state());
+        $this->assertSame(CheckResult::UNKNOWN, self::results(self::check(SiteUnreachable::class, $data), 1)['web:1a2b3c4d']->state());
+        $cert = self::results(self::check(CertificateExpiry::class, $data), 1)['web:1a2b3c4d'];
+        $this->assertSame(CheckResult::UNKNOWN, $cert->state(), 'an old date, not checked since: not critical');
+
+        $data['states'][3]['local'] = $off();
+        $this->assertArrayNotHasKey('web:1a2b3c4d', self::results(self::check(CertificateExpiry::class, $data), 1), 'no date at all: as before');
+        $data['states'][3]['local'] = ['note' => Outcome::PHP_DISABLED] + $off('2026-03-16');
+        $this->assertSame(CheckResult::UNKNOWN, self::results(self::check(CertificateExpiry::class, $data), 1)['web:1a2b3c4d']->state(),
+            'the same for a server whose PHP cannot send the checks');
+    }
+
     public function test_cert_warningAndCritical(): void
     {
         $data = self::data();

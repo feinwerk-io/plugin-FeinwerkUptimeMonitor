@@ -97,6 +97,19 @@ function pageSetup(en, nowIso) {
         const count = Math.max(1, params.group === 'matomo'
             ? (status[0] || []).length + site.filter((t) => t.kind === 'container').length
             : site.filter((t) => t.kind !== 'container').length);
+        // review of the 5.4.0 fixes: the cells as the API sends them around a clock change (their starts and the end of
+        // the last one), every address measured and up, the last cell without gap seconds
+        if (scenario.cellsAt && !outside) {
+            const at = scenario.cellsAt;
+            const starts = at.starts.map((t) => Date.parse(t));
+            const cellsAt = starts.map((t, i) => {
+                const last = i === starts.length - 1;
+                const length = ((last ? Date.parse(at.end) : starts[i + 1]) - t) / 1000;
+                const m = (length - (last ? at.gap || 0 : 0)) * count;
+                return { time: iso(t), measuredSeconds: m, upSeconds: m, state: 'up' };
+            });
+            return { grain: at.grain, days: at.grain === 'day' ? 'local' : null, cells: cellsAt, end: at.end, firstMeasured: '2026-01-01T00:00:00Z' };
+        }
         const seconds = measured ? 3600 * count : 0;
         const cells = [];
         for (let h = 0; h < 24; h++) {
@@ -127,7 +140,8 @@ function pageSetup(en, nowIso) {
         const copy = (value) => Promise.resolve(JSON.parse(JSON.stringify(value)));
         switch (method) {
             case 'getStatus':
-                return copy({ targets: (scenario.status || {})[id] || [], processing: null });
+                return copy({ targets: (scenario.status || {})[id] || [], processing: null,
+                    disabledPhpFunctions: scenario.disabledPhpFunctions || [], curlExtensionMissing: !!scenario.curlMissing });
             case 'getUptime':
                 return copy((scenario.uptime || {})[id] || []);
             case 'getResponseTimes':
@@ -138,6 +152,9 @@ function pageSetup(en, nowIso) {
                 return copy(timeline(scenario, params));
             case 'getSitesOverview':
                 return copy(scenario.overview || []);
+            // UI review of 5.4.0, L9: the target panel's list (empty unless the scenario names one)
+            case 'getTargets':
+                return copy(scenario.targets || { targets: [], suggestions: [] });
             default:
                 return Promise.reject(new Error('no fixture for ' + method));
         }
@@ -262,6 +279,35 @@ function pageSetup(en, nowIso) {
             // 5.3.1: the reason when the server's PHP disables functions the checks need, and the fold's buttons and links
             php: Array.from(root.querySelectorAll('.fwum-admin__php p')).map(clean),
             foldControls: Array.from(root.querySelectorAll('.fwum-nc > p button, .fwum-nc > p a')).map(clean),
+            // robustness release, part 1: Matomo's internet features off, and Matomo's address stored as http
+            internet: Array.from(root.querySelectorAll('.fwum-admin__internet p')).map(clean),
+            https: Array.from(root.querySelectorAll('.fwum-admin__https p')).map(clean),
+            // UI review of 5.4.0, B4: the https hint in the info style, not the warning one (P2: the class of its row)
+            httpsClass: (() => { const li = root.querySelector('li.fwum-admin__https'); return li ? Array.from(li.classList)
+                .filter((c) => c.indexOf('is-') === 0).join(' ') : null; })(),
+            // P2 (UI review of 5.4.0): the server rows above the table in one list, each config line a chip with Copy
+            checksLists: root.querySelectorAll('ul.fwum-checks').length,
+            serverOrder: Array.from(root.querySelectorAll('ul.fwum-admin__server > li')).map((li) => (Array.from(li.classList)
+                .find((c) => c.indexOf('fwum-admin__') === 0) || '').replace('fwum-admin__', '')),
+            chips: Array.from(root.querySelectorAll('ul.fwum-admin__server .fwum-chip')).map((chip) => [
+                (Array.from(chip.closest('li').classList).find((c) => c.indexOf('fwum-admin__') === 0) || '').replace('fwum-admin__', ''),
+                chip.querySelector('code').textContent, clean(chip.querySelector('button'))]),
+            copyButtons: Array.from(root.querySelectorAll('.fwum-chip button, .fwum-cron button')).map(clean),
+            copiedText: window.fwumCopiedText === undefined ? null : window.fwumCopiedText,
+            // quick UI review before 5.4.0, L3: each Copy's accessible name, the polite region of each chip, and what that
+            // region said during a second click
+            copyNames: Array.from(root.querySelectorAll('.fwum-chip button, .fwum-cron button')).map((b) => b.getAttribute('aria-label')),
+            copyLive: Array.from(root.querySelectorAll('.fwum-chip, .fwum-cron')).map((chip) => {
+                const live = chip.querySelector('[aria-live]'); return live ? [live.getAttribute('aria-live'), live.textContent] : null; }),
+            liveSeen: window.fwumLiveSeen === undefined ? null : window.fwumLiveSeen,
+            // L6: the tracker address field named and linked as on the settings page
+            httpsLink: (() => { const a = root.querySelector('li.fwum-admin__https a'); return a ? [clean(a), a.getAttribute('href')] : null; })(),
+            // L8: the cron row while nothing is sent
+            cronRow: (() => { const li = root.querySelector('.fwum-checks > li.fwum-checks__cron'); return li ? [Array.from(li.classList)
+                .filter((c) => c.indexOf('is-') === 0).join(' '), li.querySelector('[class^="icon-"]').className,
+            Array.from(li.querySelectorAll('p')).map(clean)] : null; })(),
+            // L9: the target panel's notice
+            panelNotice: clean(document.querySelector('.fwum-panel__notice')),
         };
     };
     window.fwumSummary = function (root) {
@@ -310,11 +356,35 @@ function pageSetup(en, nowIso) {
             outsideNote: clean(root.querySelector('.fwum-outside-note')),
             outsideLink: (() => { const a = root.querySelector('.fwum-outside-note a'); return a ? a.getAttribute('href') : null; })(),
             listShown: Array.from(root.querySelectorAll('ul.fwum-targets:not(.fwum-outages__list) li')).map(shown),
+            // polish before 5.4.0: the tooltips of the list's response words (the reason the answer line names)
+            listTitles: Array.from(root.querySelectorAll('ul.fwum-targets:not(.fwum-outages__list) li .fwum-targets__text'))
+                .map((e) => e.getAttribute('title')),
             sideClasses: Array.from(root.querySelectorAll('.fwum-targets__values--side .fwum-targets__text')).map((e) => e.className),
             cellClasses: table ? Array.from(table.querySelectorAll('tbody tr:not(.fwum-subrow) td.fwum-targets__text')).map((td) => td.className) : null,
             outageSources: Array.from(root.querySelectorAll('table.fwum-outages__table tbody tr')).map((tr) => shown(tr.lastElementChild)),
             why: why ? why.textContent.trim() : null,
             allowPrivateLink: !!root.querySelector('.fwum-nc a'),
+            whyButton: !!root.querySelector('.fwum-nc .fwum-link-button'),
+            internet: Array.from(root.querySelectorAll('.fwum-internet-note p')).map(clean),
+            // quick UI review before 5.4.0, L2 and L3: the page's config line as a chip (its line, its button, the button's
+            // name), the chip's polite region, the copied text
+            pageChips: Array.from(root.querySelectorAll('.fwum-chip')).map((chip) => {
+                const button = chip.querySelector('button');
+                return [chip.querySelector('code') ? chip.querySelector('code').textContent : null, clean(button),
+                    button ? button.getAttribute('aria-label') : null];
+            }),
+            pageLive: Array.from(root.querySelectorAll('.fwum-chip')).map((chip) => {
+                const live = chip.querySelector('[aria-live]'); return live ? [live.getAttribute('aria-live'), live.textContent] : null; }),
+            copiedText: window.fwumCopiedText === undefined ? null : window.fwumCopiedText,
+            // UI review of 5.4.0: B1 the reason when the server's PHP cannot send checks, B2 the check-now icon, B3 the
+            // address cells' labels and tooltips
+            php: Array.from(root.querySelectorAll('.fwum-php-note p')).map(clean),
+            // L9 (UI review of 5.4.0): the target panel's notice while Matomo's internet features are off
+            panelNotice: clean(document.querySelector('.fwum-panel__notice')),
+            panelOpen: !!document.querySelector('.fwum-panel'),
+            checkTool: !!root.querySelector('.fwum-tool[aria-label="Check now"]'),
+            labelTitles: table ? Array.from(table.querySelectorAll('tbody tr:not(.fwum-subrow) td.label'))
+                .map((td) => [clean(td.querySelector('.fwum-targets__label')), td.getAttribute('title')]) : null,
             lists: Array.from(root.querySelectorAll('ul.fwum-targets')).map((ul) => ul.getAttribute('role')),
             card: !!root.querySelector('.fwum-promo-card-slot'),
             // the outage rows as read, without the texts for screen readers and the phone-only duration
@@ -334,6 +404,12 @@ function pageSetup(en, nowIso) {
             stripCells: Array.from(root.querySelectorAll('.fwum-strip')).map((strip) => Array.from(strip.querySelectorAll('.fwum-strip__cell'))
                 .map((c) => (Array.from(c.classList).find((k) => k.indexOf('is-') === 0 && k !== 'is-next') || '').slice(3))),
             stripNames: Array.from(root.querySelectorAll('.fwum-strip__cells')).map((list) => list.getAttribute('aria-label')),
+            // review of the 5.4.0 fixes: each strip's cell texts (tooltip and screen readers), its axis, the measured share
+            // at its end
+            stripTexts: Array.from(root.querySelectorAll('.fwum-strip')).map((strip) => Array.from(strip.querySelectorAll('.fwum-strip__cell'))
+                .map(clean)),
+            stripAxes: Array.from(root.querySelectorAll('.fwum-strip__axis')).map((axis) => Array.from(axis.children).map(clean)),
+            stripMeasured: Array.from(root.querySelectorAll('.fwum-strips__uptime')).map((e) => e.getAttribute('title')),
             groupNotes: Array.from(root.querySelectorAll('.fwum-group-note')).map(clean),
             groupHeads: Array.from(root.querySelectorAll('.fwum-group-head')).map(clean),
             empty: clean(root.querySelector('.fwum-empty')),
@@ -457,6 +533,27 @@ async function mounted(browser, data, after) {
                     button.click();
                 }
                 await new Promise((r) => requestAnimationFrame(() => r()));
+            }
+            // quick UI review before 5.4.0, L2 and L3: the page's chip copies on plain HTTP the textarea way
+            if (after === 'copy') {
+                document.execCommand = () => {
+                    const area = document.querySelector('body > textarea');
+                    window.fwumCopiedText = area ? area.value : null;
+                    return true;
+                };
+                const button = root.querySelector('.fwum-internet-note .fwum-chip button');
+                if (button) {
+                    button.click();
+                }
+                await new Promise((r) => setTimeout(r, 250));
+            }
+            // L9: the target panel from the quiet pencil after the freshness
+            if (after === 'panel') {
+                const button = root.querySelector('.fwum-tool[aria-label="Edit check targets"]');
+                if (button) {
+                    button.click();
+                }
+                await new Promise((r) => setTimeout(r, 50));
             }
             return window.fwumSummary(root);
         }, { data, after });
@@ -1232,12 +1329,12 @@ async function review530(browser) {
     { outsideMeasured: true, config: { external: ACTIVE } }));
     check('NIT 2 the red line first, then the amber one', s.lines.map((l) => [l.cls, l.text.slice(0, 13)]),
         [['is-down', 'This website:'], ['is-partial', 'Matomo: Tag M']]);
-    // without a source: the order of v5.2.0 (the groups by their state; Matomo's amber count first)
+    // without a source too since part 1 of the robustness release (NIT 2): the red line first, then Matomo's amber count
     s = await mounted(browser, twoSites(['ui', 'tracker'].map((k) => target(k, k, MATOMO_URL + k, 'down', { days: 63 }))
         .concat([target('js', 'js', MATOMO_URL + 'js', 'up', { days: 63 })]), [target(WEB, 'web', 'https://www.example.com/', 'down', { days: 41 }),
         target(SHOP, 'web', 'https://shop.example.com/', 'up', { days: 41 })], { config: { external: null } }));
-    check('NIT 2 without a source: the order as in v5.2.0', s.lines.map((l) => [l.cls, l.text.slice(0, 13)]),
-        [['is-partial', 'Matomo: 2 of '], ['is-down', 'This website:']]);
+    check('NIT 2 without a source: the red line first as well', s.lines.map((l) => [l.cls, l.text.slice(0, 13)]),
+        [['is-down', 'This website:'], ['is-partial', 'Matomo: 2 of ']]);
 
     // NIT 3: the outside stopped checking the website (no current result), its uptime today 99.8%: no words for it
     const stopped = (extra) => scenario(Object.assign({
@@ -1554,6 +1651,43 @@ async function admin(browser, data, after) {
     try {
         return await page.evaluate(async ({ data, after }) => {
             const root = await window.fwumMountAdmin(data);
+            // P2: a chip's Copy on plain HTTP takes the textarea way; the text it copies is kept
+            if (typeof after === 'string' && /^copy2?:/.test(after)) {
+                document.execCommand = () => {
+                    const area = document.querySelector('body > textarea');
+                    window.fwumCopiedText = area ? area.value : null;
+                    return true;
+                };
+                const button = root.querySelector('li.fwum-admin__' + after.split(':')[1] + ' .fwum-chip button');
+                if (button) {
+                    button.click();
+                }
+                // L3: "Copied" reaches the polite region a moment after the click
+                await new Promise((r) => setTimeout(r, 250));
+                // L3: a second click empties the region and fills it again, so screen readers say it again
+                if (button && after.indexOf('copy2:') === 0) {
+                    const live = button.closest('.fwum-chip').querySelector('[aria-live]');
+                    const seen = [];
+                    const observer = live ? new MutationObserver(() => seen.push(live.textContent)) : null;
+                    if (observer) {
+                        observer.observe(live, { childList: true, characterData: true, subtree: true });
+                    }
+                    button.click();
+                    await new Promise((r) => setTimeout(r, 250));
+                    if (observer) {
+                        observer.disconnect();
+                    }
+                    window.fwumLiveSeen = seen;
+                }
+            }
+            // L9: the target panel from a website's pencil
+            if (after === 'panel') {
+                const button = root.querySelector('.fwum-admin__table .fwum-icon-only');
+                if (button) {
+                    button.click();
+                }
+                await new Promise((r) => setTimeout(r, 50));
+            }
             if (after === 'show' || after === 'why') {
                 const button = root.querySelectorAll('.fwum-nc .fwum-link-button')[after === 'why' ? 1 : 0];
                 if (button) {
@@ -1720,6 +1854,561 @@ async function figuresAndReasons(browser) {
         s.why.indexOf('larger than 4\u00a0MB') > s.why.indexOf('firewall'), s.allowPrivateLink], [true, true, true]);
 }
 
+/**
+ * Robustness release, part 1: the reasons for what cannot be checked when nothing was sent (Matomo's internet features
+ * off, PHP functions disabled) or the address needs intl; Matomo stored as http behind a proxy; and NIT 2 of the 5.3.0
+ * review without results from outside.
+ */
+async function robustness1(browser) {
+    // NIT 2: without a source too, the worst line first by its own colour: a red line naming the website's address
+    // before Matomo's amber count, though both groups are partly down
+    const mixed = { 0: [target('ui', 'ui', MATOMO_URL + 'ui', 'down', { days: 63 }), target('tracker', 'tracker', MATOMO_URL + 'tracker', 'down', { days: 63 }),
+        target('js', 'js', MATOMO_URL + 'js', 'up', { days: 63 })],
+    1: [target(WEB, 'web', 'https://www.example.com/', 'up', { days: 41 }), target('web:shop.example.org', 'web', 'https://shop.example.org/', 'down', { days: 12 })] };
+    let s = await mounted(browser, scenario({ status: mixed }));
+    check('NIT 2 without a source: the red line first', [s.lines[0].cls, s.lines[0].text.indexOf('This website: ') === 0], ['is-down', true]);
+    check('NIT 2 without a source: the amber count second', [s.lines[1].cls, s.lines[1].text.indexOf('Matomo: 2 of 3 addresses not reachable') === 0],
+        ['is-partial', true]);
+
+    // the server's PHP cannot send the checks (php_disabled): no "Why?" about firewalls and no "Allow private addresses",
+    // as on the admin page
+    const php = (note) => ({ 0: matomoTargets(), 1: [target(WEB, 'web', 'https://www.example.com/', 'not_checkable', { error: null, note })] });
+    s = await mounted(browser, scenario({ status: php('php_disabled') }), 'why');
+    check('php_disabled on the page: the line without Why? and without the link', [s.nc, s.whyButton, s.allowPrivateLink],
+        ['1 address cannot be checked from this server and does not count as an outage.', false, false]);
+    const both = { 0: matomoTargets(), 1: [target(WEB, 'web', 'https://www.example.com/', 'not_checkable', { error: null, note: 'php_disabled' }),
+        target('web:intranet.example.com', 'web', 'https://intranet.example.com/', 'not_checkable', { error: 'connect' })] };
+    s = await mounted(browser, scenario({ status: both }), 'why');
+    check('php_disabled next to an unreachable one: Why? and the link for that one', [s.whyButton, s.allowPrivateLink, s.why.indexOf('firewall') > 0],
+        [true, true, true]);
+
+    // Matomo's internet features are off (Peter's 2a): the page says so, naming the setting; super users get the opt-in
+    const off = { 0: ['ui', 'tracker', 'js'].map((k) => target(k, k, MATOMO_URL + k, 'not_checkable', { error: null, note: 'internet_off' })),
+        1: [target(WEB, 'web', 'https://www.example.com/', 'not_checkable', { error: null, note: 'internet_off' })] };
+    // UI review of 5.4.0, L1 (one voice for the server administrator) and L2 (the other way, what the opt-in allows,
+    // and the Matomo server named as the side that sends nothing)
+    const OFF = 'The Matomo server sends no checks: Matomo\'s internet features are switched off ([General] enable_internet_features = 0).';
+    // P2: the admin page's hint ends with the line as a chip with Copy; since the quick UI review before 5.4.0 (L2) the
+    // page's too
+    const OPT_IN_ADMIN = 'For the server administrator: switch Matomo\'s internet features on, or let only these checks send requests '
+        + 'while Matomo\'s other internet features stay off. For that, add this line to the section [FeinwerkUptimeMonitor] in '
+        + 'config/config.ini.php (create the section if it is missing):';
+    s = await mounted(browser, scenario({ status: off, config: { internetOff: true } }), 'why');
+    check('internet off: the reason and the opt-in, once', s.internet, [OFF, OPT_IN_ADMIN]);
+    check('internet off: no Why? and no link to allow private addresses', [s.whyButton, s.allowPrivateLink], [false, false]);
+    // UI review of 5.4.0, L3 (L8 review of 5.4.0, NIT 9): only super users read the server's configuration
+    const NEUTRAL = 'The checks are switched off on this Matomo server.';
+    s = await mounted(browser, scenario({ status: off, config: { internetOff: true, isSuperUser: false, isAdmin: false } }));
+    check('L3 internet off, a viewer: a neutral sentence, no setting named', s.internet, [NEUTRAL]);
+    s = await mounted(browser, scenario({ status: off, config: { internetOff: true, isSuperUser: false, isAdmin: false, isAnonymous: true } }));
+    check('L3 internet off, a public dashboard: the neutral sentence', s.internet, [NEUTRAL]);
+    s = await mounted(browser, scenario({ status: off, config: { internetOff: true, embedded: true } }));
+    check('L3 internet off, embedded (whoever reads it): the neutral sentence', s.internet, [NEUTRAL]);
+    s = await mounted(browser, scenario({ width: 300, status: off, config: { internetOff: true, variant: 'site' } }));
+    check('internet off, a dashboard widget: the reason, the opt-in only on the page', s.internet, [OFF]);
+    // L4: the page itself as a dashboard widget shows the reason alone too
+    s = await mounted(browser, scenario({ status: off, config: { internetOff: true, inWidget: true } }));
+    check('L4 internet off, the page as a dashboard widget: the reason without the opt-in', s.internet, [OFF]);
+    s = await mounted(browser, scenario({}));
+    check('internet on: no such line', s.internet, []);
+    check('B2 internet on: the check-now icon', s.checkTool, true);
+
+    // B2: results that sent nothing are no check: no "checked ..." in the answer, and no check-now icon while the
+    // internet features are off (a check would send nothing either)
+    s = await mounted(browser, scenario({ status: off, config: { internetOff: true } }));
+    check('B2 internet off: no "checked" in the answer', s.lines.filter((l) => /checked/.test(l.text)).map((l) => l.text), []);
+    check('B2 internet off: no check-now icon', s.checkTool, false);
+    const allPhp = { 0: ['ui', 'tracker', 'js'].map((k) => target(k, k, MATOMO_URL + k, 'not_checkable', { error: null, note: 'php_disabled' })),
+        1: [target(WEB, 'web', 'https://www.example.com/', 'not_checkable', { error: null, note: 'php_disabled' })] };
+    s = await mounted(browser, scenario({ status: allPhp }));
+    check('B2 php_disabled everywhere: no "checked" in the answer', s.lines.filter((l) => /checked/.test(l.text)).map((l) => l.text), []);
+    s = await mounted(browser, scenario({ status: php('php_disabled') }));
+    check('B2 php_disabled for one address: Matomo\'s own checks still count', s.lines.some((l) => /checked 5 minutes ago/.test(l.text)), true);
+
+    // B1: the server's PHP cannot send the checks: super users read why and what to do, as on the admin page; the
+    // widgets the reason alone; nobody else the server's PHP configuration
+    const PHP_LINE = 'The latest checks could not run: PHP on the Matomo server does not allow the outgoing requests they need. '
+        + 'Missing PHP functions: curl_exec, curl_multi_exec.';
+    const PHP_HINT = 'For the server administrator: remove these functions from disable_functions in php.ini.';
+    const CURL_HINT = 'For the server administrator: install or enable PHP\'s curl extension on the Matomo server.';
+    const missing = ['curl_exec', 'curl_multi_exec'];
+    s = await mounted(browser, scenario({ status: php('php_disabled'), disabledPhpFunctions: missing }));
+    check('B1 php_disabled, a super user: the reason and what to do', s.php, [PHP_LINE, PHP_HINT]);
+    s = await mounted(browser, scenario({ status: php('php_disabled'), disabledPhpFunctions: missing, curlMissing: true }));
+    check('L7 php_disabled without the curl extension: the extension named', s.php, [PHP_LINE, CURL_HINT]);
+    s = await mounted(browser, scenario({ width: 300, status: php('php_disabled'), disabledPhpFunctions: missing, config: { variant: 'site' } }));
+    check('B1 php_disabled, a dashboard widget: the reason alone', s.php, [PHP_LINE]);
+    s = await mounted(browser, scenario({ status: php('php_disabled'), disabledPhpFunctions: missing, config: { isSuperUser: false } }));
+    check('B1 php_disabled, a website admin: no server configuration', s.php, []);
+    s = await mounted(browser, scenario({ status: php('php_disabled'), disabledPhpFunctions: missing, config: { embedded: true } }));
+    check('B1 php_disabled, embedded: no server configuration', s.php, []);
+    s = await mounted(browser, scenario({ disabledPhpFunctions: missing }));
+    check('B1 no address with php_disabled: no such line', s.php, []);
+
+    // B3: an international address as entered, its ASCII form in the tooltip
+    const idn = { 0: matomoTargets(), 1: [target(WEB, 'web', 'https://\u043c\u0430\u0433\u0430\u0437\u0438\u043d.example/', 'up'),
+        target('web:m', 'web', 'https://M\u00fcller.example:8443/shop?x=1#top', 'up')] };
+    s = await mounted(browser, scenario({ status: idn }));
+    check('B3: the addresses as entered, the ASCII form in the tooltip', s.labelTitles.filter(([label]) => /example/.test(label) && !/matomo/.test(label)).sort(), [
+        ['\u043c\u0430\u0433\u0430\u0437\u0438\u043d.example', 'https://\u043c\u0430\u0433\u0430\u0437\u0438\u043d.example/ (xn--80aairftm.example)'],
+        ['m\u00fcller.example:8443/shop', 'https://M\u00fcller.example:8443/shop?x=1#top (xn--mller-kva.example:8443)']].sort());
+    check('B3: an ASCII address keeps its tooltip', s.labelTitles.find(([label]) => label === 'Interface'), ['Interface', MATOMO_URL + 'ui']);
+
+    // a name only intl converts safely (needs_intl): its own reason, without firewall text or the link
+    const intl = { 0: matomoTargets(), 1: [target(WEB, 'web', 'https://www.example.com/', 'up'),
+        target('web:xn', 'web', 'https://\u65e5\u672c.example/', 'not_checkable', { error: null, note: 'needs_intl' })] };
+    const NEEDS_INTL = 'This address contains characters, such as other scripts or full-width letters, that only PHP\'s intl extension on '
+        + 'the Matomo server converts safely, so it is not checked. This is not counted as an outage.';
+    s = await mounted(browser, scenario({ status: intl }), 'why');
+    // UI review of 5.4.0, L5: super users also read what to do
+    check('L5 needs_intl, a super user: its own reason and what to do', [s.why, s.allowPrivateLink], [NEEDS_INTL
+        + ' For the server administrator: install or enable PHP\'s intl extension on the Matomo server to check it.', false]);
+    s = await mounted(browser, scenario({ status: intl, config: { isSuperUser: false } }), 'why');
+    check('L5 needs_intl, a website admin: its own reason only', s.why, NEEDS_INTL);
+
+    // the admin page: the internet line above the table, the fold without Why? and Allow private addresses
+    const site = (idSite, name, counts) => Object.assign({ idSite, name, timezone: 'UTC', targets: 1, off: 0, up: 0, down: 0,
+        notCheckable: 0, stale: 0, lastCheckedAt: CHECKED, certificateDaysLeft: null, certificateLevel: null, containersDown: [] }, counts);
+    const blocked = [site(0, 'Matomo', { targets: 3, notCheckable: 3 }), site(1, 'Shop', { notCheckable: 1 })];
+    s = await admin(browser, { overview: blocked, config: { internetOff: true } });
+    check('internet off, admin: the reason and the opt-in above the table', s.internet, [OFF, OPT_IN_ADMIN]);
+    check('internet off, admin: the fold without Why? and the link', s.foldControls, ['Show']);
+    // Matomo's address stored as http behind a proxy that handles https (audit D2)
+    const up = [site(0, 'Matomo', { targets: 3, up: 3 })];
+    s = await admin(browser, { overview: up, config: { httpsRedirect: true } });
+    check('https redirect, admin: what happens and what to set', s.https, [
+        'Matomo\'s address is stored with http, and the server redirects it to https. The checks of the tracker endpoint, the JavaScript tracker and the Tag Manager containers follow that redirect.',
+        // UI review of 5.4.0, L1 and P2: the server administrator's line ends with a chip
+        'For the server administrator: when Matomo runs behind a proxy that handles https, add this line to the section [General] in '
+        + 'config/config.ini.php, so that all of these checks use the https address directly:',
+        // L8 review of 5.4.0, NIT 7: the tracker address covers the tracker and matomo.js only; L6: named as the settings name it
+        'The https address as the Tracker address in the settings covers only the tracker endpoint and the JavaScript tracker, since '
+        + 'the Tag Manager containers always follow Matomo\'s own address.']);
+    check('B4 https redirect, admin: an info row, not a warning', s.httpsClass, 'is-info');
+    // L7: the admin page names a missing curl extension instead of disable_functions
+    s = await admin(browser, { overview: blocked, config: { disabledPhpFunctions: ['curl_exec', 'curl_multi_exec'], curlMissing: true } });
+    check('L7 admin: without the curl extension, the extension named', s.php, [PHP_LINE, CURL_HINT]);
+    s = await admin(browser, { overview: up, config: { httpsRedirect: false } });
+    check('https redirect, admin: without it no line', [s.https, s.internet], [[], []]);
+}
+
+/**
+ * UI review of 5.4.0, the four design proposals (Peter, verbatim: "go", to "P1 to P4, recommendation a each") and the
+ * clear text items: P1 the short cause in the answer line's detail slot, P3 each address's own cause in its Response
+ * cell, P4 a past day keeps the current state inside the muted Now line, P2 the admin page's server rows in one list with
+ * the config lines as chips with Copy; L1 one voice for the server administrator, L6 the tracker address field named and
+ * linked, L8 the cron row while nothing is sent, L9 the target panel says why it finds nothing. The guards first: a
+ * normal instance without these states reads as before.
+ */
+async function design540(browser) {
+    const ACTIVE = { active: true, name: 'Outside checks', reachedAt: '2026-11-26T09:58:00Z', settingsUrl: null, alerts: false };
+    const nc = (key, url, note, extra) => target(key, 'web', url, 'not_checkable', Object.assign({ error: note ? null : 'connect', note }, extra));
+    const off = { 0: ['ui', 'tracker', 'js'].map((k) => target(k, k, MATOMO_URL + k, 'not_checkable', { error: null, note: 'internet_off' })),
+        1: [target(WEB, 'web', 'https://www.example.com/', 'not_checkable', { error: null, note: 'internet_off' })] };
+    const php = { 0: matomoTargets(), 1: [nc(WEB, 'https://www.example.com/', 'php_disabled')] };
+    const generic = { 0: matomoTargets(), 1: [nc(WEB, 'https://www.example.com/', null)] };
+    const IDN = 'web:xn';
+    const intl = { 0: matomoTargets(), 1: [target(WEB, 'web', 'https://www.example.com/', 'up'), nc(IDN, 'https://日本.example/', 'needs_intl')] };
+    const intlOnly = { 0: matomoTargets(), 1: [nc(IDN, 'https://日本.example/', 'needs_intl')] };
+    const VIEWER = { isSuperUser: false, isAdmin: false };
+    const ADMIN = { isSuperUser: false, isAdmin: true };
+    const NC = 'Not checkable from this server';
+    // quick UI review before 5.4.0, L4: a phrase, as the other short causes
+    const CAUSE_OFF = '(Matomo\'s internet features off)';
+    const texts = (s) => s.lines.map((l) => l.text);
+
+    // guards: a normal instance today and on a past day, an address this server cannot reach for a general reason
+    let s = await mounted(browser, scenario({}));
+    check('540 guard today: the answer as before', s.lines, [{ cls: 'is-up', muted: false, text: 'Everything reachable checked 5 minutes ago' }]);
+    check('540 guard today: no note lines', [s.nc, s.internet, s.php], [null, [], []]);
+    s = await mounted(browser, scenario({ date: '2026-11-24' }));
+    check('540 guard past day: the day, then the muted Now line as before', s.lines.map((l) => [l.muted, l.text]),
+        [[false, 'Nov 24: no outage'], [true, 'Now: Everything reachable, checked 5 minutes ago']]);
+    s = await mounted(browser, scenario({ status: generic }), 'why');
+    check('540 guard: a general cause keeps its answer line without a detail', texts(s)[0], 'This website: ' + NC + ' checked 5 minutes ago');
+    check('540 guard: a general cause keeps its cell and Why?', [s.rows[3][2], s.whyButton, s.allowPrivateLink], [NC, true, true]);
+    s = await mounted(browser, scenario({ status: generic, width: 390 }));
+    check('540 guard: a general cause in the narrow list as before', s.narrow.slice(-1), [['is-not_checkable', 'www.example.com Response: ' + NC + ' Uptime: 97.92%']]);
+
+    // P1: the short cause in the answer line's detail slot (super users read the server's configuration; everyone else
+    // the neutral words, as the internet line; L3)
+    s = await mounted(browser, scenario({ status: off, config: { internetOff: true } }));
+    check('P1 internet off, a super user: each group with the cause', texts(s),
+        ['Matomo: ' + NC + ' ' + CAUSE_OFF, 'This website: ' + NC + ' ' + CAUSE_OFF]);
+    s = await mounted(browser, scenario({ status: off, config: Object.assign({ internetOff: true }, VIEWER) }));
+    check('P1 internet off, a viewer: the neutral cause', texts(s), ['Matomo: ' + NC + ' (checks switched off)', 'This website: ' + NC + ' (checks switched off)']);
+    s = await mounted(browser, scenario({ status: off, config: { internetOff: true, embedded: true } }));
+    check('P1 internet off, embedded: the neutral cause', texts(s)[1], 'This website: ' + NC + ' (checks switched off)');
+    s = await mounted(browser, scenario({ width: 300, status: off, config: { internetOff: true, variant: 'site' } }));
+    check('P1 internet off, the website widget: the cause too', texts(s), [NC + ' ' + CAUSE_OFF]);
+    s = await mounted(browser, scenario({ width: 300, status: off, config: { internetOff: true, variant: 'matomo' } }));
+    check('P1 internet off, the Matomo widget: the cause too', texts(s), [NC + ' ' + CAUSE_OFF]);
+    s = await mounted(browser, scenario({ status: php }));
+    check('P1 PHP functions missing, a super user: the cause', texts(s)[0], 'This website: ' + NC + ' (PHP functions disabled)');
+    s = await mounted(browser, scenario({ status: php, config: ADMIN }));
+    check('P1 PHP functions missing, a website admin: no server configuration', texts(s)[0], 'This website: ' + NC);
+    s = await mounted(browser, scenario({ status: intlOnly, config: VIEWER }));
+    check('P1 a name that needs intl: the cause for everyone (its reason is everyone\'s already)', texts(s)[0], 'This website: ' + NC + ' (needs PHP intl)');
+    s = await mounted(browser, scenario({ status: { 0: matomoTargets(), 1: [nc(WEB, 'https://www.example.com/', 'php_disabled'),
+        nc('web:intranet.example.com', 'https://intranet.example.com/', null)] } }));
+    check('P1 causes that differ: no detail', texts(s)[0], 'This website: ' + NC + ' checked 5 minutes ago');
+
+    // P3: each address names its own cause in its Response cell; the long reason stays behind Why? (L5)
+    s = await mounted(browser, scenario({ status: intl }), 'why');
+    check('P3 needs intl: the cell names the cause', s.rows.find((r) => /日/.test(r[1])).slice(0, 3), ['is-not_checkable', '日本.example', 'Not checkable: needs PHP intl']);
+    check('P3 needs intl: Why? keeps the reason and what to do', /intl extension on the Matomo server to check it\.$/.test(s.why || ''), true);
+    s = await mounted(browser, scenario({ status: intl, config: ADMIN }));
+    check('P3 needs intl, a website admin: the cell names it too', s.rows.find((r) => /日/.test(r[1]))[2], 'Not checkable: needs PHP intl');
+    // (internet off and PHP functions missing for a whole group: the answer line names the cause, the cells leave it to
+    // it, see "polish" below)
+    s = await mounted(browser, scenario({ status: php, config: ADMIN }));
+    check('P3 PHP functions missing, a website admin: the general words', s.rows[3][2], NC);
+    s = await mounted(browser, scenario({ status: intl, width: 390 }));
+    check('P3 narrow list: the cause in the address\'s line', s.narrow.slice(-1), [['is-not_checkable', '日本.example Response: Not checkable: needs PHP intl']]);
+    s = await mounted(browser, scenario({ width: 300, status: intl, config: { variant: 'site' } }));
+    check('P3 the website widget: the same words', s.listShown.slice(-1), ['日本.example Not checkable: needs PHP intl']);
+    // with results from outside the sides keep their rules (sides.ts sameAnswer compares the words without the cause)
+    const twoSided = (outside) => scenario({ status: { 0: matomoTargets(), 1: [nc(IDN, 'https://日本.example/', 'needs_intl', outside)] },
+        config: { external: ACTIVE } });
+    s = await mounted(browser, twoSided({ outside: 'up' }));
+    check('P3 two sides, the outside reaches it: the row splits as before, the server\'s sub-row with the cause',
+        [s.rows[3].slice(0, 3), s.subRows], [['is-up', '日本.example', ''],
+            [['Outside', '118 ms', '', ''], ['Matomo server', 'Not checkable: needs PHP intl', '', '']]]);
+    s = await mounted(browser, twoSided({ outside: 'not_checkable', outsideError: 'blocked' }));
+    check('P3 two sides, neither can check it: one line with the cause, no sub-rows', [s.rows[3][2], s.subRows],
+        ['Not checkable: needs PHP intl', []]);
+    s = await mounted(browser, Object.assign(twoSided({ outside: 'up' }), { width: 390 }));
+    check('P3 two sides, narrow: the server\'s line names the cause', s.listShown.slice(-1),
+        ['日本.example 118 ms from outside Not checkable: needs PHP intl from the Matomo server']);
+
+    // Polish before 5.4.0: a group whose answer line names its one cause (P1) leaves it out of its cells, which say only
+    // "Not checkable" with the cause in their tooltip (the words P3 gave the cell); where the causes differ, or the
+    // answer line names none, each cell keeps its own (P3)
+    const OFF_TITLE = 'Not checkable: Matomo\'s internet features off';
+    s = await mounted(browser, scenario({ status: off, config: { internetOff: true } }));
+    check('polish internet off, a super user: the cause in the answer, each cell only Not checkable, the cause in its tooltip',
+        [texts(s), s.rows.map((r) => r[2]), s.cellTitles],
+        [['Matomo: ' + NC + ' ' + CAUSE_OFF, 'This website: ' + NC + ' ' + CAUSE_OFF], Array(4).fill('Not checkable'), Array(4).fill(OFF_TITLE)]);
+    s = await mounted(browser, scenario({ status: off, config: Object.assign({ internetOff: true }, VIEWER) }));
+    check('polish internet off, a viewer: the neutral cause in the answer and in the tooltips', [texts(s), s.rows.map((r) => r[2]), s.cellTitles],
+        [['Matomo: ' + NC + ' (checks switched off)', 'This website: ' + NC + ' (checks switched off)'], Array(4).fill('Not checkable'),
+            Array(4).fill('Not checkable: checks switched off')]);
+    s = await mounted(browser, scenario({ status: php }));
+    check('polish PHP functions missing, a super user: the website\'s cell only Not checkable, Matomo\'s cells untouched',
+        [texts(s)[0], s.rows.map((r) => r[2]), s.cellTitles],
+        ['This website: ' + NC + ' (PHP functions disabled)', ['120 ms', '120 ms', '120 ms', 'Not checkable'],
+            [null, null, null, 'Not checkable: PHP functions disabled']]);
+    s = await mounted(browser, scenario({ status: intlOnly, config: VIEWER }));
+    check('polish a name that needs intl, the group\'s only address: the cell only Not checkable',
+        [texts(s)[0], s.rows[3][2], s.cellTitles[3]], ['This website: ' + NC + ' (needs PHP intl)', 'Not checkable', 'Not checkable: needs PHP intl']);
+    s = await mounted(browser, scenario({ status: off, config: { internetOff: true }, width: 390 }));
+    check('polish the narrow list: only Not checkable, the cause in the tooltip', [texts(s), s.narrow.slice(-1), s.listTitles],
+        [['Matomo: ' + NC + ' ' + CAUSE_OFF, 'This website: ' + NC + ' ' + CAUSE_OFF],
+            [['is-not_checkable', 'www.example.com Response: Not checkable Uptime: 97.92%']], Array(4).fill(OFF_TITLE)]);
+    s = await mounted(browser, scenario({ width: 300, status: off, config: { internetOff: true, variant: 'site' } }));
+    check('polish the website widget: the cause in the answer, the address only Not checkable', [texts(s), s.listShown, s.listTitles],
+        [[NC + ' ' + CAUSE_OFF], ['www.example.com Not checkable 97.92%'], [OFF_TITLE]]);
+    s = await mounted(browser, scenario({ width: 300, status: off, config: { internetOff: true, variant: 'matomo' } }));
+    check('polish the Matomo widget: the same', [texts(s), s.listShown, s.listTitles],
+        [[NC + ' ' + CAUSE_OFF], ['Interface Not checkable 100%', 'Tracker endpoint Not checkable 100%', 'JavaScript tracker Not checkable 100%'],
+            Array(3).fill(OFF_TITLE)]);
+    // with results from outside: Matomo's group has none, its answer names the server and the cause; the website the
+    // outside reaches is no group the answer names a cause for, so its server sub-row keeps it
+    const offOutside = scenario({ status: { 0: off[0], 1: [target(WEB, 'web', 'https://www.example.com/', 'not_checkable',
+        { error: null, note: 'internet_off', outside: 'up' })] }, config: { internetOff: true, external: ACTIVE } });
+    const SERVER_TITLE = 'Not checkable from the Matomo server: Matomo\'s internet features off';
+    s = await mounted(browser, offOutside);
+    check('polish two sides, Matomo without results from outside: the answer names the server and the cause, its cells only Not checkable',
+        [texts(s)[0], s.rows.slice(0, 3).map((r) => r[2]), s.cellTitles.slice(0, 3)],
+        ['Matomo: Not checkable from the Matomo server ' + CAUSE_OFF, Array(3).fill('Not checkable'), Array(3).fill(SERVER_TITLE)]);
+    // quick UI review before 5.4.0, L1: Matomo's answer line names the cause for the screen, so the website the outside
+    // reaches leaves it out of its server sub-row too, the cause in the tooltip
+    check('polish two sides, L1: the website the outside reaches leaves the cause to the answer line', [s.subRows.map((r) => r.slice(0, 2)),
+        s.subTitles.map((t) => (t === null ? null : t.split('\n')[0]))], [[['Outside', '118 ms'], ['Matomo server', 'Not checkable']],
+        [SERVER_TITLE, SERVER_TITLE]]);
+    s = await mounted(browser, Object.assign({}, offOutside, { width: 390 }));
+    check('polish two sides, narrow, L1: Matomo\'s lines and the website\'s server line only Not checkable, the cause in the tooltips',
+        [s.listShown, s.listTitles], [['Interface Not checkable 100%', 'Tracker endpoint Not checkable 100%', 'JavaScript tracker Not checkable 100%',
+            'www.example.com 118 ms from outside Not checkable 97.92% from the Matomo server'], [SERVER_TITLE, SERVER_TITLE, SERVER_TITLE, null, SERVER_TITLE]]);
+    // guards (as before): causes that differ within a group, a general cause
+    s = await mounted(browser, scenario({ status: { 0: matomoTargets(), 1: [off[1][0], nc(IDN, 'https://日本.example/', 'needs_intl')] },
+        config: { internetOff: true } }));
+    check('polish guard: two causes in one group, no detail, each cell keeps its own, no tooltip',
+        [texts(s)[0], s.rows.slice(3).map((r) => r[2]), s.cellTitles.slice(3)],
+        ['This website: ' + NC, [OFF_TITLE, 'Not checkable: needs PHP intl'], [null, null]]);
+    s = await mounted(browser, scenario({ status: { 0: matomoTargets(), 1: [nc(WEB, 'https://www.example.com/', 'php_disabled'),
+        nc('web:intranet.example.com', 'https://intranet.example.com/', null)] } }));
+    check('polish guard: a named cause next to a general one, each cell its own', [s.rows.slice(3).map((r) => r[2]), s.cellTitles.slice(3)],
+        [[NC, 'Not checkable: PHP functions disabled'], [null, null]]);
+    s = await mounted(browser, scenario({ status: generic }));
+    check('polish guard: a general cause, the cell as before, no tooltip', [s.rows[3][2], s.cellTitles[3]], [NC, null]);
+
+    // P4: on a past day the current state stays inside the muted Now line; the count line and the internet and PHP
+    // lines show today only
+    const PAST = '2026-11-25';
+    s = await mounted(browser, scenario({ date: PAST, status: php, disabledPhpFunctions: ['curl_exec'] }));
+    check('P4 a past day, the website not checkable: Matomo reachable, the count', s.lines[1], { cls: 'is-now', muted: true,
+        text: 'Now: Matomo reachable, 1 address not checkable, checked 5 minutes ago' });
+    check('P4 a past day: no count line, no PHP line', [s.nc, s.php], [null, []]);
+    s = await mounted(browser, scenario({ date: PAST, status: generic }));
+    check('P4 a past day, a general cause: the same Now line, no count line', [s.lines[1].text, s.nc],
+        ['Now: Matomo reachable, 1 address not checkable, checked 5 minutes ago', null]);
+    s = await mounted(browser, scenario({ date: PAST, status: intl }));
+    check('P4 a past day, every group reachable: Reachable and the count', s.lines[1].text, 'Now: Reachable, 1 address not checkable, checked 5 minutes ago');
+    const two = { 0: matomoTargets(), 1: [nc(WEB, 'https://www.example.com/', null), nc('web:b', 'https://b.example.com/', null)] };
+    s = await mounted(browser, scenario({ date: PAST, status: two }));
+    check('P4 a past day, two addresses: counted', s.lines[1].text, 'Now: Matomo reachable, 2 addresses not checkable, checked 5 minutes ago');
+    s = await mounted(browser, scenario({ date: PAST, status: off, config: { internetOff: true } }));
+    check('P4 a past day, internet off: the state with its cause, no count, no internet line', [s.lines[1].text, s.nc, s.internet],
+        ['Now: ' + NC + ' ' + CAUSE_OFF, null, []]);
+    s = await mounted(browser, scenario({ date: PAST, status: off, config: Object.assign({ internetOff: true }, VIEWER) }));
+    check('P4 a past day, internet off, a viewer: the neutral cause', s.lines[1].text, 'Now: ' + NC + ' (checks switched off)');
+    s = await mounted(browser, scenario({ status: php, disabledPhpFunctions: ['curl_exec'] }));
+    check('P4 today: the count line and the PHP line stay', [s.nc, s.php.length], ['1 address cannot be checked from this server and does not count as an outage.', 2]);
+    s = await mounted(browser, scenario({ status: off, config: { internetOff: true } }));
+    check('P4 today: the internet line stays', s.internet.length, 2);
+
+    // L9: the target panel says why it finds nothing while Matomo's internet features are off
+    s = await mounted(browser, scenario({ status: off, config: { internetOff: true } }), 'panel');
+    check('L9 the panel, a super user: the internet line', [s.panelOpen, s.panelNotice],
+        [true, 'The Matomo server sends no checks: Matomo\'s internet features are switched off ([General] enable_internet_features = 0).']);
+    s = await mounted(browser, scenario({ status: off, config: Object.assign({ internetOff: true }, ADMIN) }), 'panel');
+    check('L9 the panel, a website admin: the neutral line', [s.panelOpen, s.panelNotice], [true, 'The checks are switched off on this Matomo server.']);
+    s = await mounted(browser, scenario({}), 'panel');
+    check('L9 guard: internet on, no notice in the panel', [s.panelOpen, s.panelNotice], [true, null]);
+
+    // P2, L6, L8: the admin page
+    const site = (idSite, name, counts) => Object.assign({ idSite, name, timezone: 'UTC', targets: 1, off: 0, up: 0, down: 0,
+        notCheckable: 0, stale: 0, lastCheckedAt: CHECKED, certificateDaysLeft: null, certificateLevel: null, containersDown: [] }, counts);
+    const up = [site(0, 'Matomo', { targets: 3, up: 3 }), site(1, 'Shop', { up: 1 })];
+    const all = { disabledPhpFunctions: ['curl_exec'], internetOff: true, httpsRedirect: true };
+    s = await admin(browser, { overview: up });
+    check('540 admin guard: no server rows, the cron row as before', [s.checksLists, s.serverOrder, s.cronRow],
+        [1, [], ['is-ok', 'icon-ok', ['The checks run every minute (system cron).']]]);
+    s = await admin(browser, { overview: up, config: all });
+    check('P2 the server rows in one list, the PHP row first', [s.checksLists, s.serverOrder], [2, ['php', 'internet', 'https']]);
+    check('P2 the config lines as chips with Copy', s.chips, [['internet', 'checkWithInternetFeaturesOff = 1', 'Copy'],
+        ['https', 'assume_secure_protocol = 1', 'Copy']]);
+    check('L6 the tracker address field named and linked to the settings', s.httpsLink,
+        ['Tracker address', '?module=CoreAdminHome&action=generalSettings#/FeinwerkUptimeMonitor']);
+    check('L8 while nothing is sent, the cron row is neutral and says so', s.cronRow, ['is-info', 'icon-info',
+        ['The checks run every minute (system cron).', 'While Matomo\'s internet features are switched off, the checks send nothing.']]);
+    s = await admin(browser, { overview: up, config: all }, 'copy:internet');
+    check('P2 Copy copies the one line, and only its chip says Copied', [s.copiedText, s.copyButtons],
+        ['checkWithInternetFeaturesOff = 1', ['Copied', 'Copy']]);
+    s = await admin(browser, { overview: up, config: { httpsRedirect: true } }, 'copy:https');
+    check('P2 the https chip copies its line, never a section header', [s.serverOrder, s.copiedText], [['https'], 'assume_secure_protocol = 1']);
+    s = await admin(browser, { overview: up, config: { internetOff: true, cron: { active: false, intervalSeconds: 0 } } });
+    check('L8 without a cron: the warning stays, with the same line', [s.cronRow[0], s.cronRow[2].slice(-1)],
+        ['is-warn', ['While Matomo\'s internet features are switched off, the checks send nothing.']]);
+    s = await admin(browser, { overview: up, config: { internetOff: true } }, 'panel');
+    check('L9 the admin page\'s panel: the internet line', s.panelNotice,
+        'The Matomo server sends no checks: Matomo\'s internet features are switched off ([General] enable_internet_features = 0).');
+}
+
+/** Review of the 5.4.0 fixes: the strip around a clock change */
+async function fixes540(browser) {
+    const BERLIN = { timezone: 'Europe/Berlin' };
+    const hours = (from, count) => Array.from({ length: count }, (x, i) => new Date(Date.parse(from) + i * 3600000).toISOString().replace('.000Z', 'Z'));
+    const days = (from, rest) => [from].concat(rest);
+    const last = (s) => s.stripTexts.map((cells) => cells[cells.length - 1]);
+
+    // SHOULD 1: Sunday, the last cell of Matomo's week, has 23 hours (29 March) or 25 (25 October) in Berlin; the cell's
+    // measured share and the strip's follow the API's end, not 24 hours
+    const spring = { grain: 'day', end: '2026-03-29T22:00:00Z', starts: days('2026-03-22T23:00:00Z', ['2026-03-23T23:00:00Z', '2026-03-24T23:00:00Z',
+        '2026-03-25T23:00:00Z', '2026-03-26T23:00:00Z', '2026-03-27T23:00:00Z', '2026-03-28T23:00:00Z']) };
+    let s = await mounted(browser, scenario({ period: 'week', date: '2026-03-23', config: BERLIN, cellsAt: spring }));
+    check('SHOULD 1 the week of 23 to 29 March in Berlin: the 23 h Sunday fully measured', last(s),
+        Array(2).fill('Mar 29: uptime 100%, measured 100% of the time'));
+    check('SHOULD 1 the week of 23 to 29 March: the strips measured all of it', s.stripMeasured, Array(2).fill('measured 100% of the time'));
+    const fall = { grain: 'day', end: '2026-10-25T23:00:00Z', gap: 3600, starts: days('2026-10-18T22:00:00Z', ['2026-10-19T22:00:00Z',
+        '2026-10-20T22:00:00Z', '2026-10-21T22:00:00Z', '2026-10-22T22:00:00Z', '2026-10-23T22:00:00Z', '2026-10-24T22:00:00Z']) };
+    s = await mounted(browser, scenario({ period: 'week', date: '2026-10-19', config: BERLIN, cellsAt: fall }));
+    check('SHOULD 1 the week of 19 to 25 October in Berlin: the 25 h Sunday with an hour not measured', last(s),
+        Array(2).fill('Oct 25: uptime 100%, measured 96% of the time'));
+    check('SHOULD 1 the week of 19 to 25 October: the strips miss that hour', s.stripMeasured, Array(2).fill('measured 99% of the time'));
+
+    // NIT 3: on a fall-back day the repeated hour names the zone in its tooltip, for screen readers and on the axis;
+    // the other hours and a spring-forward day as before
+    s = await mounted(browser, scenario({ date: '2026-10-25', config: BERLIN, cellsAt: { grain: 'hour', end: '2026-10-25T23:00:00Z',
+        starts: hours('2026-10-24T22:00:00Z', 25) } }));
+    check('NIT 3 Berlin, 25 October: 25 cells, the two 2:00 AM named by their zone', s.stripTexts.map((cells) => [cells.length].concat(cells.slice(1, 5))),
+        Array(2).fill([25, '1:00 AM: uptime 100%, measured 100% of the time', '2:00 AM GMT+2: uptime 100%, measured 100% of the time',
+            '2:00 AM GMT+1: uptime 100%, measured 100% of the time', '3:00 AM: uptime 100%, measured 100% of the time']));
+    check('NIT 3 Berlin, 25 October: the axis as before', s.stripAxes, Array(2).fill(['12:00 AM', '11:00 PM']));
+    s = await mounted(browser, scenario({ date: '2026-03-29', config: BERLIN, cellsAt: { grain: 'hour', end: '2026-03-29T22:00:00Z',
+        starts: hours('2026-03-28T23:00:00Z', 23) } }));
+    check('NIT 3 guard Berlin, 29 March: 23 cells, no zone named', s.stripTexts.map((cells) => [cells.length].concat(cells.slice(1, 3))),
+        Array(2).fill([23, '1:00 AM: uptime 100%, measured 100% of the time', '3:00 AM: uptime 100%, measured 100% of the time']));
+    s = await mounted(browser, scenario({ date: '2026-11-01', config: { timezone: 'America/New_York' }, cellsAt: { grain: 'hour',
+        end: '2026-11-02T05:00:00Z', starts: hours('2026-11-01T04:00:00Z', 25) } }));
+    check('NIT 3 New York, 1 November: the two 1:00 AM named EDT and EST', s.stripTexts[1].slice(1, 3).map((t) => t.split(':').slice(0, 2).join(':')),
+        ['1:00 AM EDT', '1:00 AM EST']);
+}
+
+/**
+ * Last fixes before 5.4.0 (quick UI review, /root/fw-docs/uptimemonitor/ui-review-540-quick.md): R1 a past day's address
+ * without measurements, Q1 an outage of one failed check that the checks stopping ended there, L1 the server's cause
+ * once with results from outside, L2 the page's opt-in line as the admin page's chip, L3 each Copy named and "Copied"
+ * announced, L4 the wording.
+ */
+async function final540(browser) {
+    const ACTIVE = { active: true, name: 'Outside checks', reachedAt: '2026-11-26T09:58:00Z', settingsUrl: null, alerts: false };
+    const PAST = '2026-11-25';
+    const matomoUp = ['ui', 'tracker', 'js'].map((k) => uptimeRow(k, k, 100));
+    const texts = (s) => s.lines.map((l) => l.text);
+    const first = (title) => (title === null ? null : title.split('\n')[0]);
+
+    // R1: on a past day an address without measurements reads "Not measured" in its Uptime cell and the narrow list, as
+    // the two-sided cells do; a screen without any figure keeps no Uptime column (D4) and says nothing of it
+    let s = await mounted(browser, scenario({ date: PAST, uptime: { 0: matomoUp, 1: [] } }));
+    check('R1 a past day, an address without measurements: Not measured in its Uptime cell, the others their figure',
+        s.rows.map((r) => r[2]), ['100%', '100%', '100%', 'Not measured']);
+    s = await mounted(browser, scenario({ date: PAST, width: 390, uptime: { 0: matomoUp, 1: [] } }));
+    check('R1 narrow: Not measured in the address\'s line', s.narrow.slice(-1), [['is-none', 'www.example.com Uptime: Not measured']]);
+    check('R1 narrow: the measured lines as before', s.narrow[0], ['is-up', 'Interface Uptime: 100%']);
+    s = await mounted(browser, scenario({ date: PAST, uptime: { 0: [], 1: [] } }));
+    check('R1 guard: no figure on the screen, no Uptime column (D4) and no Not measured', [s.heads,
+        s.rows.filter((r) => r.indexOf('Not measured') >= 0).length], [['Address', 'Certificate'], 0]);
+    s = await mounted(browser, scenario({ date: PAST, width: 390, uptime: { 0: [], 1: [] } }));
+    check('R1 guard narrow: no Not measured either', s.narrow.filter((n) => /Not measured/.test(n[1])).length, 0);
+    s = await mounted(browser, scenario({ uptime: { 0: matomoUp, 1: [] } }));
+    check('R1 guard today: an address without a figure yet leaves its cell empty', s.rows[3][3], '');
+
+    // Q1: the checks stopped sending after one failed check, so the outage ended at that check (0 seconds); the day
+    // still counts it, as the strip shows the failed check
+    const blip = [{ idSite: 1, targetKey: WEB, kind: 'web', start: '2026-11-25T10:05:00Z', end: '2026-11-25T10:05:00Z', detail: 'HTTP 502',
+        cause: 'http_status' }];
+    s = await mounted(browser, scenario({ date: PAST, incidents: blip }));
+    check('Q1 a past day: an outage of one failed check counts', [s.lines[0].text.indexOf('Nov 25: 1 outage, 1 min'), s.outages.length], [0, 1]);
+    s = await mounted(browser, scenario({ date: PAST, incidents: [{ idSite: 1, targetKey: WEB, kind: 'web', start: '2026-11-24T23:00:00Z',
+        end: '2026-11-25T00:00:00Z' }] }));
+    check('Q1 guard: an outage that only touches the day stays out', [s.lines[0].text, s.outages.length], ['Nov 25: no outage', 0]);
+
+    // L1: results from outside, Matomo's internet features off. The outside reaches the website and the container, so
+    // the answer is "Everything reachable"; the count line names the one cause once, Matomo's cells say "Not checkable
+    // from the Matomo server" and the sub-rows "Not checkable", the cause in their tooltips
+    const CAUSE = 'Matomo\'s internet features off';
+    const off = (key, kind, url, extra) => target(key, kind, url, 'not_checkable', Object.assign({ error: null, note: 'internet_off' }, extra));
+    const CONTAINER = 'ctr:Ab12Cd34';
+    const reached = (config, width) => scenario({
+        width: width || 1000,
+        status: { 0: ['ui', 'tracker', 'js'].map((k) => off(k, k, MATOMO_URL + k)),
+            1: [off(WEB, 'web', 'https://www.example.com/', { outside: 'up' }),
+                off(CONTAINER, 'container', 'https://matomo.example.org/js/container_Ab12Cd34.js', { outside: 'up' })] },
+        config: Object.assign({ internetOff: true, external: ACTIVE }, config || {}),
+    });
+    // tooltips as written: the server's name with a no-break space (W8)
+    const SERVER_CAUSE = 'Not checkable from the Matomo\u00a0server: ' + CAUSE;
+    s = await mounted(browser, reached());
+    check('L1 the answer: everything reachable', texts(s), ['Everything reachable checked 5 minutes ago']);
+    check('L1 the count line names the cause once', s.nc,
+        '3 addresses cannot be checked from the Matomo server (' + CAUSE + ') and do not count as outages.');
+    check('L1 Matomo\'s cells: Not checkable from the Matomo server, the cause in the tooltip',
+        [s.rows.slice(0, 3).map((r) => r[2]), s.cellTitles.slice(0, 3).map(first)], [Array(3).fill('Not checkable from the Matomo server'),
+            Array(3).fill(SERVER_CAUSE)]);
+    check('L1 the sub-rows: the server only Not checkable, the cause in the tooltip',
+        [s.subRows.map((r) => r.slice(0, 2)), s.subTitles.map(first)],
+        [[['Outside', '118 ms'], ['Matomo server', 'Not checkable'], ['Outside', '118 ms'], ['Matomo server', 'Not checkable']],
+            Array(4).fill(SERVER_CAUSE)]);
+    check('L1 the internet line stays', s.internet[0], 'The Matomo server sends no checks: Matomo\'s internet features are switched off ([General] enable_internet_features = 0).');
+    s = await mounted(browser, reached({}, 390));
+    check('L1 narrow: the same words, the cause in the tooltips', [s.listShown, s.listTitles],
+        [['Interface Not checkable from the Matomo server 100%', 'Tracker endpoint Not checkable from the Matomo server 100%',
+            'JavaScript tracker Not checkable from the Matomo server 100%',
+            'Tag Manager container Ab12Cd34 118 ms from outside Not checkable from the Matomo server',
+            'www.example.com 118 ms from outside Not checkable 97.92% from the Matomo server'],
+        [SERVER_CAUSE, SERVER_CAUSE, SERVER_CAUSE, null, SERVER_CAUSE, null, SERVER_CAUSE]]);
+    s = await mounted(browser, reached({ variant: 'matomo' }, 300));
+    check('L1 the Matomo widget: the count line with the cause, the lines without it', [s.nc, s.listShown],
+        ['3 addresses cannot be checked from the Matomo server (' + CAUSE + ') and do not count as outages.',
+            ['Interface Not checkable from the Matomo server 100%', 'Tracker endpoint Not checkable from the Matomo server 100%',
+                'JavaScript tracker Not checkable from the Matomo server 100%', 'Tag Manager container Ab12Cd34 118 ms from outside']]);
+    check('L1 the Matomo widget: the cause in the server\'s tooltips, none on the line from outside (D3)', s.listTitles,
+        [SERVER_CAUSE, SERVER_CAUSE, SERVER_CAUSE, null]);
+    s = await mounted(browser, reached({ isSuperUser: false }));
+    check('L1 a website admin: the neutral cause in the count line', s.nc,
+        '3 addresses cannot be checked from the Matomo server (checks switched off) and do not count as outages.');
+    // the answer line names the cause (Matomo without results from outside, no container: the common case): it is the
+    // one place; the count line does not repeat it, the website's cells leave it out, also an address the outside has
+    // no answer for (one line: "Not checkable from the Matomo server"). Guards: causes that differ; one side only (P3
+    // keeps the cell's cause)
+    s = await mounted(browser, scenario({ status: { 0: ['ui', 'tracker', 'js'].map((k) => off(k, k, MATOMO_URL + k)),
+        1: [off(WEB, 'web', 'https://www.example.com/', { outside: 'up' })] }, config: { internetOff: true, external: ACTIVE } }));
+    check('L1 the answer line names it: the count line not again, the sub-row only Not checkable',
+        [texts(s)[0], s.nc, s.subRows.map((r) => r.slice(0, 2))], ['Matomo: Not checkable from the Matomo server (' + CAUSE + ')',
+            '3 addresses cannot be checked from the Matomo server and do not count as outages.',
+            [['Outside', '118 ms'], ['Matomo server', 'Not checkable']]]);
+    s = await mounted(browser, scenario({ status: { 0: ['ui', 'tracker', 'js'].map((k) => off(k, k, MATOMO_URL + k)),
+        1: [off(WEB, 'web', 'https://www.example.com/', { outside: 'up' }), off('web:a', 'web', 'https://a.example.com/', { outside: 'up' }),
+            off('web:b', 'web', 'https://b.example.com/', { outside: 'up' }), off('web:c', 'web', 'https://c.example.com/')] },
+    config: { internetOff: true, external: ACTIVE } }));
+    const shownTexts = [].concat(s.rows.map((r) => r.join(' ')), s.subRows.map((r) => r.join(' ')));
+    check('L1 the answer line names it: once on the screen, the count line not again, no cell repeats it',
+        [texts(s).filter((t) => t.indexOf(CAUSE) >= 0).length, shownTexts.filter((t) => t.indexOf(CAUSE) >= 0).length, s.nc],
+        [1, 0, '4 addresses cannot be checked from the Matomo server and do not count as outages.']);
+    check('L1 the answer line names it: the website\'s server sub-rows Not checkable, its one-line cell names the server',
+        [s.subRows.map((r) => r[1]).filter((t, i) => i % 2 === 1), s.rows.find((r) => /c\.example/.test(r[1]))[2],
+            s.subTitles.map(first).filter((t, i) => i % 2 === 1)],
+        [Array(3).fill('Not checkable'), 'Not checkable from the Matomo server', Array(3).fill(SERVER_CAUSE)]);
+    const nc = (key, url, note, extra) => target(key, key, url, 'not_checkable', Object.assign({ error: note ? null : 'connect', note }, extra));
+    s = await mounted(browser, scenario({ status: { 0: [nc('ui', MATOMO_URL + 'ui', 'php_disabled'), nc('tracker', MATOMO_URL + 'tracker', null),
+        nc('js', MATOMO_URL + 'js', 'php_disabled')], 1: [target(WEB, 'web', 'https://www.example.com/', 'up', { outside: 'up' })] },
+    config: { external: ACTIVE } }));
+    check('L1 guard: causes that differ, the count line without a cause, each cell its own', [s.nc, s.rows.slice(0, 3).map((r) => r[2])],
+        ['3 addresses cannot be checked from the Matomo server and do not count as outages. Why? Allow private addresses',
+            ['Not checkable from the Matomo server: PHP functions disabled', 'Not checkable from the Matomo server',
+                'Not checkable from the Matomo server: PHP functions disabled']]);
+    const IDN = 'web:xn';
+    s = await mounted(browser, scenario({ status: { 0: matomoTargets(), 1: [target(WEB, 'web', 'https://www.example.com/', 'up'),
+        target(IDN, 'web', 'https://日本.example/', 'not_checkable', { error: null, note: 'needs_intl' })] } }));
+    check('L1 guard: one side only, the cell keeps its cause (P3), the count line as before', [s.rows.find((r) => /日/.test(r[1]))[2], s.nc],
+        ['Not checkable: needs PHP intl', '1 address cannot be checked from this server and does not count as an outage. Why?']);
+
+    // L2: the page's opt-in line is the admin page's chip, for super users on the page only; L3 its Copy has its own
+    // name and a polite region says Copied
+    const allOff = { 0: ['ui', 'tracker', 'js'].map((k) => off(k, k, MATOMO_URL + k)), 1: [off(WEB, 'web', 'https://www.example.com/')] };
+    s = await mounted(browser, scenario({ status: allOff, config: { internetOff: true } }));
+    check('L2 the page: the hint ends with the line, then the chip', [s.internet, s.pageChips], [[
+        'The Matomo server sends no checks: Matomo\'s internet features are switched off ([General] enable_internet_features = 0).',
+        'For the server administrator: switch Matomo\'s internet features on, or let only these checks send requests while Matomo\'s other '
+            + 'internet features stay off. For that, add this line to the section [FeinwerkUptimeMonitor] in config/config.ini.php (create the '
+            + 'section if it is missing):'],
+    [['checkWithInternetFeaturesOff = 1', 'Copy', 'Copy checkWithInternetFeaturesOff = 1']]]);
+    check('L3 the page: an empty polite region before the click', s.pageLive, [['polite', '']]);
+    s = await mounted(browser, scenario({ status: allOff, config: { internetOff: true } }), 'copy');
+    check('L3 the page: Copy copies the line, its button and the region say Copied', [s.copiedText, (s.pageChips[0] || [])[1], s.pageLive],
+        ['checkWithInternetFeaturesOff = 1', 'Copied', [['polite', 'Copied']]]);
+    s = await mounted(browser, scenario({ status: allOff, config: { internetOff: true, isSuperUser: false } }));
+    check('L2 guard: a website admin gets no chip', [s.internet.length, s.pageChips], [1, []]);
+    s = await mounted(browser, scenario({ width: 300, status: allOff, config: { internetOff: true, variant: 'site' } }));
+    check('L2 guard: no chip in a widget', s.pageChips, []);
+
+    // L3 on the admin page: three chips, three names; Copied for the clicked one, announced again on a second click
+    const site = (idSite, name, counts) => Object.assign({ idSite, name, timezone: 'UTC', targets: 1, off: 0, up: 0, down: 0,
+        notCheckable: 0, stale: 0, lastCheckedAt: CHECKED, certificateDaysLeft: null, certificateLevel: null, containersDown: [] }, counts);
+    const up = [site(0, 'Matomo', { targets: 3, up: 3 }), site(1, 'Shop', { up: 1 })];
+    const every = { internetOff: true, httpsRedirect: true, cron: { active: false, intervalSeconds: 0 } };
+    s = await admin(browser, { overview: up, config: every });
+    check('L3 the admin page: each Copy named with its line', s.copyNames,
+        ['Copy checkWithInternetFeaturesOff = 1', 'Copy assume_secure_protocol = 1', 'Copy * * * * * php console']);
+    check('L3 the admin page: an empty polite region per chip before a click', s.copyLive, Array(3).fill(['polite', '']));
+    s = await admin(browser, { overview: up, config: every }, 'copy:https');
+    check('L3 the admin page: Copied for the https line only, announced', [s.copiedText, s.copyButtons, s.copyLive],
+        ['assume_secure_protocol = 1', ['Copy', 'Copied', 'Copy'], [['polite', ''], ['polite', 'Copied'], ['polite', '']]]);
+    s = await admin(browser, { overview: up, config: every }, 'copy2:internet');
+    const seen = s.liveSeen || [];
+    check('L3 a second click announces Copied again', [seen.slice(-1), seen.indexOf('') >= 0], [['Copied'], true]);
+
+    // L4: the short cause a phrase as in the other languages; the cron hint in the server administrator's voice
+    s = await mounted(browser, scenario({ status: allOff, config: { internetOff: true } }));
+    check('L4 the short cause', texts(s)[0], 'Matomo: Not checkable from this server (' + CAUSE + ')');
+    s = await admin(browser, { overview: up, config: { cron: { active: false, intervalSeconds: 0 } } });
+    check('L4 the cron hint for the server administrator', s.cronRow[2][0], 'Without a cron of its own, the checks run with Matomo\'s '
+        + 'hourly tasks, and alerts can come up to two hours late. For the server administrator: for checks every minute, add this line to '
+        + 'the cron of the Matomo server (as the user that runs Matomo\'s other cron jobs).');
+}
+
 /** a dashboard of frames as Matomo builds them; the apps mount into their .widgetContent */
 const DASHBOARD = (ids) => '<div id="dashboardWidgetsArea"><div class="col">' + ids.map((id) => '<div class="sortable" widgetId="'
     + id + '"><div class="widget"><div class="widgetTop"></div><div class="widgetContent"></div></div></div>').join('')
@@ -1855,6 +2544,10 @@ async function cardItself(browser) {
         await final530(browser);
         await adminPage(browser);
         await figuresAndReasons(browser);
+        await robustness1(browser);
+        await design540(browser);
+        await fixes540(browser);
+        await final540(browser);
         await card(browser);
         await cardItself(browser);
     } catch (e) {

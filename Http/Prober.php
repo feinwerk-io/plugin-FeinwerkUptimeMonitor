@@ -12,13 +12,15 @@ namespace Piwik\Plugins\FeinwerkUptimeMonitor\Http;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Kind;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Outcome;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\ProbeResponse;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Check\ResponseClassifier;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Target;
 
 /**
  * Sends one GET per target, several side by side (spec 6.1): no cookies, no credentials, no proxy from the
  * environment, the connection pinned to the addresses the guard approved, at most 256 KB of the body kept, redirects
  * followed by hand (each hop through the guard) and only for websites and the Matomo interface, 10 seconds in all per
- * check including its redirects.
+ * check including its redirects. Every kind follows one redirect to its own address with https (Matomo stored as http
+ * behind a proxy that handles https; ResponseClassifier::isHttpsUpgrade(), note https_redirect).
  *
  * Targets go in batches: the guard resolves a batch's hosts before any of its transfers starts, so a slow DNS server
  * never eats into the time of other checks. A batch only starts before the deadline; what is left is not measured.
@@ -26,7 +28,8 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Target;
  * Side by side through curl_multi where PHP has all its functions; where a host disabled one (often curl_multi_exec,
  * through php.ini disable_functions) the same transfers run one after the other through curl_exec, one target per
  * batch, so each starts only before the deadline. Without either, no request is sent and every check ends as
- * Outcome::PHP_DISABLED (not checkable), never as an error (Capabilities).
+ * Outcome::PHP_DISABLED (not checkable), never as an error (Capabilities). While Matomo's internet features are off
+ * (without the opt-in, Runner\InternetAccess) nothing is looked up or sent either: Outcome::INTERNET_OFF.
  */
 final class Prober
 {
@@ -50,13 +53,31 @@ final class Prober
     private const TLS_ERRORS = [35, 51, 53, 54, 58, 59, 60, 64, 66, 77, 80, 82, 83, 90, 91];
     private const CURLE_COULDNT_RESOLVE_PROXY = 5;
     private const CURLE_RECV_ERROR = 56;
+    /** libcurl 7.59.0: several addresses in one CURLOPT_RESOLVE entry */
+    private const CURL_RESOLVE_LISTS = 0x073B00;
 
     private static int $pins = 0;
 
     /**
+     * the hosts and ports ("host:port") whose certificate Matomo's bundle could not verify for a trust anchor problem
+     * (TrustFile::secondTry()): their later transfers in this prober's run (other targets, redirect hops, the run's
+     * retry phase) verify with the server's trust store at once (L8 review of 5.4.0, SHOULD 2); another port of the host
+     * keeps the bundle, its certificate can be another (review of the 5.4.0 fixes, NIT 2)
+     *
+     * @var array<string, true>
+     */
+    private array $systemHosts = [];
+
+    /**
      * @param array $proxy Matomo's [proxy] settings: host, port, username, password, exclude (empty: no proxy)
-     * @param string|null $caInfo CA bundle file (Matomo's own), null: the system's
+     * @param string|null $caInfo CA file to verify with (TrustFile::choose(): custom_cacert_pem or Matomo's bundle), null:
+     *                            the server's trust store
      * @param Capabilities|null $capabilities the PHP functions there are; default PHP's function_exists
+     * @param bool $systemRetry a verification that fails with $caInfo for a trust anchor problem (TrustFile::secondTry():
+     *                          an issuer it lacks, a self-signed certificate or root) is tried once more with the
+     *                          server's trust store, within the check's 10 seconds; the failed handshake is not part of
+     *                          the reported response time (Matomo's bundle: an internal CA or a self-signed certificate
+     *                          only in the trust store)
      */
     public function __construct(
         private UrlGuard $guard,
@@ -66,7 +87,8 @@ final class Prober
         private int $totalTimeoutMs = 10000,
         private int $parallel = 8,
         private ?string $caInfo = null,
-        private ?Capabilities $capabilities = null
+        private ?Capabilities $capabilities = null,
+        private bool $systemRetry = false
     ) {
         $this->capabilities ??= new Capabilities();
     }
@@ -78,6 +100,15 @@ final class Prober
     public function transport(): ?string
     {
         return $this->capabilities->transport();
+    }
+
+    /**
+     * Whether requests may go out at all: false while Matomo's internet features are off without the opt-in
+     * (Capabilities::internetAllowed()); every check then ends as Outcome::INTERNET_OFF without a lookup.
+     */
+    public function internetAllowed(): bool
+    {
+        return $this->capabilities->internetAllowed();
     }
 
     /**
@@ -115,9 +146,15 @@ final class Prober
 
         $queue = [];
         foreach ($targets as $target) {
-            $queue[] = ['target' => $target, 'url' => $target->url, 'hops' => 0, 'spent' => 0, 'cert' => null, 'dns' => null];
+            // spent: the milliseconds reported so far (lookups, earlier hops); used: the real time of the check's 10
+            // seconds so far (the waits, also a failed first try with Matomo's bundle, which is not reported; not the
+            // time of a lookup this run made before)
+            $queue[] = ['target' => $target, 'url' => $target->url, 'hops' => 0, 'spent' => 0, 'used' => 0, 'cert' => null, 'dns' => null];
         }
         $transport = $this->transport();
+        // nothing goes out, without a lookup: Matomo's internet features are off (first: whatever PHP has), or no
+        // request can go out from this PHP
+        $nothingSent = !$this->capabilities->internetAllowed() ? Outcome::INTERNET_OFF : ($transport === null ? Outcome::PHP_DISABLED : null);
         // one after the other: one target per batch, so that each one starts only before the deadline
         $batch = $transport === Capabilities::SEQUENTIAL ? 1 : max(1, $this->parallel * 2);
         while ($queue !== [] && microtime(true) < $deadline) {
@@ -125,10 +162,10 @@ final class Prober
                 $beforeBatch(); // e.g. keep the run's lock alive
             }
             $pending = array_splice($queue, 0, $batch);
-            if ($transport === null) {
-                // no request can go out from this PHP: not checkable, without a lookup
+            if ($nothingSent !== null) {
+                // not checkable, the note says why
                 foreach ($pending as $state) {
-                    $finish($state, self::failure($state, Outcome::PHP_DISABLED));
+                    $finish($state, self::failure($state, $nothingSent));
                 }
                 continue;
             }
@@ -178,6 +215,17 @@ final class Prober
     {
         $ready = [];
         foreach ($states as $state) {
+            if (!empty($state['system'])) {
+                // the second try with the server's trust store: the same hop, the same approved addresses; it belongs to
+                // its check and runs also after the deadline
+                if ($state['used'] >= $this->totalTimeoutMs) {
+                    $finish($state, self::failure($state, Outcome::TIMEOUT));
+                } else {
+                    $ready[] = $state;
+                }
+                continue;
+            }
+            // a check starts only before the deadline; its redirect hops belong to it and run on
             if ($state['hops'] === 0 && microtime(true) >= $deadline) {
                 continue; // slow DNS ate the budget: not measured in this run
             }
@@ -187,20 +235,27 @@ final class Prober
             $decision = $proxied
                 ? $this->guard->checkWithoutResolving($state['url'], $instance)
                 : $this->guard->check($state['url'], $instance);
-            $state['dns'] ??= $decision->lookupMs;
-            // the lookup counts towards the check's 10 seconds
-            $state['spent'] += $decision->lookupMs;
+            // through the proxy the lookup here only serves the private-address check and the proxy resolves (audit
+            // D1): its time is no DNS time of the check, counts not towards the 10 seconds and is no DNS failure. On
+            // the direct way a check's first hop reports its lookup's time also when an earlier check of the run looked
+            // the host up (as when each looked it up itself; L8 review of 5.4.0, NIT 6); only the time waited now
+            // counts towards the 10 seconds and the rule below, so one slow answer fails no other check
+            $lookupMs = $proxied ? 0 : $decision->lookupMs;
+            $reportedMs = $proxied ? 0 : ($state['hops'] === 0 ? $decision->answerMs : $decision->lookupMs);
+            $state['dns'] ??= $reportedMs;
+            $state['spent'] += $reportedMs;
+            $state['used'] += $lookupMs;
             if (!$decision->allowed) {
                 $finish($state, self::failure($state, $decision->reason ?? Outcome::BLOCKED));
                 continue;
             }
-            if ($decision->lookupMs * 2 >= $this->totalTimeoutMs) {
+            if ($lookupMs * 2 >= $this->totalTimeoutMs) {
                 // a lookup that took half the check time or more is the resolver's problem, not a slow website: the
                 // rest of the time would end in a timeout that reads as an outage
                 $finish($state, self::failure($state, Outcome::DNS));
                 continue;
             }
-            if ($state['spent'] >= $this->totalTimeoutMs) {
+            if ($state['used'] >= $this->totalTimeoutMs) {
                 $finish($state, self::failure($state, Outcome::TIMEOUT));
                 continue;
             }
@@ -225,7 +280,7 @@ final class Prober
 
         while ($states !== [] || $active !== []) {
             while ($states !== [] && count($active) < $this->parallel) {
-                $state = array_shift($states);
+                $state = $this->withTrust(array_shift($states));
                 $sink = new \stdClass();
                 $sink->body = '';
                 $sink->capped = false;
@@ -269,6 +324,7 @@ final class Prober
     {
         $next = [];
         foreach ($states as $state) {
+            $state = $this->withTrust($state);
             $sink = new \stdClass();
             $sink->body = '';
             $sink->capped = false;
@@ -285,26 +341,57 @@ final class Prober
     }
 
     /**
-     * A transfer is done: finishes the state, or returns its next redirect hop (websites and the Matomo interface, up
-     * to MAX_REDIRECTS).
+     * Which CA file the transfer of a state verifies with, decided when it starts: 'bundle' true for $caInfo, false for
+     * the server's trust store (none set; also for the second try, and for a host whose certificate the bundle could
+     * not verify for a trust anchor problem earlier in this run).
+     */
+    private function withTrust(array $state): array
+    {
+        $state['bundle'] = $this->caInfo !== null && empty($state['system'])
+            && !($this->systemRetry && isset($this->systemHosts[self::hostPort($state['decision'])]));
+
+        return $state;
+    }
+
+    /** the key of $systemHosts: one certificate per host and port */
+    private static function hostPort(GuardDecision $decision): string
+    {
+        return $decision->host . ':' . $decision->port;
+    }
+
+    /**
+     * A transfer is done: finishes the state, or returns its second try with the server's trust store or its next
+     * redirect hop (websites and the Matomo interface, up to MAX_REDIRECTS).
      *
      * @param \CurlHandle $handle
      */
     private function finished($handle, int $result, \stdClass $sink, array $state, \Closure $finish): ?array
     {
         $response = $this->response($handle, $result, $sink, $state);
+        if ($this->systemRetry && $state['bundle']
+            && TrustFile::secondTry($result, (int) curl_getinfo($handle, CURLINFO_SSL_VERIFYRESULT), $this->capabilities->tlsLibrary())
+        ) {
+            // the same hop once more, verified by the server's trust store instead of Matomo's bundle, and the host's
+            // later transfers of this run start there. The 10 seconds go on (this attempt's time is used), the
+            // reported times are the second try's alone (L8 review of 5.4.0, SHOULD 2)
+            $this->systemHosts[self::hostPort($state['decision'])] = true;
+
+            return ['system' => true, 'used' => $state['used'] + $response->timings['total'] - $state['spent']] + $state;
+        }
         $redirect = curl_getinfo($handle, CURLINFO_REDIRECT_URL);
 
         if ($response->error === null && $response->status >= 300 && $response->status < 400
             && is_string($redirect) && $redirect !== ''
-            && in_array($state['target']->kind, self::FOLLOWS_REDIRECTS, true)
-            && $state['hops'] < self::MAX_REDIRECTS
+            && ((in_array($state['target']->kind, self::FOLLOWS_REDIRECTS, true) && $state['hops'] < self::MAX_REDIRECTS)
+                // every kind: one hop to the same address with https (Matomo stored as http behind a TLS proxy, D2)
+                || ($state['hops'] === 0 && ResponseClassifier::isHttpsUpgrade(self::withHost($state['url'], $state['decision']->host), $redirect)))
         ) {
             return [
                 'target' => $state['target'],
                 'url' => $redirect,
                 'hops' => $state['hops'] + 1,
                 'spent' => $response->timings['total'],
+                'used' => $state['used'] + $response->timings['total'] - $state['spent'],
                 'cert' => $response->certNotAfter,
                 'dns' => $state['dns'],
             ];
@@ -321,7 +408,7 @@ final class Prober
     {
         /** @var GuardDecision $decision */
         $decision = $state['decision'];
-        $remaining = max(1, $this->totalTimeoutMs - $state['spent']);
+        $remaining = max(1, $this->totalTimeoutMs - $state['used']);
         $handle = curl_init();
         $cap = in_array($state['target']->kind, [Kind::UI, Kind::CONTAINER], true) ? self::MAX_BODY_LARGE : self::MAX_BODY;
         $options = [
@@ -365,7 +452,9 @@ final class Prober
                 return strlen($line);
             },
         ];
-        if ($this->caInfo !== null && is_file($this->caInfo)) {
+        // the second try (systemRetry), and a host the bundle could not verify before, leave the CA file to the
+        // server's trust store (withTrust())
+        if ($state['bundle']) {
             $options[CURLOPT_CAINFO] = $this->caInfo;
         }
         if ($state['proxied']) {
@@ -382,9 +471,15 @@ final class Prober
             // getmypid is on some hosts' list of disabled functions
             $pid = $this->capabilities->has('getmypid') ? getmypid() : mt_rand();
             $pin = 'fwum-pin-' . (++self::$pins) . '-' . $pid . '.invalid';
+            $ips = $decision->ips;
+            if ($this->capabilities->curlVersion() < self::CURL_RESOLVE_LISTS && count($ips) > 1) {
+                // libcurl before 7.59.0 drops a list in one CURLOPT_RESOLVE entry (audit T2): one address, IPv4 first
+                $ipv4 = array_values(array_filter($ips, static fn(string $ip): bool => (bool) filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)));
+                $ips = [$ipv4[0] ?? $ips[0]];
+            }
             $addresses = array_map(
                 static fn(string $ip): string => filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? '[' . $ip . ']' : $ip,
-                $decision->ips
+                $ips
             );
             $options[CURLOPT_CONNECT_TO] = ['::' . $pin . ':'];
             $options[CURLOPT_RESOLVE] = [$pin . ':' . $decision->port . ':' . implode(',', $addresses)];

@@ -9,10 +9,16 @@
     [class^="icon-"] { font-size: 16px; line-height: 1.4; flex: none; }
     .is-ok [class^="icon-"] { color: var(--fwum-up, #1b7f3b); }
     .is-warn [class^="icon-"] { color: var(--fwum-warn, #8a5a00); }
+    // an information, not a warning (UI review of 5.4.0, B4; Matomo's System Check keeps them apart)
+    .is-info [class^="icon-"] { color: var(--fwum-muted, #616161); }
   }
+  // P2 (UI review of 5.4.0): a chip under its hint, apart from the sentence that may follow it
+  .fwum-checks .fwum-chip { margin: 2px 0 6px; }
+  // L8: the line under the cron chip while nothing is sent
+  .fwum-checks .fwum-cron + p { margin-top: 6px; }
   // the Copy button starts at the line's left edge when it wraps under the cron line (phones)
   @media (max-width: 600px) {
-    .fwum-cron { column-gap: 16px; }
-    .fwum-cron .btn-flat { padding-left: 0; padding-right: 0; }
+    .fwum-cron, .fwum-chip { column-gap: 16px; }
+    .fwum-cron .btn-flat, .fwum-chip .btn-flat { padding-left: 0; padding-right: 0; }
   }
 }

@@ -12,7 +12,9 @@
   Screen readers read each cell's text from the list, "not yet" for the cells after now. The
   small strip of the widgets has a small axis too (L11). P1 (Peter, 2026-11-26, "1a"): with results
   from outside the page draws a group's strip from outside as a thin lane under it (lane), the same
-  cells, and only the last strip of the page carries the time axis (axis).
+  cells, and only the last strip of the page carries the time axis (axis). Review of the 5.4.0
+  fixes: the last cell lasts up to the API's end (a Sunday of 23 or 25 hours at a week's end), and
+  on a fall-back day the hour that repeats names its zone ("2:00 AM GMT+2", "2:00 AM GMT+1").
 -->
 <template>
   <div
@@ -60,7 +62,7 @@ import { defineComponent, PropType } from 'vue';
 import { translate } from 'CoreHome';
 import { TimelineCell } from './types';
 import {
-  dayOf, hourOf, percent, sharePercent,
+  dayOf, hourOf, percent, sharePercent, zoneNameOf,
 } from './format';
 import { elapsedSeconds } from './timeline';
 
@@ -84,6 +86,8 @@ export default defineComponent({
     axis: { type: Boolean, default: true },
     /** the screen's clock (ms), so that the running cell's length follows it; 0: Date.now() */
     now: { type: Number, default: 0 },
+    /** the end of the last cell (getTimeline end, ISO): its length; '' a whole hour or day */
+    end: { type: String, default: '' },
   },
   data() {
     return {
@@ -122,17 +126,22 @@ export default defineComponent({
     },
     times(): string[] {
       const withDay = this.grain === 'hour' && this.cells.length > 25;
-      return this.cells.map((cell) => {
+      const labels = this.cells.map((cell) => {
         if (this.grain !== 'hour') {
           return dayOf(cell.time, this.language, this.zone);
         }
         const hour = hourOf(cell.time, this.language, this.zone);
         return withDay ? `${dayOf(cell.time, this.language, this.zone)}, ${hour}` : hour;
       });
+      // the hour a fall-back day has twice: both with the zone's short name (tooltip, screen
+      // readers, axis)
+      return labels.map((label, i) => (this.grain === 'hour'
+        && (labels[i - 1] === label || labels[i + 1] === label)
+        ? `${label} ${zoneNameOf(this.cells[i].time, this.language, this.zone)}`.trim() : label));
     },
     texts(): string[] {
       // the cell's length: up to the next cell, the running one up to now
-      const lengths = elapsedSeconds(this.cells, this.grain, this.now || Date.now());
+      const lengths = elapsedSeconds(this.cells, this.grain, this.now || Date.now(), this.end);
       return this.cells.map((cell, i) => {
         if (cell.state === 'future') {
           return translate('FeinwerkUptimeMonitor_UiStripCellFuture', this.times[i]);

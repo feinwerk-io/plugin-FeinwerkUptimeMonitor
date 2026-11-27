@@ -143,7 +143,37 @@ tracker_timing_sample = 100    ; measure 1 in this many tracking requests; 0 swi
 ```
 
 Certificates are verified like Matomo's own requests: with the file in `[General] custom_cacert_pem` when it is set
-(for example behind a proxy that inspects TLS), otherwise with the server's trust store.
+(for example behind a proxy that inspects TLS), otherwise with the CA file that comes with Matomo, so the checks also
+work on servers whose own trust store is missing or outdated. When Matomo's file does not contain the CA that issued a
+certificate, or the certificate is self-signed, the check tries once more with the server's own trust store, so an
+internal CA or a self-signed certificate installed only there keeps working; the response time is then that of the
+second try. Expired, not yet valid and revoked certificates, and certificates for another host name, are reported as
+TLS errors, whichever trust store is used. Certificates and host names are always verified, on the second try too.
+
+### Matomo's internet features
+
+When Matomo's internet features are switched off (`enable_internet_features = 0` in `[General]`), the plugin sends no
+checks at all: no DNS lookups, no requests, no certificate checks. Every address then reads "not checkable" with the
+note `internet_off`, and Visitors > Uptime and the admin page name the setting (to super users; everyone else reads
+that the checks are switched off). To check your addresses anyway, for
+example in an intranet, add this to `config/config.ini.php` (config file only; when the file has a
+`[FeinwerkUptimeMonitor]` section already, add only the second line to it, since a second section of the same name
+replaces the first):
+
+```
+[FeinwerkUptimeMonitor]
+checkWithInternetFeaturesOff = 1
+```
+
+### Addresses with special characters, and Matomo behind a proxy
+
+Website addresses with umlauts are checked under their ASCII name (punycode), and exactly that name is requested.
+Without PHP's intl extension only Latin letters with common accents are converted; other characters (other scripts,
+full-width letters) then read "not checkable" with the note `needs_intl`.
+
+When Matomo's address is stored with http and the web server redirects it to https (Matomo behind a proxy that
+handles https), the tracker endpoint, the JavaScript tracker and the containers follow that one redirect (note
+`https_redirect`), and the admin page suggests `assume_secure_protocol = 1` in `[General]`.
 
 The tracker's response time is measured on a sample of real tracking requests: one in 100 by default, with one small
 database write per sampled request. With the plugin QueuedTracking it shows the time until a request is queued.
@@ -180,7 +210,11 @@ of `getSitesOverview` the level of its soonest certificate (`certificateLevel`: 
 address while private addresses are not allowed in the settings): such an address is not checkable from the moment it
 is set. For super users it also names the PHP functions the latest check run did not find (`disabledPhpFunctions`, for
 example `curl_exec` on a server whose php.ini lists it under `disable_functions`): until they are allowed again, the
-addresses with the note `php_disabled` cannot be checked.
+addresses with the note `php_disabled` cannot be checked. `internetFeaturesOff` is true while Matomo's internet
+features are switched off and `checkWithInternetFeaturesOff` is not set: no checks are sent, and the addresses carry
+the note `internet_off`. An outage that is open when the checks stop sending (notes `internet_off`, `php_disabled` or
+`needs_intl`) ends at its last failed check in `getIncidents`, not at the time of a check that sent nothing.
+`detectTargets` names why the website's main page could not be read (`readError`).
 
 | Method | Example |
 |---|---|

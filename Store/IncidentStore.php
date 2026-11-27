@@ -15,7 +15,8 @@ use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Outcome;
 
 /**
  * Outages (per target and source) and gaps without any measurement (instance wide, idtarget 0). An outage opens on
- * the first `down` and closes on the next `up`; `not_checkable` neither opens nor closes one.
+ * the first `down` and closes on the next `up`; `not_checkable` neither opens nor closes one, except a result of the
+ * server that sent nothing: the server's open outage then ends at its last failing check (endAtLastFailure()).
  */
 final class IncidentStore
 {
@@ -114,6 +115,30 @@ final class IncidentStore
             . ' WHERE ended_at IS NULL AND idtarget IN (' . Sql::placeholders($idTargets) . ')'
             . ($source !== null ? ' AND source = ?' : ''),
             array_merge([$at], $idTargets, $source !== null ? [$source] : [])
+        );
+    }
+
+    /**
+     * Ends the server's open outages of targets whose latest check sent nothing (Outcome::NOTHING_SENT: Matomo's
+     * internet features off, PHP functions disabled, a name that needs PHP intl): these addresses are no longer checked
+     * from here, so the outage is over for this plugin instead of growing for as long as nothing is sent. It ends at its
+     * last check that found the target down (quick UI review before 5.4.0, Q1): a run that sends nothing is no check and
+     * never moves an outage's end. Without such a check (raw checks are kept 14 days) at its start. One UPDATE; the
+     * check table's (idtarget, checked_at) key serves the lookup.
+     *
+     * @param int[] $idTargets
+     */
+    public function endAtLastFailure(array $idTargets): void
+    {
+        if ($idTargets === []) {
+            return;
+        }
+        $checks = Schema::table(Schema::CHECK);
+        Db::query(
+            'UPDATE ' . self::table() . ' i SET i.ended_at = COALESCE((SELECT MAX(c.checked_at) FROM ' . $checks . ' c'
+            . ' WHERE c.idtarget = i.idtarget AND c.checked_at >= i.started_at AND c.outcome = ?), i.started_at)'
+            . ' WHERE i.ended_at IS NULL AND i.kind = ? AND i.source = ? AND i.idtarget IN (' . Sql::placeholders($idTargets) . ')',
+            array_merge([Outcome::DOWN, self::OUTAGE, StateStore::LOCAL], $idTargets)
         );
     }
 

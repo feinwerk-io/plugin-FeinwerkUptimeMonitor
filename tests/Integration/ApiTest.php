@@ -156,6 +156,8 @@ class ApiTest extends IntegrationTestCase
         $this->assertSame('2026-03-14T10:00:00Z', $status['targets'][0]['states']['local']['checkedAt']);
         $this->assertSame('ok', $status['targets'][0]['certificate']['level']);
         $this->assertArrayHasKey('samples', self::api('getStatus', ['idSite' => 0])['processing']);
+        // UI review of 5.4.0, L7: PHP's curl extension is installed here
+        $this->assertFalse($status['curlExtensionMissing']);
     }
 
     /** Review L8 #9: anonymous visitors of a public dashboard read their website, never Matomo's own health. */
@@ -1060,6 +1062,73 @@ class ApiTest extends IntegrationTestCase
         }
     }
 
+    /**
+     * A website in a zone with half or quarter hours and every UTC hour from the one before its day to the one after
+     * up, but the first and the last down.
+     *
+     * @return int the website's target id
+     */
+    private static function halfHourSite(string $zone, string $firstHour, int $hours): int
+    {
+        $idSite = Fixture::createWebsite('2026-01-01 00:00:00', 0, 'Zone ' . $zone, 'https://zone.example/', 1, null, null, $zone);
+        (new TargetStore())->setUrl($idSite, 'web:zone', Kind::WEB, 'https://zone.example/', TargetStore::SOURCE_MANUAL);
+        $id = (new TargetStore())->get($idSite, 'web:zone')->id;
+        $rows = [];
+        for ($i = 0; $i < $hours; $i++) {
+            $down = $i === 0 || $i === $hours - 1;
+            $rows[] = ['idtarget' => $id, 'hour' => gmdate('Y-m-d H:i:s', (int) strtotime($firstHour . ' UTC') + 3600 * $i),
+                'source' => StateStore::LOCAL, 'samples' => 60, 'up_samples' => $down ? 0 : 60, 'measured_seconds' => 3600,
+                'up_seconds' => $down ? 0 : 3600, 'ms_p50' => 80, 'ms_p95' => 90, 'ms_max' => 100, 'cert_not_after' => null];
+        }
+        (new RollupStore())->upsertHours($rows);
+
+        return $idSite;
+    }
+
+    /**
+     * Audit D4: a day in Asia/Kolkata (UTC+5:30), Asia/Kathmandu (+5:45) or Matomo's UTC+5.5 has 24 cells, one per
+     * local hour, not 25 UTC hours; the UTC hours at its edges count with the part inside the day only.
+     */
+    public function test_getTimeline_halfHourZones_oneCellPerLocalHour_edgeHoursByTheirPart(): void
+    {
+        foreach (['Asia/Kolkata' => '2026-03-13T18:30:00Z', 'Asia/Kathmandu' => '2026-03-13T18:15:00Z', 'UTC+5.5' => '2026-03-13T18:30:00Z'] as $zone => $start) {
+            $idSite = self::halfHourSite($zone, '2026-03-13 18:00:00', 25);
+            $day = self::api('getTimeline', ['idSite' => $idSite, 'period' => 'day', 'date' => '2026-03-14']);
+            $this->assertCount(24, $day['cells'], $zone);
+            $this->assertSame($start, $day['cells'][0]['time'], "$zone: the first cell starts at local midnight");
+            $this->assertSame(86400, array_sum(array_column($day['cells'], 'measuredSeconds')), "$zone: the day's own seconds");
+            $first = (int) strtotime($start) - (int) strtotime('2026-03-13 18:00:00 UTC');
+            // the first cell: the rest of the down UTC hour before it, then the start of the next, up hour
+            $this->assertSame([3600, $first, 'partial'], [$day['cells'][0]['measuredSeconds'], $day['cells'][0]['upSeconds'], $day['cells'][0]['state']],
+                "$zone: the down hour before midnight counts with its part after it");
+            $this->assertSame('up', $day['cells'][12]['state'], $zone);
+            $this->assertSame(86400 - 3600, array_sum(array_column($day['cells'], 'upSeconds')), "$zone: an hour of the two down ones lies inside the day");
+            // the week's local days split an hour across local midnight the same way
+            $days = array_column(self::api('getTimeline', ['idSite' => $idSite, 'period' => 'week', 'date' => '2026-03-14'])['cells'], null, 'time');
+            $this->assertSame([86400, 86400 - 3600], [$days[$start]['measuredSeconds'], $days[$start]['upSeconds']], "$zone: the 14th, its own seconds");
+            $before = gmdate('Y-m-d\TH:i:s\Z', (int) strtotime($start) - 86400);
+            $this->assertSame([$first, 0], [$days[$before]['measuredSeconds'], $days[$before]['upSeconds']], "$zone: the 13th, the part before midnight");
+        }
+    }
+
+    /** Audit D4: the day's uptime borrows no UTC hour from the days before and after. */
+    public function test_getUptime_halfHourZone_aDayCountsItsOwnSecondsOnly(): void
+    {
+        $idSite = self::halfHourSite('Asia/Kolkata', '2026-03-13 18:00:00', 25);
+        $row = array_column(self::api('getUptime', ['idSite' => $idSite, 'period' => 'day', 'date' => '2026-03-14']), null, 'targetKey')['web:zone'];
+        $this->assertSame([95.833, 100.0], [$row['uptimePercent'], $row['coveragePercent']], 'half an hour down on each edge: 1 h of 24');
+    }
+
+    /** Whole-hour zones keep their cells on the hour, also on a day with 23 hours (Berlin, start of summer time). */
+    public function test_getTimeline_wholeHourZone_dstDay_23CellsOnTheHour(): void
+    {
+        $idSite = Fixture::createWebsite('2026-01-01 00:00:00', 0, 'Berlin', 'https://berlin.example/', 1, null, null, 'Europe/Berlin');
+        $day = self::api('getTimeline', ['idSite' => $idSite, 'period' => 'day', 'date' => '2026-03-29']);
+        $this->assertCount(23, $day['cells']);
+        $this->assertSame(['2026-03-28T23:00:00Z', '2026-03-29T21:00:00Z'], [$day['cells'][0]['time'], $day['cells'][22]['time']]);
+        $this->assertSame('2026-03-29T22:00:00Z', $day['end'], 'the end of the last hour: the next local midnight');
+    }
+
     /** Hourly values are kept 90 days: an older day or week falls back to the UTC day rows, like the uptime figures. */
     public function test_getTimeline_withoutHourRows_usesDayRows_andRefusesHugePeriods(): void
     {
@@ -1071,6 +1140,8 @@ class ApiTest extends IntegrationTestCase
         $byDay = array_column($week['cells'], 'state', 'time');
         $this->assertSame('partial', $byDay['2026-03-14T00:00:00Z']);
         $this->assertSame('2026-03-14T00:00:00Z', $week['firstMeasured'], 'without hours: the start of the first UTC day');
+        $last = end($week['cells'])['time'];
+        $this->assertSame(gmdate('Y-m-d\TH:i:s\Z', (int) strtotime($last) + 86400), $week['end'], 'UTC days: the end of the last UTC day');
         $this->assertBadRequest('getTimeline', ['idSite' => 1, 'period' => 'range', 'date' => '2024-01-01,2026-03-14'], "'period'");
     }
 

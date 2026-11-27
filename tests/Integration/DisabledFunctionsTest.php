@@ -13,10 +13,13 @@ use Piwik\Config;
 use Piwik\Db;
 use Piwik\Option;
 use Piwik\Plugins\FeinwerkUptimeMonitor\API;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Check\CheckResult;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Kind;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Check\Outcome;
 use Piwik\Plugins\FeinwerkUptimeMonitor\FeinwerkUptimeMonitor;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Http\Capabilities;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Store\CheckStore;
+use Piwik\Plugins\FeinwerkUptimeMonitor\Store\IncidentStore;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\Schema;
 use Piwik\Plugins\FeinwerkUptimeMonitor\Store\TargetStore;
 use Piwik\Plugins\FeinwerkUptimeMonitor\SystemSettings;
@@ -203,6 +206,37 @@ class DisabledFunctionsTest extends IntegrationTestCase
         $this->assertSame([Outcome::DOWN, 500], [$results[DefaultTargets::webKey($down)]['outcome'], $results[DefaultTargets::webKey($down)]['httpStatus']]);
         $stored = array_column(API::getInstance()->getStatus(1)['targets'], null, 'targetKey')[DefaultTargets::webKey($down)];
         $this->assertSame(Outcome::DOWN, $stored['states']['local']['outcome'], 'stored');
+    }
+
+    /**
+     * Q1 (quick UI review before 5.4.0, decided under Peter's standing order): a run that sends nothing because the
+     * server's PHP has no way to send requests ends an open outage, as while Matomo's internet features are off, at its
+     * last check that found the address down: never open for as long as the functions stay disabled, never at the
+     * minute of the run that sent nothing.
+     */
+    public function test_anOpenOutage_endsAtItsLastFailingCheck_whenNothingCanBeSent(): void
+    {
+        $key = DefaultTargets::webKey(self::$base . '/page-proxy');
+        $idTarget = (new TargetStore())->get(1, $key)->id;
+        $now = time();
+        $first = gmdate('Y-m-d H:i:00', $now - 1200);
+        $last = gmdate('Y-m-d H:i:00', $now - 600);
+        foreach ([$first, $last] as $at) {
+            $down = new CheckResult($idTarget, Outcome::DOWN, Outcome::TIMEOUT, null, null, [], null, $at);
+            (new CheckStore())->insertMany([$down]);
+            (new IncidentStore())->apply([$down]);
+        }
+
+        self::$disabled = array_merge(DisabledFunctions::SHARED_HOST, ['curl_exec']);
+        $this->assertSame(Outcome::PHP_DISABLED, self::checkNow(1)[$key]['note']);
+
+        $outage = array_values(array_filter(
+            API::getInstance()->getIncidents(1, 'range', 'last2', 'all'),
+            static fn(array $i): bool => $i['targetKey'] === $key
+        ));
+        $iso = static fn(string $at): string => str_replace(' ', 'T', $at) . 'Z';
+        $this->assertSame([[$iso($first), $iso($last), false, 600]],
+            array_map(static fn(array $i): array => [$i['start'], $i['end'], $i['open'], $i['durationSeconds']], $outage));
     }
 
     /**

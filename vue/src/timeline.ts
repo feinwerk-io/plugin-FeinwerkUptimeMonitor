@@ -8,18 +8,33 @@
 import { Timeline, TimelineCell } from './types';
 
 /**
- * The seconds of each strip cell up to now: an hour, or a day up to the next cell's start (23 or
- * 25 hours on a clock change), the running cell up to now, a future cell none.
+ * The seconds of each strip cell up to now: up to the next cell's start (a day of 23 or 25 hours
+ * on a clock change), the last one up to the API's end (review of the 5.4.0 fixes, SHOULD 1: the
+ * Sunday that ends a week of a clock change), without it a whole hour or day; the running cell up
+ * to now, a future cell none.
+ *
+ * @param end the end of the last cell (getTimeline end, ISO); '' when not known
  */
-export function elapsedSeconds(cells: TimelineCell[], grain: string, now: number): number[] {
+export function elapsedSeconds(
+  cells: TimelineCell[],
+  grain: string,
+  now: number,
+  end = '',
+): number[] {
   const nominal = (grain === 'hour' ? 3600 : 86400) * 1000;
   const starts = cells.map((c) => new Date(c.time).getTime());
+  const last = end ? new Date(end).getTime() : NaN;
   return cells.map((cell, i) => {
     if (cell.state === 'future') {
       return 0;
     }
-    const end = i + 1 < starts.length ? starts[i + 1] : starts[i] + nominal;
-    return Math.max(0, (Math.min(end, now) - starts[i]) / 1000);
+    let stop = starts[i] + nominal;
+    if (i + 1 < starts.length) {
+      stop = starts[i + 1];
+    } else if (Number.isFinite(last) && last > starts[i]) {
+      stop = last;
+    }
+    return Math.max(0, (Math.min(stop, now) - starts[i]) / 1000);
   });
 }
 
@@ -56,7 +71,11 @@ export function combineTimelines(a: Timeline, b: Timeline): Timeline {
   });
   const firsts = [a.firstMeasured, b.firstMeasured].filter((t): t is string => !!t).sort();
   return {
-    grain: a.grain, days: a.days, cells, firstMeasured: firsts.length ? firsts[0] : null,
+    grain: a.grain,
+    days: a.days,
+    cells,
+    end: a.end,
+    firstMeasured: firsts.length ? firsts[0] : null,
   };
 }
 
@@ -74,7 +93,7 @@ export function stripTotals(
   now: number,
   targets = 1,
 ): { uptime: number | null; measured: number } {
-  const lengths = elapsedSeconds(timeline.cells, timeline.grain, now);
+  const lengths = elapsedSeconds(timeline.cells, timeline.grain, now, timeline.end || '');
   const count = Math.max(1, targets);
   let up = 0;
   let measured = 0;

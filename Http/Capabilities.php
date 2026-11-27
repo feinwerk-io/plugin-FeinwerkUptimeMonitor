@@ -39,13 +39,63 @@ final class Capabilities
 
     /** @var \Closure(string): bool */
     private \Closure $functionExists;
+    /** @var \Closure(string): bool */
+    private \Closure $extensionLoaded;
+    /** whether the checks may send requests at all (Matomo's internet features, Runner\InternetAccess) */
+    private bool $internet = true;
 
     /**
      * @param \Closure|null $functionExists (string $name): bool; default PHP's function_exists
+     * @param int|null $curlVersion libcurl's version number (0x073B00 = 7.59.0); default curl_version() (tests)
+     * @param string|null $tlsLibrary libcurl's TLS library ("OpenSSL/3.0.13"); default curl_version() (tests)
+     * @param \Closure|null $extensionLoaded (string $name): bool; default PHP's extension_loaded (tests)
      */
-    public function __construct(?\Closure $functionExists = null)
+    public function __construct(?\Closure $functionExists = null, private ?int $curlVersion = null, private ?string $tlsLibrary = null,
+        ?\Closure $extensionLoaded = null)
     {
         $this->functionExists = $functionExists ?? static fn(string $name): bool => function_exists($name);
+        $this->extensionLoaded = $extensionLoaded
+            ?? static fn(string $name): bool => !function_exists('extension_loaded') || extension_loaded($name);
+    }
+
+    /** libcurl's version number (0x073B00 is 7.59.0); 0 when it cannot be read. */
+    public function curlVersion(): int
+    {
+        if ($this->curlVersion === null) {
+            $info = $this->has('curl_version') ? curl_version() : false;
+            $this->curlVersion = is_array($info) ? (int) ($info['version_number'] ?? 0) : 0;
+        }
+
+        return $this->curlVersion;
+    }
+
+    /** libcurl's TLS library as curl_version() names it ("OpenSSL/3.0.13"); '' when it cannot be read. */
+    public function tlsLibrary(): string
+    {
+        if ($this->tlsLibrary === null) {
+            $info = $this->has('curl_version') ? curl_version() : false;
+            $this->tlsLibrary = is_array($info) ? (string) ($info['ssl_version'] ?? '') : '';
+        }
+
+        return $this->tlsLibrary;
+    }
+
+    /**
+     * A copy that says whether the checks may send requests at all: false while Matomo's internet features are off and
+     * the opt-in is not set (Runner\InternetAccess, wired by CheckRunner::capabilities()). Without it: allowed.
+     */
+    public function withInternet(bool $allowed): self
+    {
+        $copy = clone $this;
+        $copy->internet = $allowed;
+
+        return $copy;
+    }
+
+    /** Whether the checks may send requests (DNS lookups, HTTP requests, TLS handshakes); see withInternet(). */
+    public function internetAllowed(): bool
+    {
+        return $this->internet;
     }
 
     public function has(string $name): bool
@@ -67,6 +117,15 @@ final class Capabilities
         }
 
         return $this->missing(self::CURL_SEQUENTIAL) === [] ? self::SEQUENTIAL : null;
+    }
+
+    /**
+     * Whether the curl functions the checks need are missing because PHP's curl extension is not installed, rather than
+     * switched off in php.ini (disable_functions): the admin's step differs (UI review of 5.4.0, L7).
+     */
+    public function curlMissing(): bool
+    {
+        return $this->missing(self::CURL) !== [] && !($this->extensionLoaded)('curl');
     }
 
     /**

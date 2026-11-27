@@ -174,6 +174,25 @@ class ProberTest extends TestCase
         $this->assertSame(200, $r->status);
     }
 
+    /**
+     * Audit T2: libcurl before 7.59.0 takes one address per CURLOPT_RESOLVE entry and drops a list (the pin name then
+     * goes to DNS: every name with A and AAAA records read as a DNS failure). There the pin is one address, IPv4 first.
+     */
+    public function test_oldLibcurl_pinsOneAddress_ipv4First(): void
+    {
+        $port = HttpFixtureServer::port();
+        $old = new Capabilities(null, 0x073A00);
+        $probe = static function (array $addresses, Capabilities $capabilities) use ($port) {
+            $guard = new AddressGuard(true, static fn(string $host): array => $host === 'pin.test' ? $addresses : []);
+            $prober = new Prober($guard, [], 'FeinwerkUptimeMonitor-Test', 500, 3000, 8, null, $capabilities);
+            return $prober->probeAll([new Target(1, 0, 'web1', Kind::WEB, "http://pin.test:$port/ok", 'default')], microtime(true) + 30)[1];
+        };
+        $this->assertSame(200, $probe(['2001:db8::1', '127.0.0.1'], $old)->status, 'the IPv4 address, not the list');
+        $this->assertSame(Outcome::CONNECT, $probe(['127.0.0.2', '127.0.0.1'], $old)->error, 'one address: no fallback to the second');
+        $this->assertSame(200, $probe(['127.0.0.2', '127.0.0.1'], new Capabilities(null, 0x073B00))->status, '7.59.0: the list');
+        $this->assertGreaterThanOrEqual(0x073B00, (new Capabilities())->curlVersion(), "this host's libcurl");
+    }
+
     public function test_lookupTakingHalfTheCheckTime_isADnsFailureNotATimeout(): void
     {
         $guard = new AddressGuard(true, static function (string $host): array {
@@ -302,9 +321,10 @@ class ProberTest extends TestCase
 
     /**
      * The name checked is the name fetched: curl gets the URL with the guard's ASCII host, on every hop and both ways.
-     * libcurl converts internationalised names by its own rules (libidn2), which differ from PHP's intl: for straße
-     * libidn2 gives xn--strae-oqa, intl's UTS46 strasse. Through Matomo's proxy the proxy resolves the name curl sends,
-     * and on the direct way the Host header and SNI carry it.
+     * libcurl converts internationalised names by its own rules (libidn2), which can differ from PHP's: before 5.4.0
+     * intl's transitional UTS46 gave strasse for straße where libidn2 gives xn--strae-oqa (now both nontransitional), and
+     * a full-width dot or letter is still mapped by one and refused by the other. Through Matomo's proxy the proxy
+     * resolves the name curl sends, and on the direct way the Host header and SNI carry it.
      *
      * @param string[] $checked the names the guard looked up
      */
@@ -333,9 +353,9 @@ class ProberTest extends TestCase
         $proxied = static::prober($this->idnGuard($checked), 2000, 5000, 8, ['host' => '127.0.0.1', 'port' => (string) HttpFixtureServer::port()])
             ->probeAll([new Target(1, 1, 'web1', Kind::WEB, 'http://straße.test/host?a=1', 'default'),
                 new Target(2, 1, 'web2', Kind::WEB, 'http://Müller.test/host', 'default')], microtime(true) + 30);
-        $this->assertSame('strasse.test http://strasse.test/host?a=1', $proxied[1]->body, 'the proxy gets the checked name');
+        $this->assertSame('xn--strae-oqa.test http://xn--strae-oqa.test/host?a=1', $proxied[1]->body, 'the proxy gets the checked name');
         $this->assertSame('xn--mller-kva.test http://xn--mller-kva.test/host', $proxied[2]->body);
-        $this->assertSame(['strasse.test', 'xn--mller-kva.test'], $checked);
+        $this->assertSame(['xn--strae-oqa.test', 'xn--mller-kva.test'], $checked);
         $this->assertOnlyAscii($proxied);
     }
 
@@ -344,8 +364,8 @@ class ProberTest extends TestCase
         $checked = [];
         $port = HttpFixtureServer::port();
         $direct = static::prober($this->idnGuard($checked))->probeAll([new Target(3, 1, 'web3', Kind::WEB, "http://straße.test:$port/host", 'default')], microtime(true) + 30);
-        $this->assertSame("strasse.test:$port /host", $direct[3]->body, 'the Host header carries the checked name');
-        $this->assertSame(['strasse.test'], $checked);
+        $this->assertSame("xn--strae-oqa.test:$port /host", $direct[3]->body, 'the Host header carries the checked name');
+        $this->assertSame(['xn--strae-oqa.test'], $checked);
         $this->assertOnlyAscii($direct);
     }
 
@@ -354,8 +374,8 @@ class ProberTest extends TestCase
         $checked = [];
         $port = HttpFixtureServer::port();
         $r = static::prober($this->idnGuard($checked))->probeAll([new Target(4, 1, 'web4', Kind::WEB, self::$base . '/to-idn', 'default')], microtime(true) + 30)[4];
-        $this->assertSame([1, "strasse.test:$port /host"], [$r->redirects, $r->body], 'the hop to an internationalised name');
-        $this->assertSame(['strasse.test'], $checked);
+        $this->assertSame([1, "xn--strae-oqa.test:$port /host"], [$r->redirects, $r->body], 'the hop to an internationalised name');
+        $this->assertSame(['xn--strae-oqa.test'], $checked);
         $this->assertOnlyAscii([$r]);
     }
 
@@ -365,6 +385,209 @@ class ProberTest extends TestCase
         $this->assertSame('https://xn--mller-kva.test', Prober::withHost('https://Müller.test', 'xn--mller-kva.test'));
         $this->assertSame('https://[2001:db8::1]:8443/x', Prober::withHost('https://[2001:DB8::1]:8443/x', '2001:db8::1'));
         $this->assertSame('http://93.184.215.14/?q', Prober::withHost('http://93.184.215.14/?q', '93.184.215.14'));
+    }
+
+    /**
+     * [General] enable_internet_features = 0 (Peter's 2a): no lookup, no request, every check ends as internet_off,
+     * also where the PHP functions are missing (the switch decides first).
+     */
+    public function test_internetOff_sendsNothing_andLooksNothingUp(): void
+    {
+        $lookups = 0;
+        $guard = new AddressGuard(true, static function (string $host) use (&$lookups): array {
+            $lookups++;
+            return ['127.0.0.1'];
+        }, true);
+        $targets = [self::target(1, Kind::WEB, '/ok'), new Target(2, 0, 'web2', Kind::WEB, 'http://shop.test:' . HttpFixtureServer::port() . '/ok', 'default')];
+        foreach ([new Capabilities(), new Capabilities(DisabledFunctions::except(['curl_init']))] as $capabilities) {
+            $prober = new Prober($guard, [], 'FeinwerkUptimeMonitor-Test', 2000, 5000, 8, null, $capabilities->withInternet(false));
+            $responses = $prober->probeAll($targets, microtime(true) + 30);
+            $this->assertSame([1, 2], array_keys($responses));
+            foreach ($responses as $r) {
+                $this->assertSame([null, Outcome::INTERNET_OFF, ''], [$r->status, $r->error, $r->body]);
+            }
+            $this->assertFalse($prober->internetAllowed());
+        }
+        $this->assertSame(0, $lookups, 'not even a lookup');
+    }
+
+    /**
+     * Audit D1: through Matomo's [proxy] the lookup on this server only serves the private-address check, and the proxy
+     * resolves. A local resolver that drops queries (a network where only the proxy reaches the internet) neither
+     * counts into the check's 10 seconds nor makes the check a DNS failure, and each host is asked once per run.
+     */
+    public function test_proxied_aSilentResolver_isNoDnsFailure_theProxyResolves(): void
+    {
+        $lookups = [];
+        $guard = new AddressGuard(false, static function (string $host) use (&$lookups): array {
+            $lookups[] = $host;
+            usleep(1100000);
+            return [];
+        });
+        $proxy = ['host' => '127.0.0.1', 'port' => (string) HttpFixtureServer::port()];
+        $targets = [
+            new Target(1, 1, 'web1', Kind::WEB, 'http://www.shop.example/ok', 'default'),
+            new Target(2, 1, 'proxy', Kind::PROXY, 'http://www.shop.example/matomo.php', 'default'),
+            new Target(3, 2, 'web3', Kind::WEB, 'http://blog.example/ok', 'default'),
+        ];
+        $responses = static::prober($guard, 1000, 2000, 8, $proxy)->probeAll($targets, microtime(true) + 30);
+        foreach ($responses as $id => $r) {
+            $this->assertSame([200, null], [$r->status, $r->error], "target $id: through the proxy");
+            $this->assertLessThan(1000, $r->timings['total'], "target $id: the lookup is not the check's time");
+        }
+        $this->assertSame(['www.shop.example', 'blog.example'], $lookups, 'one wait per host and run, not per address or hop');
+    }
+
+    /** A proxied name whose lookup answers a private address stays refused, also when the answer was slow. */
+    public function test_proxied_slowLookupOfAPrivateAddress_staysBlocked(): void
+    {
+        $guard = new AddressGuard(false, static function (string $host): array {
+            usleep(1100000);
+            return ['10.0.0.5'];
+        });
+        $proxy = ['host' => '127.0.0.1', 'port' => (string) HttpFixtureServer::port()];
+        $r = static::prober($guard, 1000, 2000, 8, $proxy)->probeAll([new Target(1, 1, 'web1', Kind::WEB, 'http://intranet.shop.example/ok', 'default')], microtime(true) + 30)[1];
+        $this->assertSame([null, Outcome::BLOCKED], [$r->status, $r->error]);
+    }
+
+    /**
+     * L8 review of 5.4.0, NIT 6: a lookup this run made before still counts its time for each address of the host, as
+     * when every address looked the name up itself (5.3.3): the response times do not step down with the update, and
+     * the first address of a host does not look slower than its siblings.
+     */
+    public function test_direct_aCachedLookup_countsItsTimeForEachAddressOfTheHost(): void
+    {
+        $lookups = 0;
+        $guard = new AddressGuard(true, static function (string $host) use (&$lookups): array {
+            $lookups++;
+            usleep(150000);
+            return ['127.0.0.1'];
+        }, true);
+        $port = HttpFixtureServer::port();
+        $responses = static::prober($guard)->probeAll([new Target(1, 1, 'web1', Kind::WEB, "http://shop.test:$port/ok", 'default'),
+            new Target(2, 1, 'tracker', Kind::TRACKER, "http://shop.test:$port/matomo.php", 'default')], microtime(true) + 30);
+        $this->assertSame(1, $lookups, 'looked up once');
+        foreach ($responses as $id => $r) {
+            $this->assertSame(200, $r->status, "target $id");
+            $this->assertGreaterThanOrEqual(150, $r->timings['dns'], "target $id: the lookup's time");
+            $this->assertGreaterThanOrEqual($r->timings['dns'], $r->timings['total'], "target $id: within the total");
+        }
+    }
+
+    /**
+     * NIT 6, the other side: a lookup that was slow once makes only its own check a DNS failure. The time of a kept
+     * answer is reported, but neither counts towards another check's 10 seconds nor makes it a DNS failure (nobody waited
+     * for it), in the same run and in its retry phase.
+     */
+    public function test_direct_aSlowLookupOnce_failsOnlyTheCheckThatWaited(): void
+    {
+        $slow = true;
+        $guard = new AddressGuard(true, static function (string $host) use (&$slow): array {
+            if ($slow) {
+                usleep(600000);
+                $slow = false;
+            }
+            return ['127.0.0.1'];
+        }, true);
+        $port = HttpFixtureServer::port();
+        $prober = static::prober($guard, 1000, 1000);
+        $responses = $prober->probeAll([new Target(1, 1, 'web1', Kind::WEB, "http://shop.test:$port/ok", 'default'),
+            new Target(2, 1, 'tracker', Kind::TRACKER, "http://shop.test:$port/matomo.php", 'default')], microtime(true) + 30);
+        $this->assertSame([Outcome::DNS, null], [$responses[1]->error, $responses[2]->error], 'only the check that waited');
+        $this->assertSame(200, $responses[2]->status);
+        $again = $prober->probeAll([new Target(1, 1, 'web1', Kind::WEB, "http://shop.test:$port/ok", 'default')], microtime(true) + 30)[1];
+        $this->assertSame([200, null], [$again->status, $again->error], "the run's retry phase");
+    }
+
+    /** One lookup per host and run on the direct way too; a failed lookup is asked again (the retry after 5 seconds). */
+    public function test_direct_aHostIsLookedUpOncePerRun_aFailedLookupAgain(): void
+    {
+        $lookups = [];
+        $guard = new AddressGuard(true, static function (string $host) use (&$lookups): array {
+            $lookups[] = $host;
+            return $host === 'shop.test' ? ['127.0.0.1'] : [];
+        }, true);
+        $port = HttpFixtureServer::port();
+        $prober = static::prober($guard);
+        $responses = $prober->probeAll([new Target(1, 1, 'web1', Kind::WEB, "http://shop.test:$port/ok", 'default'),
+            new Target(2, 1, 'tracker', Kind::TRACKER, "http://shop.test:$port/matomo.php", 'default'),
+            new Target(3, 1, 'web3', Kind::WEB, "http://gone.test:$port/ok", 'default')], microtime(true) + 30);
+        $this->assertSame([200, 200, Outcome::DNS], [$responses[1]->status, $responses[2]->status, $responses[3]->error]);
+        $prober->probeAll([new Target(3, 1, 'web3', Kind::WEB, "http://gone.test:$port/ok", 'default')], microtime(true) + 30);
+        $this->assertSame(['shop.test', 'gone.test', 'gone.test'], $lookups);
+    }
+
+    /**
+     * Audit D2: Matomo stored as http behind a TLS proxy, the web server redirecting to https. The tracker, matomo.js and
+     * containers follow no redirects, but this one hop (the same address with https) they follow, through the guard:
+     * here through the fixture server as Matomo's proxy, whose missing CONNECT then fails the https hop. Any other
+     * redirect stays unfollowed.
+     */
+    public function test_theSameAddressWithHttps_isFollowedForEveryKind_otherRedirectsNot(): void
+    {
+        $seen = [];
+        $guard = new class ($seen) implements UrlGuard {
+            public function __construct(public array &$seen)
+            {
+            }
+
+            public function check(string $url, bool $instanceTarget = false): GuardDecision
+            {
+                return $this->checkWithoutResolving($url, $instanceTarget);
+            }
+
+            public function checkWithoutResolving(string $url, bool $instanceTarget = false): GuardDecision
+            {
+                $this->seen[] = $url;
+                $scheme = (string) parse_url($url, PHP_URL_SCHEME);
+                return new GuardDecision(true, null, null, (string) parse_url($url, PHP_URL_HOST), $scheme === 'https' ? 443 : 80, $scheme);
+            }
+        };
+        $proxy = ['host' => '127.0.0.1', 'port' => (string) HttpFixtureServer::port()];
+        $targets = [];
+        foreach ([Kind::TRACKER, Kind::JS, Kind::CONTAINER, Kind::PROXY] as $i => $kind) {
+            $targets[] = new Target($i + 1, 0, $kind, $kind, 'http://upgrade.test/upgrade/matomo.php', 'default');
+        }
+        $targets[] = new Target(9, 0, 'tracker9', Kind::TRACKER, 'http://upgrade.test/upgrade/elsewhere.php', 'default');
+        $responses = static::prober($guard, 1000, 3000, 8, $proxy)->probeAll($targets, microtime(true) + 30);
+        foreach ([1, 2, 3, 4] as $id) {
+            $this->assertSame([1, 'https://upgrade.test/upgrade/matomo.php'], [$responses[$id]->redirects, $responses[$id]->finalUrl], "target $id");
+        }
+        $this->assertSame([301, 0], [$responses[9]->status, $responses[9]->redirects], 'another address: not followed');
+        $this->assertContains('https://upgrade.test/upgrade/matomo.php', $guard->seen, 'the hop went through the guard');
+    }
+
+    /**
+     * Security review of D3 (SSRF through an IDN parser differential): curl gets the URL with the guard's ASCII host, so
+     * the name checked is the name fetched, on the proxied way (the proxy resolves it) and on the direct way (Host
+     * header and SNI). libcurl's own IDN conversion can differ from PHP's (a full-width dot or letter is mapped by one
+     * and refused by the other); straße is xn--strae-oqa for libidn2, for intl and for the fallback alike (L8 review of
+     * 5.4.0, SHOULD 4: nontransitional, as browsers).
+     */
+    public function test_theNameChecked_isTheNameFetched_withAndWithoutIntl(): void
+    {
+        $port = HttpFixtureServer::port();
+        $proxy = ['host' => '127.0.0.1', 'port' => (string) $port];
+        foreach (['intl' => new Capabilities(), 'no intl' => new Capabilities(DisabledFunctions::except(['idn_to_ascii']))] as $way => $capabilities) {
+            $checked = [];
+            $guard = new AddressGuard(true, static function (string $host) use (&$checked): array {
+                $checked[] = $host;
+                return ['127.0.0.1'];
+            }, true, $capabilities);
+            $targets = [new Target(1, 1, 'web1', Kind::WEB, 'http://straße.test/host?a=1', 'default'),
+                new Target(2, 1, 'web2', Kind::WEB, 'http://Müller.test/host', 'default')];
+            $proxied = (new Prober($guard, $proxy, 'FeinwerkUptimeMonitor-Test', 2000, 5000, 8, null, $capabilities))->probeAll($targets, microtime(true) + 30);
+            $this->assertSame('xn--strae-oqa.test http://xn--strae-oqa.test/host?a=1', $proxied[1]->body, "$way, proxied");
+            $this->assertSame('xn--mller-kva.test http://xn--mller-kva.test/host', $proxied[2]->body, "$way, proxied");
+            $this->assertSame(['xn--strae-oqa.test', 'xn--mller-kva.test'], $checked, "$way: the names checked");
+
+            $direct = (new Prober($guard, [], 'FeinwerkUptimeMonitor-Test', 2000, 5000, 8, null, $capabilities))
+                ->probeAll([new Target(3, 1, 'web3', Kind::WEB, "http://straße.test:$port/host", 'default')], microtime(true) + 30);
+            $this->assertSame("xn--strae-oqa.test:$port /host", $direct[3]->body, "$way, direct: the Host header");
+            foreach (array_merge($proxied, $direct) as $r) {
+                $this->assertDoesNotMatchRegularExpression('/[^\x20-\x7e]/', $r->body, "$way: no host other than the checked ASCII name");
+            }
+        }
     }
 
     public function test_consume_handsOverEachResultAndKeepsNothing(): void
