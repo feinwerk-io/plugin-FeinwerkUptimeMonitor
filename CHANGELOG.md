@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.3.3
+
+- Addresses with international characters (such as ß or umlauts) are always fetched under exactly the name that was
+  checked.
+
 ## 5.3.2
 
 - The tracker endpoint counts as reachable when Matomo answers it with an empty page (some servers hide Matomo's note on

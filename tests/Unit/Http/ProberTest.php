@@ -300,6 +300,73 @@ class ProberTest extends TestCase
         $this->assertSame([Outcome::DOWN, Outcome::CONTENT], [$other->outcome, $other->error]);
     }
 
+    /**
+     * The name checked is the name fetched: curl gets the URL with the guard's ASCII host, on every hop and both ways.
+     * libcurl converts internationalised names by its own rules (libidn2), which differ from PHP's intl: for straße
+     * libidn2 gives xn--strae-oqa, intl's UTS46 strasse. Through Matomo's proxy the proxy resolves the name curl sends,
+     * and on the direct way the Host header and SNI carry it.
+     *
+     * @param string[] $checked the names the guard looked up
+     */
+    private function idnGuard(array &$checked): AddressGuard
+    {
+        if (!function_exists('idn_to_ascii')) {
+            $this->markTestSkipped('needs intl: without it the guard refuses internationalised names');
+        }
+
+        return new AddressGuard(true, static function (string $host) use (&$checked): array {
+            $checked[] = $host;
+            return ['127.0.0.1'];
+        }, true);
+    }
+
+    private function assertOnlyAscii(array $responses): void
+    {
+        foreach ($responses as $r) {
+            $this->assertDoesNotMatchRegularExpression('/[^\x20-\x7e]/', $r->body, 'never a name other than the checked ASCII one');
+        }
+    }
+
+    public function test_theNameChecked_isTheNameFetched_throughMatomosProxy(): void
+    {
+        $checked = [];
+        $proxied = static::prober($this->idnGuard($checked), 2000, 5000, 8, ['host' => '127.0.0.1', 'port' => (string) HttpFixtureServer::port()])
+            ->probeAll([new Target(1, 1, 'web1', Kind::WEB, 'http://straße.test/host?a=1', 'default'),
+                new Target(2, 1, 'web2', Kind::WEB, 'http://Müller.test/host', 'default')], microtime(true) + 30);
+        $this->assertSame('strasse.test http://strasse.test/host?a=1', $proxied[1]->body, 'the proxy gets the checked name');
+        $this->assertSame('xn--mller-kva.test http://xn--mller-kva.test/host', $proxied[2]->body);
+        $this->assertSame(['strasse.test', 'xn--mller-kva.test'], $checked);
+        $this->assertOnlyAscii($proxied);
+    }
+
+    public function test_theNameChecked_isTheNameFetched_direct(): void
+    {
+        $checked = [];
+        $port = HttpFixtureServer::port();
+        $direct = static::prober($this->idnGuard($checked))->probeAll([new Target(3, 1, 'web3', Kind::WEB, "http://straße.test:$port/host", 'default')], microtime(true) + 30);
+        $this->assertSame("strasse.test:$port /host", $direct[3]->body, 'the Host header carries the checked name');
+        $this->assertSame(['strasse.test'], $checked);
+        $this->assertOnlyAscii($direct);
+    }
+
+    public function test_theNameChecked_isTheNameFetched_afterARedirect(): void
+    {
+        $checked = [];
+        $port = HttpFixtureServer::port();
+        $r = static::prober($this->idnGuard($checked))->probeAll([new Target(4, 1, 'web4', Kind::WEB, self::$base . '/to-idn', 'default')], microtime(true) + 30)[4];
+        $this->assertSame([1, "strasse.test:$port /host"], [$r->redirects, $r->body], 'the hop to an internationalised name');
+        $this->assertSame(['strasse.test'], $checked);
+        $this->assertOnlyAscii([$r]);
+    }
+
+    public function test_withHost_rebuildsTheUrlAroundTheCheckedHost(): void
+    {
+        $this->assertSame('http://strasse.test:8080/a/b?x=1', Prober::withHost('HTTP://straße.test:8080/a/b?x=1#top', 'strasse.test'));
+        $this->assertSame('https://xn--mller-kva.test', Prober::withHost('https://Müller.test', 'xn--mller-kva.test'));
+        $this->assertSame('https://[2001:db8::1]:8443/x', Prober::withHost('https://[2001:DB8::1]:8443/x', '2001:db8::1'));
+        $this->assertSame('http://93.184.215.14/?q', Prober::withHost('http://93.184.215.14/?q', '93.184.215.14'));
+    }
+
     public function test_consume_handsOverEachResultAndKeepsNothing(): void
     {
         $seen = [];

@@ -40,6 +40,14 @@ switch ($path) {
     case '/empty/other.php':
         $send(200, '', ['Content-Type: text/html; charset=UTF-8']);
         break;
+    case '/host':
+        // the Host header and the request target as they arrived (through a proxy: the absolute URI)
+        $send(200, ($_SERVER['HTTP_HOST'] ?? '') . ' ' . ($_SERVER['REQUEST_URI'] ?? ''));
+        break;
+    case '/to-idn':
+        // a redirect to an internationalised name on this server's port
+        $send(302, '', ['Location: http://straße.test:' . ($_SERVER['SERVER_PORT'] ?? '80') . '/host']);
+        break;
     case '/off/matomo.php':
         $send(503, '');
         break;

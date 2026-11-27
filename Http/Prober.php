@@ -325,7 +325,10 @@ final class Prober
         $handle = curl_init();
         $cap = in_array($state['target']->kind, [Kind::UI, Kind::CONTAINER], true) ? self::MAX_BODY_LARGE : self::MAX_BODY;
         $options = [
-            CURLOPT_URL => $state['url'],
+            // the guard's ASCII host, never the URL's own: libcurl converts internationalised names by its own rules
+            // (libidn2), which can differ from PHP's intl. So the name checked is the name fetched: by Matomo's proxy, in
+            // the Host header and in SNI, on every hop
+            CURLOPT_URL => self::withHost($state['url'], $decision->host),
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_HEADER => false,
             CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
@@ -426,6 +429,25 @@ final class Prober
             $error === null && $sink->capped,
             $error === null ? $sink->headers : []
         );
+    }
+
+    /**
+     * The URL as it is fetched: its scheme, the guard's normalised host (lower case, ASCII; an IPv6 address in
+     * brackets), its port, path and query; no credentials (the guard refuses them) and no fragment (never sent).
+     */
+    public static function withHost(string $url, string $host): string
+    {
+        $parts = parse_url($url);
+        if (!is_array($parts) || $host === '') {
+            return $url;
+        }
+        $authority = filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? '[' . $host . ']' : $host;
+        if (isset($parts['port'])) {
+            $authority .= ':' . (int) $parts['port'];
+        }
+
+        return strtolower((string) ($parts['scheme'] ?? 'http')) . '://' . $authority . ($parts['path'] ?? '')
+            . (isset($parts['query']) ? '?' . $parts['query'] : '');
     }
 
     private static function error(int $curlError, bool $connected, bool $proxied): string
